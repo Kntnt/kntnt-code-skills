@@ -20,6 +20,47 @@ When two rules conflict, the higher-priority rule wins:
 4. **Widely accepted conventions** — what most code in the wild looks
    like.
 
+## Design philosophy
+
+These principles often conflict. The task is to find the design that
+best honours all of them — not to apply each mechanically in sequence.
+When in doubt, start with YAGNI and work down the list.
+
+**YAGNI** — Implement only what the current requirement demands. Do
+not create abstractions until more than one concrete implementation
+exists.
+
+**KISS** — Prefer the simpler solution. Complexity must justify itself
+through a concrete, present requirement.
+
+**DRY** — Each piece of knowledge has one authoritative source.
+Extract duplication only when two things represent the same concept —
+not merely similar syntax.
+
+**TDD** — Write a failing test before writing production code. Follow
+Red/Green/Refactor. Structure each test as Arrange-Act-Assert with a
+name that states the expected behaviour.
+
+**Deep modules** — A module's external interface must be narrow and
+simple relative to the complexity it hides. This depth creates a clean
+seam for mocking and is the primary quality metric for a module
+boundary. The external interface is a commitment; design it as if it
+cannot be changed.
+
+**SOLID** applies inside a module — to the internal structure of classes
+and components, not to the module's external interface:
+
+- **SRP** — one reason to change per class.
+- **OCP** — extend through new code, not by modifying existing code.
+- **LSP** — subtypes must fully honour the base type's contract.
+- **ISP** — internal components depend only on the interface slice they
+  actually use. Decompose large internal interfaces into focused ones.
+- **DIP** — depend on abstractions; inject dependencies.
+
+**Boundary rule**: ISP decomposition is an internal detail and must
+never surface in the module's external interface. The external
+interface stays deep.
+   
 ## Universal rules
 
 ### Language
