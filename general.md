@@ -60,7 +60,7 @@ and components, not to the module's external interface:
 **Boundary rule**: ISP decomposition is an internal detail and must
 never surface in the module's external interface. The external
 interface stays deep.
-   
+
 ## Universal rules
 
 ### Language
