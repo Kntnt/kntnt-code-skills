@@ -76,7 +76,10 @@ interface stays deep.
 
 ### Versions and targets
 
-- Always use the latest stable major.minor of any chosen language.
+- Use the latest stable major.minor of any chosen language — UNLESS
+  an earlier version is required by the project you're working in or
+  by a library/dependency the project depends on. Pin the constraint
+  explicitly when it applies; don't drift below latest by accident.
 - For browser-targeted code, target the most recent edition of
   ECMAScript supported by the current stable releases of Safari,
   Firefox, Chrome, and Edge. In practice this currently means **ES2022**;
@@ -84,7 +87,8 @@ interface stays deep.
 - No polyfills, no transpiler-emitted runtime helpers for older
   targets.
 
-Specific version requirements per language live in the language modules.
+This rule is stated once here and not restated in the per-language
+modules.
 
 ### Code is read as prose
 
@@ -297,12 +301,13 @@ the prefix.
 collisions in a global registry. Where there is no global registry —
 inside a TypeScript package whose public API is a set of named
 exports, inside a Laravel application's `App\` namespace, inside a
-SvelteKit project's `$lib`, etc. — the package or namespace boundary
-already provides the isolation, and an extra `kntnt` prefix is noise.
-Apply the prefix where collisions can happen (WordPress hooks, npm
-package names published to a public registry, browser globals,
-custom DOM events, custom HTML data attributes); skip it where they
-cannot.
+SvelteKit project's `$lib`, inside a standalone script whose
+identifiers stay in the script's own scope, etc. — the package,
+namespace, or file boundary already provides the isolation, and an
+extra `kntnt` prefix is noise. Apply the prefix where collisions can
+happen (WordPress hooks, npm package names published to a public
+registry, browser globals, custom DOM events, custom HTML data
+attributes); skip it where they cannot.
 
 ## Universal tooling
 

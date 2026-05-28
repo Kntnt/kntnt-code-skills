@@ -5,7 +5,7 @@ contains TypeScript code.
 
 ### Baseline
 
-- TypeScript strict mode. Latest stable major.minor.
+- TypeScript strict mode.
 - Target ES2022 (revisit per the universal *Versions and targets* rule).
 - Module system: ESM. `verbatimModuleSyntax` on. Include the `.js`
   extension in import specifiers (TS rewrites correctly, ESM at runtime
@@ -55,6 +55,13 @@ contains TypeScript code.
   widening it.
 - Prefer literal/template literal types and discriminated unions over
   enum-style flags.
+
+### Type-checking
+
+Bun strips types at runtime — it does not type-check. The TypeScript
+type system is enforced by a separate `tsc --noEmit` pass, run in
+CI and in the lefthook pre-commit / pre-push hooks. Treat
+`tsc --noEmit` as a build step, not an editor convenience.
 
 ### Module rules
 

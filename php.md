@@ -7,8 +7,8 @@ which extend and override parts of this section.
 ### Baseline (all PHP)
 
 - `declare( strict_types = 1 );` at the top of every PHP file.
-- Latest stable PHP. Use the language's modern features fully; no
-  back-compatibility shims for older versions.
+- Use the language's modern features fully; no back-compatibility
+  shims for older language versions.
 
 ### Required modern features
 
