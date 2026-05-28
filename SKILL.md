@@ -1,6 +1,6 @@
 ---
 name: thomas-coder
-version: 0.1.0
+version: 0.1.1
 description: >
   Apply Thomas Barregren's coding standard to any code-shaped task —
   writing, modifying, refactoring, reviewing, or designing PHP,
@@ -147,9 +147,9 @@ The script:
 1. Sanity-checks the project directory. Refuses to write into a
    directory with no `.git`, `composer.json`, or `package.json`
    unless `--force` is set.
-2. Concatenates the requested modules in the canonical order
-   (general → php → wordpress → typescript → wordpress-block →
-   javascript-vanilla) into `docs/coding-standards.md`.
+2. Concatenates the requested modules in the canonical order (the
+   same order as step 4 of the flow and `bin/scaffold`'s
+   `CANONICAL_ORDER`) into `docs/coding-standards.md`.
 3. Refuses to overwrite an existing `docs/coding-standards.md` and
    prints its first 20 lines instead, so the calling agent (or
    Thomas) can decide what to do.
@@ -299,10 +299,11 @@ When adding a new framework or language to the standard:
    including the detection signal.
 3. **Add a detection clause to step 1** of the flow above. Match
    the shape of the existing axes.
-4. **Update the canonical order** in step 4 (and in
-   `bin/scaffold`'s `CANONICAL_ORDER`) if the new module has
-   override relationships with an existing one. Later in the order
-   wins on differences.
+4. **Add the module to the canonical order** in step 4 and to
+   `bin/scaffold`'s `CANONICAL_ORDER` — always; the scaffold
+   validates every `--include` against that list and rejects unknown
+   modules. Its *position* only matters when it has override
+   relationships with an existing module (later wins on differences).
 5. **Update the `description` frontmatter** to include the
    framework's name in the trigger list, so the skill keeps
    triggering on "starta en X-app"-style prompts.
