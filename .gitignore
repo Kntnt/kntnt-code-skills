@@ -5,9 +5,6 @@
 __pycache__/
 *.pyc
 
-# Skill packages — built from source via package_skill.py
-*.skill
-
 # Editor / IDE
 .idea/
 .vscode/
