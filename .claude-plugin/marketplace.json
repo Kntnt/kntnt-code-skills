@@ -1,0 +1,16 @@
+{
+  "name": "kntnt-code-skills",
+  "description": "Kntnt's code-skills plugin — coding standards applied to any code-related task.",
+  "owner": {
+    "name": "Thomas Barregren",
+    "email": "thomas@kntnt.com"
+  },
+  "plugins": [
+    {
+      "name": "kntnt-code-skills",
+      "source": "./",
+      "description": "Kntnt's coding standards for PHP, JavaScript, TypeScript, WordPress, Gutenberg blocks, Python, Bash, and any framework added later.",
+      "homepage": "https://github.com/Kntnt/kntnt-code-skills"
+    }
+  ]
+}

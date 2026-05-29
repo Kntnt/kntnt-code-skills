@@ -8,7 +8,8 @@ The plugin's `coder` skill is also a scaffolder: when a real new project is bein
 
 | Path | What it is |
 |---|---|
-| `plugin.json` | Plugin manifest. |
+| `.claude-plugin/plugin.json` | Plugin manifest. |
+| `.claude-plugin/marketplace.json` | Single-plugin marketplace catalog, so the repo can be added with `/plugin marketplace add`. |
 | `skills/coder/SKILL.md` | The router skill — auto-triggers on code-related prompts and orchestrates the flow. |
 | `skills/coder/*.md` | Topic modules with the actual coding rules. |
 | `skills/coder/bin/scaffold` | Command-style Bun/TypeScript script that assembles `docs/coding-standards.md` and wires it into `CLAUDE.md` / `AGENTS.md`. |
@@ -33,13 +34,20 @@ See `skills/coder/SKILL.md` for the full flow, the override relationships betwee
 
 ## Installation
 
-Install via Claude Code's plugin system:
+Install via Claude Code's plugin system. This is a two-step process: add the repo as a marketplace, then install the plugin from it.
 
 ```
-/plugin install Kntnt/kntnt-code-skills
+/plugin marketplace add Kntnt/kntnt-code-skills
+/plugin install kntnt-code-skills@kntnt-code-skills
 ```
 
-Or clone the repo and reference it locally as a plugin source.
+Then run `/reload-plugins` (or restart Claude Code) to activate it.
+
+For local development, load the repo directly without installing:
+
+```bash
+claude --plugin-dir /path/to/kntnt-code-skills
+```
 
 ## Scaffolding the standard into a project
 
