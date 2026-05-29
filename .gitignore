@@ -1,15 +1,25 @@
-# macOS junk
+# macOS
 .DS_Store
 
-# Python build artifacts
-__pycache__/
-*.pyc
+# Local environment overrides
+.env
+.env.local
 
-# Editor / IDE
+# Editor/IDE settings
 .idea/
 .vscode/
+
+# Editor backups
 *.swp
 *~
 
-# Claude Code local settings
-.claude/settings.local.json
+# Python
+__pycache__/
+*.pyc
+
+
+# Claude Code
+.claude
+
+# Eval runner output
+evals/workspace/
