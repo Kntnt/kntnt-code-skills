@@ -1,8 +1,8 @@
 ---
-name: thomas-coder
-version: 0.1.1
+name: coder
+version: 0.2.0
 description: >
-  Apply Thomas Barregren's coding standard to any code-shaped task —
+  Apply Kntnt's coding standard to any code-shaped task —
   writing, modifying, refactoring, reviewing, or designing PHP,
   JavaScript, TypeScript, Python, Bash, WordPress, Gutenberg blocks,
   Laravel, Svelte, SvelteKit, or any framework added to the standard
@@ -18,13 +18,15 @@ description: >
   or a code construct in them. When in doubt, trigger.
 ---
 
-# thomas-coder
+# coder
 
 This skill is the entry point for any code-related task in Thomas's
-setup. The actual coding rules live in topic modules; this file is
-the router. It decides which modules to load, whether to scaffold
-the standard into the project as files, and either way it ends by
-applying the standard to the work Thomas asked for.
+setup. It is shipped as part of the `kntnt-code-skills` plugin —
+invoked as `kntnt-code-skills:coder` when referenced explicitly. The
+actual coding rules live in topic modules; this file is the router.
+It decides which modules to load, whether to scaffold the standard
+into the project as files, and either way it ends by applying the
+standard to the work Thomas asked for.
 
 ## The modules
 

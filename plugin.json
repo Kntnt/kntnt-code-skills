@@ -1,0 +1,22 @@
+{
+  "name": "kntnt-code-skills",
+  "version": "0.2.0",
+  "description": "Kntnt's coding standards for PHP, JavaScript, TypeScript, WordPress, Gutenberg blocks, Python, Bash, and any framework added later.",
+  "author": {
+    "name": "Thomas Barregren",
+    "email": "thomas@kntnt.com",
+    "url": "https://github.com/Kntnt"
+  },
+  "homepage": "https://github.com/Kntnt/kntnt-code-skills",
+  "repository": "https://github.com/Kntnt/kntnt-code-skills",
+  "license": "MIT",
+  "keywords": [
+    "coding-standards",
+    "php",
+    "typescript",
+    "wordpress",
+    "gutenberg",
+    "python",
+    "bash"
+  ]
+}

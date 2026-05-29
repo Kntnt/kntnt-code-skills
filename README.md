@@ -1,8 +1,18 @@
-# thomas-coder
+# kntnt-code-skills
 
-A Claude skill that applies Thomas Barregren's coding standard to any code-related task — writing, modifying, refactoring, reviewing, or designing PHP, JavaScript, TypeScript, Python, Bash, WordPress, Gutenberg blocks, Laravel, Svelte, SvelteKit, and any framework added to the standard later.
+A Claude Code plugin that applies Kntnt's coding standard to any code-related task — writing, modifying, refactoring, reviewing, or designing PHP, JavaScript, TypeScript, Python, Bash, WordPress, Gutenberg blocks, Laravel, Svelte, SvelteKit, and any framework added to the standard later.
 
-The skill is also a scaffolder: when a real new project is being started, it offers to assemble `docs/coding-standards.md` and wire it into `CLAUDE.md` / `AGENTS.md` so every AI agent working on the codebase has the standard in context before writing code.
+The plugin's `coder` skill is also a scaffolder: when a real new project is being started, it offers to assemble `docs/coding-standards.md` and wire it into `CLAUDE.md` / `AGENTS.md` so every AI agent working on the codebase has the standard in context before writing code.
+
+## Components
+
+| Path | What it is |
+|---|---|
+| `plugin.json` | Plugin manifest. |
+| `skills/coder/SKILL.md` | The router skill — auto-triggers on code-related prompts and orchestrates the flow. |
+| `skills/coder/*.md` | Topic modules with the actual coding rules. |
+| `skills/coder/bin/scaffold` | Command-style Bun/TypeScript script that assembles `docs/coding-standards.md` and wires it into `CLAUDE.md` / `AGENTS.md`. |
+| `skills/coder/templates/` | Starter templates for `CLAUDE.md` / `AGENTS.md`. |
 
 ## Modules
 
@@ -19,39 +29,37 @@ The actual coding rules live in topic modules. `SKILL.md` is the router that dec
 | `python.md` | When Python is present. |
 | `bash.md` | When Bash is present. |
 
-See `SKILL.md` for the full flow, the override relationships between modules, and the *Adding a new module* section for how to extend the standard with new frameworks (Laravel, Svelte, SvelteKit, …).
+See `skills/coder/SKILL.md` for the full flow, the override relationships between modules, and the *Adding a new module* section for how to extend the standard with new frameworks (Laravel, Svelte, SvelteKit, …).
 
 ## Installation
 
-Drop the folder under your Claude skills directory, or install the packaged `.skill` file using your environment's skill installer.
+Install via Claude Code's plugin system:
 
-To rebuild the `.skill` package from source:
-
-```bash
-python3 /path/to/skill-creator/scripts/package_skill.py \
-    /path/to/thomas-coder \
-    /path/to/output-dir
 ```
+/plugin install Kntnt/kntnt-code-skills
+```
+
+Or clone the repo and reference it locally as a plugin source.
 
 ## Scaffolding the standard into a project
 
-The skill calls `bin/scaffold` automatically when scaffolding is appropriate, but the script can also be run directly. It is a command-style Bun/TypeScript script — executable via its shebang, with Bun as its only runtime dependency:
+The `coder` skill calls `bin/scaffold` automatically when scaffolding is appropriate, but the script can also be run directly. It is a command-style Bun/TypeScript script — executable via its shebang, with Bun as its only runtime dependency:
 
 ```bash
-bin/scaffold \
+skills/coder/bin/scaffold \
     --project-dir /path/to/new-project \
-    --skill-dir   /path/to/thomas-coder \
+    --skill-dir   /path/to/kntnt-code-skills/skills/coder \
     --include     php,wordpress,typescript,wordpress-block \
     --touch-agents-md
 ```
 
 Pass the modules that match the project's profile. `general` is always included automatically. The script writes `docs/coding-standards.md` and adds the import to `CLAUDE.md` (and to `AGENTS.md` if `--touch-agents-md` is set). It refuses to overwrite an existing `docs/coding-standards.md` and prints its first 20 lines instead, so you can decide what to do.
 
-Run `bin/scaffold --help` for the full set of options, including `--dry-run` and `--force`.
+Run `skills/coder/bin/scaffold --help` for the full set of options, including `--dry-run` and `--force`.
 
 ## Updating the standard
 
-Updating the standard means editing one or more module files in this repo. Projects that have already scaffolded their own `docs/coding-standards.md` keep their snapshot until they explicitly re-scaffold; this is intentional, so updates to the standard don't silently change project behaviour.
+Updating the standard means editing one or more module files in `skills/coder/`. Projects that have already scaffolded their own `docs/coding-standards.md` keep their snapshot until they explicitly re-scaffold; this is intentional, so updates to the standard don't silently change project behaviour.
 
 ## License
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 /**
- * Scaffold Thomas Barregren's coding standard into a project.
+ * Scaffold Kntnt's coding standard into a project.
  *
  * Concatenates the requested module files from this skill into
  * `docs/coding-standards.md` and wires the import into `CLAUDE.md`
@@ -17,7 +17,7 @@
  *
  *     bin/scaffold \
  *         --project-dir /path/to/new-project \
- *         --skill-dir   /path/to/thomas-coder \
+ *         --skill-dir   /path/to/kntnt-code-skills/skills/coder \
  *         --include     php,wordpress,typescript,wordpress-block
  *
  * Order on the command line does not matter; the canonical order is
