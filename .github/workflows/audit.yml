@@ -1,0 +1,22 @@
+name: audit
+
+on:
+  push:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run audit script
+        run: python3 scripts/audit.py

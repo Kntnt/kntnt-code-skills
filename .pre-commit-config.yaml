@@ -1,0 +1,10 @@
+repos:
+  - repo: local
+    hooks:
+      - id: audit
+        name: kntnt-code-skills audit
+        entry: python3 scripts/audit.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]

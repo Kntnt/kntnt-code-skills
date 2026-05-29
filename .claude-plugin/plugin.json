@@ -9,7 +9,7 @@
   },
   "homepage": "https://github.com/Kntnt/kntnt-code-skills",
   "repository": "https://github.com/Kntnt/kntnt-code-skills",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "coding-standards",
     "php",

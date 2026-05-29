@@ -1,0 +1,11 @@
+kntnt-code-skills
+Copyright 2024-2026 Thomas Barregren / Kntnt
+
+This product includes software developed by Kntnt (https://kntnt.com).
+
+kntnt-code-skills is a Claude Code plugin that applies Kntnt's coding standard
+to any code-related task — writing, modifying, refactoring, reviewing, or
+designing code — through one router skill and a set of topic modules, one file
+per language or framework, extensible as the standard grows.
+
+Made by Kntnt.
