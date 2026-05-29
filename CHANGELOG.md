@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-05-29
+
 ### Added
 
 - `LICENSE` (Apache License 2.0) and `NOTICE` — the project's licence text and the copyright / attribution statement that accompanies redistributions.
@@ -17,6 +19,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - License changed from MIT to Apache 2.0. The `license` field in `.claude-plugin/plugin.json` was `MIT` but no licence file ever shipped; the project now declares Apache 2.0 with a full `LICENSE`, a `NOTICE`, and matching `CONTRIBUTING.md` guidance.
 - `README.md` refreshed and restructured to mirror the `kntnt-text-skills` layout — added *File structure*, *Versioning*, *Authoring rules* with an audit checklist, *Requirements*, *License*, and *About* sections.
+- CI actions bumped to their Node 24 majors — `actions/checkout@v4` → `@v6` and `actions/setup-python@v5` → `@v6` — clearing the Node 20 deprecation warning. Removed a dead `*.skill` stanza from `.gitignore` that documented output of a `package_skill.py` not present in this repo.
 
 ## [0.2.0] — 2026-05-29
 
@@ -44,7 +47,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.1.0

@@ -1,6 +1,6 @@
 ---
 name: coder
-version: 0.2.0
+version: 0.2.1
 description: >
   Apply Kntnt's coding standard to any code-shaped task —
   writing, modifying, refactoring, reviewing, or designing PHP,
