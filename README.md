@@ -4,11 +4,12 @@ A plugin for Claude Code and Cowork that applies Kntnt's coding standard to any 
 
 ## What the plugin does
 
-The plugin exposes one model-invoked skill:
+The plugin exposes one model-invoked skill and one user-invoked command:
 
-- `coder` — the router. It auto-triggers on code-related prompts (in Swedish or English), profiles the project to determine which language and framework axes apply, loads the matching topic modules, and applies their rules to the work. It is also a scaffolder: when a real new project is being started, it offers to assemble `docs/coding-standards.md` from the relevant modules and wire it into `CLAUDE.md` / `AGENTS.md`, so every AI agent working on the codebase has the standard in context before writing code.
+- `coder` — the router. It auto-triggers on code-related prompts (in any language), profiles the project to determine which language and framework axes apply, loads the matching topic modules, and applies their rules to the work. It is also a scaffolder: when a real new project is being started, it offers to assemble `docs/coding-standards.md` from the relevant modules and wire it into `CLAUDE.md` / `AGENTS.md`, so every AI agent working on the codebase has the standard in context before writing code.
+- `/help` — a user-invoked slash command (`/kntnt-code-skills:help [skill-name]`). With no argument it prints a manpage-style overview of the plugin's skills; with a skill name it prints that skill's details. It is disabled for model invocation, so it runs only when you type it. Its output is rendered entirely from the plugin's own `.claude-plugin/plugin.json` and `skills/<name>/SKILL.md` by `scripts/help.py`, so it never drifts from the actual skills.
 
-The skill's frontmatter `description` defines the trigger boundary — it fires on prompts like *skriv kod*, *implementera*, *refaktorera*, *fixa buggen*, *skapa en klass*, *review the code*, *skapa en WordPress-plugin*, *starta en Laravel-app*, *skriv ett Python-skript*, *scaffold standards*, and on any task that mentions one of the covered languages or frameworks or a code construct in them.
+The skill's frontmatter `description` defines the trigger boundary — it fires on any request to write, implement, refactor, fix, review, or design code in any language or framework, and on any task that mentions a covered language, framework, or code construct. The description's examples are in English, but the skill triggers equally on the equivalent request in any language.
 
 ## Modules
 
@@ -48,7 +49,7 @@ Release notes for each version live in [`CHANGELOG.md`](CHANGELOG.md). The versi
 
 ## Scaffolding the standard into a project
 
-The `coder` skill calls `bin/scaffold` automatically when scaffolding is appropriate, but the script can also be run directly. It is a command-style Bun/TypeScript script — executable via its shebang, with Bun as its only runtime dependency:
+The `coder` skill calls `bin/scaffold` automatically when scaffolding is appropriate, but the script can also be run directly. It is a command-style Python script — executable via its `#!/usr/bin/env -S uv run --script` shebang, with [uv](https://docs.astral.sh/uv/) as its only runtime dependency (it provisions Python from the script's PEP 723 metadata; the script itself is standard-library only):
 
 ```bash
 skills/coder/bin/scaffold \
@@ -78,6 +79,8 @@ kntnt-code-skills/
 │   │   └── bug.md
 │   └── workflows/
 │       └── audit.yml
+├── commands/
+│   └── help.md
 ├── skills/
 │   └── coder/
 │       ├── SKILL.md
@@ -94,7 +97,8 @@ kntnt-code-skills/
 │       └── templates/
 │           └── claude-md-template.md
 ├── scripts/
-│   └── audit.py
+│   ├── audit.py
+│   └── help.py
 ├── .pre-commit-config.yaml
 ├── .gitignore
 ├── CHANGELOG.md
@@ -112,7 +116,7 @@ The plugin follows Semantic Versioning, adapted to a domain where a *change* is 
 
 **Major (X.0.0).** A change that alters what the standard prescribes for a category of prior situations without being a bug fix. Examples: switching the default brace style, changing a default toolchain, dropping `declare(strict_types=1)`, or reversing an override relationship between modules. Re-applying the standard to existing code would now yield materially different code.
 
-**Minor (0.X.0).** A new language or framework module, a new skill, or an extension of an existing rule that does not change what the standard prescribed for prior situations. Example: adding a `laravel.md` module, or adding a new permitted modern-language feature without forbidding the old one.
+**Minor (0.X.0).** A new language or framework module, a new skill or command, or an extension of an existing rule that does not change what the standard prescribed for prior situations. Example: adding a `laravel.md` module, or adding a new permitted modern-language feature without forbidding the old one.
 
 **Patch (0.0.X).** Bug fixes, documentation changes, prose clarifications that do not change the rule set, and behaviour-neutral refactors — for example correcting a broken example or moving logic between files without changing what it does.
 
@@ -142,7 +146,7 @@ These rules govern how to edit the files in this plugin. They exist to prevent a
 
 ### Audit checklist before committing changes
 
-Items marked **(auto)** are enforced by `scripts/audit.py`, which runs as a pre-commit hook and as the `audit` GitHub Actions job on every push and PR. Items marked **(manual)** require human judgement and are not scripted. Install the pre-commit hook locally with `pip install pre-commit && pre-commit install`; from then on the audit fires before every commit and CI re-runs it on the remote.
+Items marked **(auto)** are enforced by `scripts/audit.py`, which runs as a pre-commit hook and as the `audit` GitHub Actions job on every push and PR. Both run it with [uv](https://docs.astral.sh/uv/) (`uv run scripts/audit.py`), which provisions Python from the script's PEP 723 metadata. Items marked **(manual)** require human judgement and are not scripted. Install the pre-commit hook locally with `uv tool install pre-commit && pre-commit install`; from then on the audit fires before every commit and CI re-runs it on the remote.
 
 - **(auto)** `.claude-plugin/plugin.json` parses as JSON, carries the `name`, `version`, and `description` fields, and its `version` matches the latest non-`[Unreleased]` heading in `CHANGELOG.md`.
 - **(auto)** The topic-module files in `skills/coder/` and `bin/scaffold`'s `CANONICAL_ORDER` list the same modules — no module file without a canonical-order entry, no entry without a file.
@@ -154,7 +158,7 @@ Items marked **(auto)** are enforced by `scripts/audit.py`, which runs as a pre-
 
 ## Requirements
 
-The plugin requires Claude Code or Cowork with support for skills and YAML frontmatter. The `coder` skill applies the standard from context with no external dependencies. The scaffolder (`bin/scaffold`) requires [Bun](https://bun.sh) and file-system access to the project directory; when access is not available (chat-only, no working directory), the skill applies the standard from context and skips scaffolding. The audit script (`scripts/audit.py`) requires Python 3.12+ and uses the standard library only.
+The plugin requires Claude Code or Cowork with support for skills and YAML frontmatter. The `coder` skill applies the standard from context with no external dependencies. The scaffolder (`bin/scaffold`) requires [uv](https://docs.astral.sh/uv/) (which provisions Python 3.12+ from the script's PEP 723 metadata) and file-system access to the project directory; when access is not available (chat-only, no working directory), the skill applies the standard from context and skips scaffolding. The helper scripts — the audit (`scripts/audit.py`) and the `/help` command's renderer (`scripts/help.py`) — are run with [uv](https://docs.astral.sh/uv/), which provisions Python 3.12+ from each script's PEP 723 metadata; both use the standard library only.
 
 ## License
 

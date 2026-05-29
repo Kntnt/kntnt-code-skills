@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-29
+
+### Added
+
+- `/help` slash command (`/kntnt-code-skills:help [skill-name]`) and its renderer `scripts/help.py` — a manpage-style overview of the plugin's skills, or details for one. The command is disabled for model invocation, so it runs only when typed; `scripts/help.py` renders the whole block from `.claude-plugin/plugin.json` and each `skills/<name>/SKILL.md`, so the help text can never drift from the actual skills. The renderer is a standalone PEP 723 script run via `uv`.
+
+### Changed
+
+- The `coder` skill's frontmatter `description` rewritten to English only and broadened — it now triggers on any code-shaped task in any language or framework, with the listed languages explicitly non-exhaustive. The skill still triggers on prompts in any language; only the examples are now English.
+- `bin/scaffold` reverted from a Bun/TypeScript script to a command-style Python script run via `uv` (`#!/usr/bin/env -S uv run --script` shebang, PEP 723 inline metadata, standard-library only). Behaviour-equivalent to the TypeScript version — same flags, exit codes, and `CANONICAL_ORDER`.
+- `scripts/audit.py` is now a standalone PEP 723 script run via `uv` rather than a `python3` shebang script: PEP 723 metadata pins `requires-python`, the deprecated `typing.Callable` import moved to `collections.abc`, and the source is ruff-formatted. The pre-commit hook and the `audit` GitHub Actions job invoke it with `uv run`, and its `CANONICAL_ORDER` matcher now tolerates the annotated Python declaration in `bin/scaffold`.
+- `README.md` updated throughout to reflect the Python scaffolder, the uv-run helper scripts, and the new `/help` command.
+
 ## [0.2.1] — 2026-05-29
 
 ### Added

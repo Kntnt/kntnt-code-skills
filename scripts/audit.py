@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """Audit script for kntnt-code-skills.
 
 Runs every scriptable check from the README "Audit checklist". Cognitive
@@ -9,8 +12,9 @@ Exit code 0 when no findings are produced; exit code 1 otherwise. A
 tabulated report is written to stdout in both cases.
 
 The script resolves the repository root from its own location
-(scripts/audit.py), so `python3 scripts/audit.py` works from anywhere in
-the worktree. Standard library only — no third-party dependencies.
+(scripts/audit.py), so `uv run scripts/audit.py` works from anywhere in
+the worktree. Standard library only — no third-party dependencies, so the
+PEP 723 block above pins only the Python version.
 """
 
 from __future__ import annotations
@@ -18,9 +22,9 @@ from __future__ import annotations
 import json
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 # Repository root resolved from this file's location: scripts/audit.py.
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
@@ -91,7 +95,12 @@ def canonical_order() -> list[str] | None:
     problem rather than silently comparing against an empty list."""
 
     text = read_text(SCAFFOLD)
-    match = re.search(r"CANONICAL_ORDER\s*=\s*\[(.*?)\]", text, flags=re.DOTALL)
+    # Tolerate an optional type annotation between the name and `=`
+    # (e.g. `CANONICAL_ORDER: list[str] = [...]`) so the Python scaffold's
+    # annotated declaration is matched as well as a bare assignment.
+    match = re.search(
+        r"CANONICAL_ORDER\s*(?::[^=]+)?=\s*\[(.*?)\]", text, flags=re.DOTALL
+    )
     if match is None:
         return None
     return re.findall(r"['\"]([A-Za-z0-9_-]+)['\"]", match.group(1))
@@ -132,18 +141,33 @@ def check_plugin_json_and_version() -> CheckResult:
     try:
         data = json.loads(read_text(PLUGIN_JSON))
     except json.JSONDecodeError as exc:
-        result.findings.append(Finding(result.name, relpath(PLUGIN_JSON), None, f"invalid JSON: {exc}"))
+        result.findings.append(
+            Finding(result.name, relpath(PLUGIN_JSON), None, f"invalid JSON: {exc}")
+        )
         return result
     if not isinstance(data, dict):
-        result.findings.append(Finding(result.name, relpath(PLUGIN_JSON), None, "root is not an object"))
+        result.findings.append(
+            Finding(result.name, relpath(PLUGIN_JSON), None, "root is not an object")
+        )
         return result
     for required in ("name", "version", "description"):
         if required not in data:
-            result.findings.append(Finding(result.name, relpath(PLUGIN_JSON), None, f"missing required field '{required}'"))
+            result.findings.append(
+                Finding(
+                    result.name,
+                    relpath(PLUGIN_JSON),
+                    None,
+                    f"missing required field '{required}'",
+                )
+            )
     plugin_version = str(data.get("version", "")).strip()
     latest = latest_changelog_version()
     if latest is None:
-        result.findings.append(Finding(result.name, relpath(CHANGELOG), None, "no non-Unreleased heading found"))
+        result.findings.append(
+            Finding(
+                result.name, relpath(CHANGELOG), None, "no non-Unreleased heading found"
+            )
+        )
     elif plugin_version != latest:
         result.findings.append(
             Finding(
@@ -165,14 +189,35 @@ def check_module_canonical_order_sync() -> CheckResult:
     result = CheckResult(name="(b) modules <-> CANONICAL_ORDER symmetry")
     order = canonical_order()
     if order is None:
-        result.findings.append(Finding(result.name, relpath(SCAFFOLD), None, "could not locate CANONICAL_ORDER array"))
+        result.findings.append(
+            Finding(
+                result.name,
+                relpath(SCAFFOLD),
+                None,
+                "could not locate CANONICAL_ORDER array",
+            )
+        )
         return result
     order_set = set(order)
     files = module_files()
     for stem in sorted(files - order_set):
-        result.findings.append(Finding(result.name, relpath(SKILL_DIR / f"{stem}.md"), None, f"module '{stem}' has no entry in CANONICAL_ORDER"))
+        result.findings.append(
+            Finding(
+                result.name,
+                relpath(SKILL_DIR / f"{stem}.md"),
+                None,
+                f"module '{stem}' has no entry in CANONICAL_ORDER",
+            )
+        )
     for stem in sorted(order_set - files):
-        result.findings.append(Finding(result.name, relpath(SCAFFOLD), None, f"CANONICAL_ORDER entry '{stem}' has no module file in skills/coder/"))
+        result.findings.append(
+            Finding(
+                result.name,
+                relpath(SCAFFOLD),
+                None,
+                f"CANONICAL_ORDER entry '{stem}' has no module file in skills/coder/",
+            )
+        )
     return result
 
 
@@ -183,13 +228,19 @@ def check_skill_version_sync() -> CheckResult:
 
     result = CheckResult(name="(c) SKILL.md version matches plugin.json")
     try:
-        plugin_version = str(json.loads(read_text(PLUGIN_JSON)).get("version", "")).strip()
+        plugin_version = str(
+            json.loads(read_text(PLUGIN_JSON)).get("version", "")
+        ).strip()
     except json.JSONDecodeError:
         # The malformed-JSON case is already reported by check (a).
         return result
     skill_version = frontmatter_version(read_text(SKILL_MD))
     if skill_version is None:
-        result.findings.append(Finding(result.name, relpath(SKILL_MD), None, "no version field in frontmatter"))
+        result.findings.append(
+            Finding(
+                result.name, relpath(SKILL_MD), None, "no version field in frontmatter"
+            )
+        )
     elif skill_version != plugin_version:
         result.findings.append(
             Finding(
@@ -219,10 +270,14 @@ def format_report(results: list[CheckResult]) -> str:
     lines = [header, separator]
     for r in results:
         status = "OK" if r.ok else "FAIL"
-        lines.append(f"{r.name.ljust(name_width)}  {status.ljust(status_width)}  {len(r.findings)}")
+        lines.append(
+            f"{r.name.ljust(name_width)}  {status.ljust(status_width)}  {len(r.findings)}"
+        )
     lines.append(separator)
     total = sum(len(r.findings) for r in results)
-    lines.append(f"{'TOTAL FINDINGS'.ljust(name_width)}  {''.ljust(status_width)}  {total}")
+    lines.append(
+        f"{'TOTAL FINDINGS'.ljust(name_width)}  {''.ljust(status_width)}  {total}"
+    )
     failing = [r for r in results if not r.ok]
     if failing:
         lines.append("")

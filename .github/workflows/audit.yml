@@ -13,10 +13,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
 
       - name: Run audit script
-        run: python3 scripts/audit.py
+        run: uv run scripts/audit.py

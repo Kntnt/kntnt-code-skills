@@ -1,21 +1,20 @@
 ---
 name: coder
-version: 0.2.1
+version: 0.3.0
 description: >
-  Apply Kntnt's coding standard to any code-shaped task —
-  writing, modifying, refactoring, reviewing, or designing PHP,
-  JavaScript, TypeScript, Python, Bash, WordPress, Gutenberg blocks,
-  Laravel, Svelte, SvelteKit, or any framework added to the standard
-  later; starting a new project in any of those; or scaffolding the
-  standard itself into a project as files. Trigger on prompts like
-  "skriv kod", "implementera", "refaktorera", "fixa buggen", "skapa
-  en klass", "skriv en funktion", "review the code", "design a",
-  "skapa en plugin", "skapa en WordPress-plugin", "starta en
-  Laravel-app", "ny SvelteKit-applikation", "build a CLI in
-  TypeScript", "skriv ett Python-skript", "bash-skript", "lägg till
-  kodningsstandarden", "scaffold standards", "init coding standards",
-  and on any task that mentions one of those languages or frameworks
-  or a code construct in them. When in doubt, trigger.
+  Apply Kntnt's coding standard to any code-shaped task, in any
+  language or framework. Writing, modifying, refactoring, reviewing,
+  debugging, or designing code; starting a new project; or scaffolding
+  the standard into a project as files — all count. The standard
+  covers PHP, JavaScript, TypeScript, Python, Bash, WordPress,
+  Gutenberg blocks, Laravel, Svelte, SvelteKit, and any framework
+  added later, but the skill is not limited to those. Trigger on any
+  request to write, implement, refactor, fix, review, or design code —
+  a class, function, script, plugin, app, module, or CLI; a bug fix;
+  setting up or scaffolding the coding standard — and on any task that
+  mentions a programming language, framework, or code construct. The
+  examples here are English, but trigger equally on the equivalent
+  request in any language. When in doubt, trigger.
 ---
 
 # coder
@@ -92,16 +91,16 @@ unless something materially depends on the answer.
 Three buckets:
 
 **Scaffold without asking** when Thomas explicitly requests it:
-"scaffolda kodningsstandarden", "lägg till kodningsstandarden",
-"init coding standards", "set up coding standards", "scaffold
-standards", or similar phrasing. Go straight to step 3.
+"scaffold the coding standard", "add the coding standard", "init
+coding standards", "set up coding standards", "scaffold standards",
+or similar phrasing. Go straight to step 3.
 
 **Offer to scaffold** (one short question, then proceed on the
 answer) when *all* of the following hold:
 
-- The task creates or initialises a real project — "skapa en
-  WordPress-plugin", "starta en Laravel-app", "scaffolda en ny
-  SvelteKit-applikation", or work that will produce a multi-file
+- The task creates or initialises a real project — "create a
+  WordPress plugin", "start a Laravel app", "scaffold a new
+  SvelteKit application", or work that will produce a multi-file
   codebase rather than a single snippet.
 - The working directory is either empty (perhaps with `.git`) or
   does not yet contain `docs/coding-standards.md`.
@@ -116,8 +115,8 @@ wire it into `CLAUDE.md` before I write code?"* If yes, go to step
 
 **Skip scaffolding** otherwise — go straight to step 4. This covers:
 
-- Isolated code tasks ("skriv en funktion som …", "fixa den här
-  buggen", "review this snippet").
+- Isolated code tasks ("write a function that …", "fix this bug",
+  "review this snippet").
 - Existing projects that already have `docs/coding-standards.md` —
   the project's file wins. Reconcile silently and proceed.
 - Quick experiments, throwaway scripts, snippets with no project
@@ -135,9 +134,11 @@ script rather than reconstructing the logic each time:
     --include php,wordpress,typescript,wordpress-block
 ```
 
-`bin/scaffold` is a command-style Bun/TypeScript script — executable
-with a shebang, so it runs directly without a `bun` prefix. Bun is the
-only runtime dependency.
+`bin/scaffold` is a command-style Python script — executable via its
+`#!/usr/bin/env -S uv run --script` shebang, so it runs directly without
+a `uv run` prefix. uv is the only runtime dependency; it provisions
+Python from the script's PEP 723 metadata, and the script itself is
+standard-library only.
 
 Pass the same module names you'd load for the project's profile
 (omit `general` — the script always includes it). Order on the
@@ -219,7 +220,7 @@ and this section does nothing:
 - A TypeScript or JavaScript project → TypeScript on Bun (per the
   TypeScript module's defaults).
 - An explicit language in the prompt ("write me a Python script",
-  "skriv ett bash-skript") → that language.
+  "write a bash script") → that language.
 
 In all those cases, jump straight to step 4 and apply the matching
 module(s).
@@ -306,9 +307,11 @@ When adding a new framework or language to the standard:
    validates every `--include` against that list and rejects unknown
    modules. Its *position* only matters when it has override
    relationships with an existing module (later wins on differences).
-5. **Update the `description` frontmatter** to include the
-   framework's name in the trigger list, so the skill keeps
-   triggering on "starta en X-app"-style prompts.
+5. **Update the `description` frontmatter** to name the new
+   framework among the covered languages and frameworks, so the
+   description stays accurate. The trigger is already broad and
+   language-agnostic, so this keeps the list current rather than
+   enabling triggering.
 
 The modules are self-contained on purpose. Cross-references between
 them use generic phrasing (e.g. "WordPress projects override the
@@ -339,7 +342,7 @@ loaded alone in step 4 or concatenated into a single
 - `javascript-vanilla.md` — plain browser JavaScript rules.
 - `python.md` — Python rules.
 - `bash.md` — Bash rules.
-- `bin/scaffold` — command-style Bun/TypeScript script that assembles
+- `bin/scaffold` — command-style Python script (run via uv) that assembles
   `docs/coding-standards.md` and wires it into `CLAUDE.md` / `AGENTS.md`.
 - `templates/claude-md-template.md` — starter for a fresh
   `CLAUDE.md` (or `AGENTS.md`).

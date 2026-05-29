@@ -1,402 +1,344 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
+"""Scaffold Kntnt's coding standard into a project.
 
-/**
- * Scaffold Kntnt's coding standard into a project.
- *
- * Concatenates the requested module files from this skill into
- * `docs/coding-standards.md` and wires the import into `CLAUDE.md`
- * (and optionally `AGENTS.md`).
- *
- * The skill's `SKILL.md` is the source of truth for which modules
- * exist and which apply to a given project. This script just executes
- * the file work — concatenation, file creation, surgical edits to
- * existing files — so the calling agent doesn't have to recreate the
- * logic every time.
- *
- * Typical use:
- *
- *     bin/scaffold \
- *         --project-dir /path/to/new-project \
- *         --skill-dir   /path/to/kntnt-code-skills/skills/coder \
- *         --include     php,wordpress,typescript,wordpress-block
- *
- * Order on the command line does not matter; the canonical order is
- * imposed internally so override relationships stay correct.
- *
- * Exit codes:
- *
- *     0   Scaffolding completed successfully.
- *     1   Bad arguments, missing module file, or sanity-check failed.
- *     2   `docs/coding-standards.md` already exists in the project and
- *         was not overwritten. Stderr contains its first 20 lines so
- *         the caller can decide what to do.
- */
+Concatenates the requested module files from this skill into
+``docs/coding-standards.md`` and wires the import into ``CLAUDE.md``
+(and optionally ``AGENTS.md``).
 
-import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
-import { parseArgs } from 'node:util'
+The skill's ``SKILL.md`` is the source of truth for which modules exist
+and which apply to a given project. This script just executes the file
+work — concatenation, file creation, surgical edits to existing files —
+so the calling agent doesn't have to recreate the logic every time.
 
-// Canonical order in which modules appear in the assembled
-// coding-standards.md. Later entries override earlier ones on points
-// where they differ — see SKILL.md, step 4 of the flow.
-const CANONICAL_ORDER = [
-  'general',
-  'php',
-  'wordpress',
-  'typescript',
-  'wordpress-block',
-  'javascript-vanilla',
-  'python',
-  'bash',
-] as const
+Typical use:
 
-// Markers we accept as evidence that a directory is a real project,
-// before we start writing files into it. The list is intentionally
-// generous — if any one of these exists, the script proceeds.
-const PROJECT_MARKERS = ['.git', 'composer.json', 'package.json'] as const
+    bin/scaffold \\
+        --project-dir /path/to/new-project \\
+        --skill-dir   /path/to/kntnt-code-skills/skills/coder \\
+        --include     php,wordpress,typescript,wordpress-block
 
-// Help text for --help / -h, mirroring the file-level doc comment.
-const USAGE = `Usage: scaffold --project-dir DIR --skill-dir DIR --include LIST [options]
-
-Assemble docs/coding-standards.md from this skill's modules and wire the
-import into CLAUDE.md (and optionally AGENTS.md).
-
-Required:
-  --project-dir DIR   Path to the project root.
-  --skill-dir DIR     Path to this skill's folder (where the modules live).
-  --include LIST      Comma-separated module names (e.g. php,wordpress,typescript).
-                      'general' is always included.
-
-Options:
-  --touch-agents-md   Also create or update AGENTS.md alongside CLAUDE.md.
-  --dry-run           Show what would happen without writing any files.
-  --force             Skip the project-directory sanity check.
-  -h, --help          Show this help and exit.
+Order on the command line does not matter; the canonical order is
+imposed internally so override relationships stay correct.
 
 Exit codes:
-  0  Success.
-  1  Bad arguments, missing module file, or sanity-check failed.
-  2  docs/coding-standards.md already exists and was not overwritten.`
 
-/**
- * The command line after parsing and validation: paths resolved by the
- * caller, the raw `--include` list, and the three boolean flags.
- */
-interface ScaffoldOptions {
-  readonly projectDir: string
-  readonly skillDir: string
-  readonly include: string
-  readonly touchAgentsMd: boolean
-  readonly dryRun: boolean
-  readonly force: boolean
-}
+    0   Scaffolding completed successfully.
+    1   Bad arguments, missing module file, or sanity-check failed.
+    2   ``docs/coding-standards.md`` already exists in the project and
+        was not overwritten. Stderr contains its first 20 lines so the
+        caller can decide what to do.
+"""
 
-/** The inputs `touchAgentFile` needs to create or update one agent file. */
-interface TouchAgentFileOptions {
-  readonly projectDir: string
-  readonly filename: string
-  readonly h1: string
-  readonly templateText: string
-  readonly dryRun: boolean
-}
+from __future__ import annotations
 
-/**
- * Parse and validate the command line. Throws on unknown flags (via
- * parseArgs) or missing required flags, so the caller can map any
- * failure to the bad-arguments exit code.
- *
- * @param argv - Arguments after the interpreter and script path
- *   (`process.argv.slice(2)`).
- */
-function parseCliArgs(argv: string[]): ScaffoldOptions {
-  const { values } = parseArgs({
-    args: argv,
-    options: {
-      'project-dir': { type: 'string' },
-      'skill-dir': { type: 'string' },
-      include: { type: 'string' },
-      'touch-agents-md': { type: 'boolean' },
-      'dry-run': { type: 'boolean' },
-      force: { type: 'boolean' },
-    },
-    strict: true,
-    allowPositionals: false,
-  })
+import argparse
+import sys
+from pathlib import Path
+from typing import NoReturn
 
-  // Require the three flags that have no sensible default.
-  const required = ['project-dir', 'skill-dir', 'include'] as const
-  const missing = required.filter((name) => values[name] === undefined)
-  if (missing.length > 0) {
-    throw new Error(`missing required argument(s): ${missing.map((m) => `--${m}`).join(', ')}`)
-  }
+# Canonical order in which modules appear in the assembled
+# coding-standards.md. Later entries override earlier ones on points
+# where they differ — see SKILL.md, step 4 of the flow.
+CANONICAL_ORDER: list[str] = [
+    "general",
+    "php",
+    "wordpress",
+    "typescript",
+    "wordpress-block",
+    "javascript-vanilla",
+    "python",
+    "bash",
+]
 
-  return {
-    projectDir: values['project-dir'] as string,
-    skillDir: values['skill-dir'] as string,
-    include: values.include as string,
-    touchAgentsMd: values['touch-agents-md'] ?? false,
-    dryRun: values['dry-run'] ?? false,
-    force: values.force ?? false,
-  }
-}
+# Markers we accept as evidence that a directory is a real project,
+# before we start writing files into it. The list is intentionally
+# generous — if any one of these exists, the script proceeds.
+PROJECT_MARKERS: list[str] = [
+    ".git",
+    "composer.json",
+    "package.json",
+]
 
-/**
- * Split text into lines the way Python's `str.splitlines()` does: break
- * on newlines without keeping them, and do not emit a trailing empty
- * element for a terminal newline.
- *
- * @param text - The text to split.
- */
-function splitLines(text: string): string[] {
-  const lines = text.split(/\r\n|\r|\n/)
-  if (lines.length > 0 && lines.at(-1) === '') lines.pop()
-  return lines
-}
 
-/**
- * Strip trailing whitespace, mirroring Python's `str.rstrip()` called
- * with no argument.
- *
- * @param text - The text to trim.
- */
-function rstrip(text: string): string {
-  return text.replace(/\s+$/, '')
-}
+class ScaffoldArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that exits with code 1 on a usage error.
 
-/**
- * Insert `@docs/coding-standards.md` into a CLAUDE.md / AGENTS.md.
- *
- * Strategy, in order:
- *
- * 1. If a `## Coding standards` heading already exists, append the
- *    import on the first line beneath it.
- * 2. Otherwise, insert both the heading and the import after the first
- *    H1 (and any introductory paragraph that follows it).
- * 3. If there is no H1 at all, append the heading and the import at the
- *    end.
- *
- * Existing content is otherwise preserved.
- *
- * @param content - Current text of the agent file.
- * @returns The file content with the import inserted.
- */
-function insertImport(content: string): string {
-  const lines = splitLines(content)
+    argparse's default is exit code 2, but this script reserves 2 for
+    "docs/coding-standards.md already exists". Mapping usage errors to 1
+    keeps the bad-arguments case distinct so a caller can tell the two
+    apart from the exit code alone.
+    """
 
-  // Strategy 1: an explicit "## Coding standards" heading already
-  // exists — drop the import on the first non-blank line beneath it.
-  for (let i = 0; i < lines.length; i += 1) {
-    if (lines[i]?.trim().toLowerCase() === '## coding standards') {
-      let insertAt = i + 1
-      if (insertAt < lines.length && lines[insertAt]?.trim() === '') insertAt += 1
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(1, f"{self.prog}: error: {message}\n")
 
-      // Append a trailing blank only when the next existing line isn't
-      // already blank — avoids the double-blank that looks ugly in
-      // editors.
-      const toInsert = ['@docs/coding-standards.md']
-      const nextLine = insertAt < lines.length ? lines[insertAt] : undefined
-      if (nextLine === undefined || nextLine.trim() !== '') toInsert.push('')
 
-      lines.splice(insertAt, 0, ...toInsert)
-      return `${rstrip(lines.join('\n'))}\n`
-    }
-  }
+def insert_import(content: str) -> str:
+    """Insert ``@docs/coding-standards.md`` into a CLAUDE.md / AGENTS.md.
 
-  // Strategy 2: no heading — find the first H1 so a fresh section can
-  // be inserted after it and its intro paragraph.
-  const h1Index = lines.findIndex((line) => line.startsWith('# '))
-  if (h1Index === -1) {
-    // Strategy 3: no H1 either — append the section at the end.
-    return `${rstrip(content)}\n\n## Coding standards\n\n@docs/coding-standards.md\n`
-  }
+    Strategy, in order:
 
-  // Skip blank lines after the H1, then skip the intro paragraph if
-  // there is one (a contiguous run of non-blank, non-heading lines).
-  let insertAt = h1Index + 1
-  while (insertAt < lines.length && lines[insertAt]?.trim() === '') insertAt += 1
-  while (
-    insertAt < lines.length &&
-    lines[insertAt]?.trim() !== '' &&
-    !lines[insertAt]?.startsWith('#')
-  ) {
-    insertAt += 1
-  }
+    1. If a ``## Coding standards`` heading already exists, append the
+       import on the first non-blank line beneath it.
+    2. Otherwise, insert both the heading and the import after the first
+       H1 (and any introductory paragraph that follows it).
+    3. If there is no H1 at all, append the heading and the import at the
+       end.
 
-  // Drop the trailing blank from the new section when the next existing
-  // line is already blank, so we don't end up with two blank lines.
-  const newSection = ['', '## Coding standards', '', '@docs/coding-standards.md', '']
-  const nextExisting = insertAt < lines.length ? lines[insertAt] : undefined
-  if (nextExisting !== undefined && nextExisting.trim() === '') newSection.pop()
+    Existing content is otherwise preserved.
+    """
 
-  lines.splice(insertAt, 0, ...newSection)
-  return `${rstrip(lines.join('\n'))}\n`
-}
+    lines = content.splitlines()
 
-/**
- * Create the agent file from the template, or surgically insert the
- * coding-standards import into an existing one. Returns a one-line
- * description of what it did (or would do, on a dry run).
- *
- * @param options - Project root, filename, target H1, template text,
- *   and the dry-run flag.
- */
-async function touchAgentFile(options: TouchAgentFileOptions): Promise<string> {
-  const { projectDir, filename, h1, templateText, dryRun } = options
-  const agentFile = join(projectDir, filename)
+    # Strategy 1: an explicit "## Coding standards" heading already
+    # exists — drop the import on the first non-blank line beneath it.
+    for i, line in enumerate(lines):
+        if line.strip().lower() == "## coding standards":
+            insert_at = i + 1
+            if insert_at < len(lines) and lines[insert_at].strip() == "":
+                insert_at += 1
 
-  // Case A: the file doesn't exist yet — copy the template, rewriting
-  // the H1 for anything other than CLAUDE.md.
-  if (!existsSync(agentFile)) {
-    const content = filename === 'CLAUDE.md' ? templateText : templateText.replace('# CLAUDE.md', h1)
-    if (dryRun) return `[dry-run] would create ${filename}`
-    await writeFile(agentFile, content)
-    return `created ${filename}`
-  }
+            # Append a trailing blank only when the next existing line
+            # isn't already blank — avoids an ugly double blank.
+            to_insert = ["@docs/coding-standards.md"]
+            next_line = lines[insert_at] if insert_at < len(lines) else None
+            if next_line is None or next_line.strip() != "":
+                to_insert.append("")
 
-  const existing = await readFile(agentFile, 'utf8')
+            lines[insert_at:insert_at] = to_insert
+            return "\n".join(lines).rstrip() + "\n"
 
-  // Case B: the file exists and already imports the standard — leave it
-  // alone.
-  if (existing.includes('@docs/coding-standards.md')) {
-    return `${filename} already imports coding-standards.md (skipped)`
-  }
+    # Strategy 2: no heading — find the first H1 so a fresh section can be
+    # inserted after it and its intro paragraph.
+    h1_index = next((i for i, line in enumerate(lines) if line.startswith("# ")), -1)
+    if h1_index == -1:
+        # Strategy 3: no H1 either — append the section at the end.
+        return (
+            content.rstrip() + "\n\n## Coding standards\n\n@docs/coding-standards.md\n"
+        )
 
-  // Case C: the file exists but doesn't import the standard — insert
-  // the import surgically.
-  if (dryRun) return `[dry-run] would update ${filename}`
-  await writeFile(agentFile, insertImport(existing))
-  return `updated ${filename}`
-}
+    # Skip blank lines after the H1, then skip the intro paragraph if
+    # there is one (a contiguous run of non-blank, non-heading lines).
+    insert_at = h1_index + 1
+    while insert_at < len(lines) and lines[insert_at].strip() == "":
+        insert_at += 1
+    while (
+        insert_at < len(lines)
+        and lines[insert_at].strip() != ""
+        and not lines[insert_at].startswith("#")
+    ):
+        insert_at += 1
 
-/**
- * Run the scaffolder end to end.
- *
- * @returns The process exit code (see the file-level doc comment).
- */
-async function main(): Promise<number> {
-  const argv = process.argv.slice(2)
+    # Drop the trailing blank from the new section when the next existing
+    # line is already blank, so we don't end up with two blank lines.
+    new_section = ["", "## Coding standards", "", "@docs/coding-standards.md", ""]
+    next_existing = lines[insert_at] if insert_at < len(lines) else None
+    if next_existing is not None and next_existing.strip() == "":
+        new_section.pop()
 
-  // Short-circuit on --help before any required-argument validation.
-  if (argv.includes('-h') || argv.includes('--help')) {
-    console.log(USAGE)
+    lines[insert_at:insert_at] = new_section
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def touch_agent_file(
+    *,
+    project_dir: Path,
+    filename: str,
+    h1: str,
+    template_text: str,
+    dry_run: bool,
+) -> str:
+    """Create the agent file from the template, or surgically insert the
+    coding-standards import into an existing one.
+
+    Returns a one-line description of what it did (or would do, on a dry
+    run) so the caller can report it verbatim.
+    """
+
+    agent_file = project_dir / filename
+
+    # Case A: the file doesn't exist yet — copy the template, rewriting
+    # the H1 for anything other than CLAUDE.md.
+    if not agent_file.exists():
+        content = (
+            template_text
+            if filename == "CLAUDE.md"
+            else template_text.replace("# CLAUDE.md", h1, 1)
+        )
+        if dry_run:
+            return f"[dry-run] would create {filename}"
+        agent_file.write_text(content, encoding="utf-8")
+        return f"created {filename}"
+
+    existing = agent_file.read_text(encoding="utf-8")
+
+    # Case B: the file exists and already imports the standard — leave it
+    # alone.
+    if "@docs/coding-standards.md" in existing:
+        return f"{filename} already imports coding-standards.md (skipped)"
+
+    # Case C: the file exists but doesn't import the standard — insert the
+    # import surgically.
+    if dry_run:
+        return f"[dry-run] would update {filename}"
+    agent_file.write_text(insert_import(existing), encoding="utf-8")
+    return f"updated {filename}"
+
+
+def main() -> int:
+    """Run the scaffolder end to end. Returns the process exit code."""
+
+    # Parse the command line. ScaffoldArgumentParser maps any usage error
+    # to exit code 1 (see the class docstring).
+    parser = ScaffoldArgumentParser(
+        description="Scaffold Kntnt's coding standard into a project.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        required=True,
+        help="Path to the project root.",
+    )
+    parser.add_argument(
+        "--skill-dir",
+        type=Path,
+        required=True,
+        help="Path to this skill's folder (where the module files live).",
+    )
+    parser.add_argument(
+        "--include",
+        required=True,
+        help=(
+            "Comma-separated module names (e.g. 'php,wordpress,typescript'). "
+            "'general' is always included."
+        ),
+    )
+    parser.add_argument(
+        "--touch-agents-md",
+        action="store_true",
+        help="Also create or update AGENTS.md alongside CLAUDE.md.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would happen without writing any files.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Skip the project-directory sanity check.",
+    )
+    args = parser.parse_args()
+
+    project_dir: Path = args.project_dir.resolve()
+    skill_dir: Path = args.skill_dir.resolve()
+    requested = [part.strip() for part in args.include.split(",") if part.strip()]
+
+    # Sanity-check the project directory unless --force is set. Refusing to
+    # write into a random directory protects Thomas from typos.
+    if not args.force:
+        has_marker = any((project_dir / marker).exists() for marker in PROJECT_MARKERS)
+        if not has_marker:
+            markers = ", ".join(PROJECT_MARKERS)
+            print(
+                f"error: {project_dir} doesn't look like a project root "
+                f"(no {markers}). Pass --force to override.",
+                file=sys.stderr,
+            )
+            return 1
+
+    # Validate the requested modules and put them in canonical order.
+    unknown = [module for module in requested if module not in CANONICAL_ORDER]
+    if unknown:
+        print(
+            f"error: unknown module(s): {', '.join(unknown)}. "
+            f"Known modules: {', '.join(CANONICAL_ORDER)}.",
+            file=sys.stderr,
+        )
+        return 1
+    requested_set = set(requested)
+    requested_set.add("general")
+    ordered = [module for module in CANONICAL_ORDER if module in requested_set]
+
+    # Read each module from the skill folder. A missing file means the
+    # skill itself is broken — fail loudly rather than silently producing a
+    # half-baked standard.
+    parts: list[str] = []
+    for name in ordered:
+        path = skill_dir / f"{name}.md"
+        if not path.exists():
+            print(f"error: module file missing: {path}", file=sys.stderr)
+            return 1
+        parts.append(path.read_text(encoding="utf-8"))
+
+    coding_standards_text = "\n".join(parts).rstrip() + "\n"
+
+    # Refuse to overwrite an existing docs/coding-standards.md; print its
+    # head to stderr so the caller can decide what to do.
+    target = project_dir / "docs" / "coding-standards.md"
+    if target.exists():
+        head = "\n".join(target.read_text(encoding="utf-8").splitlines()[:20])
+        print(
+            f"existing docs/coding-standards.md found at {target}.\n"
+            f"first 20 lines:\n---\n{head}\n---\n"
+            "refusing to overwrite. Move it aside or pick a different directory.",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Write (or, on a dry run, describe) docs/coding-standards.md.
+    actions: list[str] = []
+    if args.dry_run:
+        actions.append(
+            f"[dry-run] would write docs/coding-standards.md "
+            f"({len(coding_standards_text)} bytes, modules: {', '.join(ordered)})"
+        )
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(coding_standards_text, encoding="utf-8")
+        actions.append(
+            f"wrote docs/coding-standards.md "
+            f"({len(ordered)} modules: {', '.join(ordered)})"
+        )
+
+    # Load the CLAUDE.md template once; both CLAUDE.md and AGENTS.md are
+    # derived from it.
+    template_path = skill_dir / "templates" / "claude-md-template.md"
+    if not template_path.exists():
+        print(f"error: CLAUDE.md template missing: {template_path}", file=sys.stderr)
+        return 1
+    template_text = template_path.read_text(encoding="utf-8")
+
+    # Touch CLAUDE.md always, and AGENTS.md only when asked. One action
+    # line per file so the calling agent can quote the result verbatim.
+    agent_files: list[tuple[str, str]] = [("CLAUDE.md", "# CLAUDE.md")]
+    if args.touch_agents_md:
+        agent_files.append(("AGENTS.md", "# AGENTS.md"))
+
+    for filename, h1 in agent_files:
+        actions.append(
+            touch_agent_file(
+                project_dir=project_dir,
+                filename=filename,
+                h1=h1,
+                template_text=template_text,
+                dry_run=args.dry_run,
+            )
+        )
+
+    # Report. One line per action.
+    print("scaffold complete:")
+    for action in actions:
+        print(f"  - {action}")
     return 0
-  }
 
-  // Parse the command line. Any parse or validation failure maps to the
-  // bad-arguments exit code.
-  let options: ScaffoldOptions
-  try {
-    options = parseCliArgs(argv)
-  } catch (error) {
-    console.error(`error: ${(error as Error).message}`)
-    return 1
-  }
 
-  const projectDir = resolve(options.projectDir)
-  const skillDir = resolve(options.skillDir)
-  const requested = options.include
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-
-  // Sanity-check the project directory unless --force is set. Refusing
-  // to write into a random directory protects Thomas from typos.
-  if (!options.force) {
-    const hasMarker = PROJECT_MARKERS.some((marker) => existsSync(join(projectDir, marker)))
-    if (!hasMarker) {
-      console.error(
-        `error: ${projectDir} doesn't look like a project root ` +
-          `(no ${PROJECT_MARKERS.join(', ')}). Pass --force to override.`,
-      )
-      return 1
-    }
-  }
-
-  // Validate the requested modules and put them in canonical order.
-  const known = new Set<string>(CANONICAL_ORDER)
-  const unknown = requested.filter((module) => !known.has(module))
-  if (unknown.length > 0) {
-    console.error(
-      `error: unknown module(s): ${unknown.join(', ')}. ` +
-        `Known modules: ${CANONICAL_ORDER.join(', ')}.`,
-    )
-    return 1
-  }
-  const requestedSet = new Set(requested)
-  requestedSet.add('general')
-  const ordered = CANONICAL_ORDER.filter((module) => requestedSet.has(module))
-
-  // Read each module from the skill folder. A missing file means the
-  // skill itself is broken — fail loudly rather than silently producing
-  // a half-baked standard.
-  const parts: string[] = []
-  for (const name of ordered) {
-    const path = join(skillDir, `${name}.md`)
-    if (!existsSync(path)) {
-      console.error(`error: module file missing: ${path}`)
-      return 1
-    }
-    parts.push(await readFile(path, 'utf8'))
-  }
-
-  const codingStandardsText = `${rstrip(parts.join('\n'))}\n`
-
-  // Refuse to overwrite an existing docs/coding-standards.md; print its
-  // head to stderr so the caller can decide what to do.
-  const target = join(projectDir, 'docs', 'coding-standards.md')
-  if (existsSync(target)) {
-    const head = splitLines(await readFile(target, 'utf8')).slice(0, 20).join('\n')
-    console.error(
-      `existing docs/coding-standards.md found at ${target}.\n` +
-        `first 20 lines:\n---\n${head}\n---\n` +
-        'refusing to overwrite. Move it aside or pick a different directory.',
-    )
-    return 2
-  }
-
-  // Write (or, on a dry run, describe) docs/coding-standards.md.
-  const actions: string[] = []
-  if (options.dryRun) {
-    actions.push(
-      `[dry-run] would write docs/coding-standards.md ` +
-        `(${codingStandardsText.length} bytes, modules: ${ordered.join(', ')})`,
-    )
-  } else {
-    await mkdir(dirname(target), { recursive: true })
-    await writeFile(target, codingStandardsText)
-    actions.push(`wrote docs/coding-standards.md (${ordered.length} modules: ${ordered.join(', ')})`)
-  }
-
-  // Load the CLAUDE.md template once; both CLAUDE.md and AGENTS.md are
-  // derived from it.
-  const templatePath = join(skillDir, 'templates', 'claude-md-template.md')
-  if (!existsSync(templatePath)) {
-    console.error(`error: CLAUDE.md template missing: ${templatePath}`)
-    return 1
-  }
-  const templateText = await readFile(templatePath, 'utf8')
-
-  // Touch CLAUDE.md always, and AGENTS.md only when asked. One action
-  // line per file so the calling agent can quote the result verbatim.
-  const agentFiles: ReadonlyArray<readonly [string, string]> = options.touchAgentsMd
-    ? [
-        ['CLAUDE.md', '# CLAUDE.md'],
-        ['AGENTS.md', '# AGENTS.md'],
-      ]
-    : [['CLAUDE.md', '# CLAUDE.md']]
-  for (const [filename, h1] of agentFiles) {
-    actions.push(
-      await touchAgentFile({ projectDir, filename, h1, templateText, dryRun: options.dryRun }),
-    )
-  }
-
-  // Report. One line per action.
-  console.log('scaffold complete:')
-  for (const action of actions) {
-    console.log(`  - ${action}`)
-  }
-  return 0
-}
-
-process.exit(await main())
+if __name__ == "__main__":
+    sys.exit(main())
