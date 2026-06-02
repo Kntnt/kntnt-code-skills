@@ -1,19 +1,32 @@
 # kntnt-code-skills
 
-A plugin for Claude Code and Cowork that applies Kntnt's coding standard to any code-related task — writing, modifying, refactoring, reviewing, or designing PHP, JavaScript, TypeScript, Python, Bash, WordPress, Gutenberg blocks, Laravel, Svelte, SvelteKit, and any framework added to the standard later. The actual coding rules live in topic modules under `skills/coder/`, one file per language or framework; a single router skill decides which modules to load for the task at hand. The standard is extensible with one file per additional language or framework.
+`kntnt-code-skills` is a plugin for Claude Code and Cowork — a growing toolbox of generally useful tools for working with code, meant to take the routine and friction out of a developer's day. Today it holds two: **Kntnt's coding standard**, a set of rules applied automatically to any code-related task across PHP, JavaScript, TypeScript, Python, Bash, WordPress, Gutenberg blocks, Laravel, Svelte, SvelteKit, and any framework added later; and a **release workflow** — `/release` and `/push` — that automates the bump-commit-tag-push-release cycle for any project. More tools will join them as common developer chores prove worth packaging.
 
-## What the plugin does
+## What you get
 
-The plugin exposes one model-invoked skill and one user-invoked command:
+The plugin exposes one router skill, two release-workflow skills, and one command:
 
-- `coder` — the router. It auto-triggers on code-related prompts (in any language), profiles the project to determine which language and framework axes apply, loads the matching topic modules, and applies their rules to the work. It is also a scaffolder: when a real new project is being started, it offers to assemble `docs/coding-standards.md` from the relevant modules and wire it into `CLAUDE.md` / `AGENTS.md`, so every AI agent working on the codebase has the standard in context before writing code.
-- `/help` — a user-invoked slash command (`/kntnt-code-skills:help [skill-name]`). With no argument it prints a manpage-style overview of the plugin's skills; with a skill name it prints that skill's details. It is disabled for model invocation, so it runs only when you type it. Its output is rendered entirely from the plugin's own `.claude-plugin/plugin.json` and `skills/<name>/SKILL.md` by `scripts/help.py`, so it never drifts from the actual skills.
+- **`coder`** — the router for the coding standard. It auto-triggers on code-related prompts (in any language), profiles the project to see which language and framework axes apply, loads the matching topic modules, and applies their rules. It can also scaffold the standard into a project as files (see *The coding standard* below).
+- **`/release`** — the full release workflow on whatever project you invoke it in: reconcile the changelog with the real changes since the last release, bump the version per Semantic Versioning across every place it lives, integrate a feature branch into the main branch, commit, tag `vX.Y.Z`, push, and publish the platform release. Every irreversible step waits behind a single confirmation.
+- **`/push`** — the routine companion: reconcile the changelog, commit, and push the current branch — no bump, tag, or release. Run it often so the changelog never falls behind.
+- **`/help`** — a typed-only command (`/kntnt-code-skills:help [skill-name]`): a manpage-style overview of the plugin's skills, or one skill's details. Its output is rendered from the plugin's own `.claude-plugin/plugin.json` and `skills/<name>/SKILL.md` by `scripts/help.py`, so it never drifts from the actual skills.
 
-The skill's frontmatter `description` defines the trigger boundary — it fires on any request to write, implement, refactor, fix, review, or design code in any language or framework, and on any task that mentions a covered language, framework, or code construct. The description's examples are in English, but the skill triggers equally on the equivalent request in any language.
+## Installation
 
-## Modules
+The plugin ships as a Claude Code marketplace. In Claude Code or Cowork, run:
 
-The actual coding rules live in topic modules. `SKILL.md` is the router that decides which modules to load; the modules are the contract.
+```
+/plugin marketplace add Kntnt/kntnt-code-skills
+/plugin install kntnt-code-skills@kntnt-code-skills
+```
+
+The first line registers the marketplace from the GitHub repo (the bare `owner/repo` form is interpreted as a GitHub source); the second installs the plugin. Run `/reload-plugins` (or restart the session) if the skills do not appear immediately.
+
+## The coding standard (`coder`)
+
+The `coder` skill is the entry point for code work. It triggers on any request to write, implement, refactor, fix, review, or design code — in any language — profiles the project, loads the rules that apply, and writes to them. Nothing to invoke explicitly, nothing to configure. Its trigger boundary is broad on purpose: it fires on any code-shaped task and on anything that mentions a covered language, framework, or construct, in any language (the description's examples are English, but the equivalent request in any language triggers it equally).
+
+It covers:
 
 | File | Loaded when |
 |---|---|
@@ -26,30 +39,35 @@ The actual coding rules live in topic modules. `SKILL.md` is the router that dec
 | `python.md` | When Python is present. |
 | `bash.md` | When Bash is present. |
 
-The modules are loaded in a canonical order (later wins on points where they differ); the override relationships are stated explicitly inside each module. See [`skills/coder/SKILL.md`](skills/coder/SKILL.md) for the full flow, the override relationships, and the *Adding a new module* section for how to extend the standard with new frameworks (Laravel, Svelte, SvelteKit, …).
+A project can sit on several axes at once — a WordPress block plugin is PHP + WordPress + TypeScript + Gutenberg — and the skill loads them all. How that load order and the override relationships work, and how to extend the standard with a new language or framework, is in *How `coder` is organized* below.
 
-## Installation
+**Scaffolding into a project.** When you start a real new project, `coder` offers to write the relevant rules into `docs/coding-standards.md` and wire them into `CLAUDE.md` / `AGENTS.md`, so every AI agent on the codebase has the standard in context before writing a line. To run the scaffolder by hand, see *Advanced usage*.
 
-The plugin ships as a Claude Code marketplace. In Claude Code or Cowork, run:
+## Releasing (`/release` and `/push`)
 
-```
-/plugin marketplace add Kntnt/kntnt-code-skills
-/plugin install kntnt-code-skills@kntnt-code-skills
-```
+`/release` and `/push` automate the "bump, commit, tag, push, release" cycle for any project — not only this one. `/release` reconciles `CHANGELOG.md` against the real changes since the last release (commit messages first, diffs only as a fallback), bumps the version per Semantic Versioning across every place it lives, integrates a feature branch into the main branch by rebase and fast-forward, commits, tags `vX.Y.Z`, pushes, and publishes the platform release with notes from the changelog — plus the built user archive when the project ships one. Every irreversible step waits behind a single confirmation. `/push` is the routine companion: it reconciles the changelog, commits, and pushes the current branch, without bumping, tagging, or releasing.
 
-The first line registers the marketplace from the GitHub repo (the bare `owner/repo` form is interpreted as a GitHub source); the second installs the plugin from it. Run `/reload-plugins` (or restart the session) if the skill does not appear immediately.
+Release notes for each version live in [`CHANGELOG.md`](CHANGELOG.md). The classification policy that decides which release class a change lands in is under *Versioning* below.
 
-**Local development (fallback).** Load the repo directly without installing:
+**Platform support.** Today `/release` publishes to **GitHub** via the `gh` CLI. Further forges are planned, detected by the remote's **host** rather than a fixed domain — so self-hosted and EU-hosted instances are first-class, not afterthoughts:
 
-```bash
-claude --plugin-dir /path/to/kntnt-code-skills
-```
+- **GitLab** — gitlab.com, self-managed, GitLab by Stackhero, and EU-hosted instances — via `glab`.
+- **Gitea** and **Forgejo** — including **Codeberg** (EU-hosted Forgejo) — via `tea`.
 
-Release notes for each version live in [`CHANGELOG.md`](CHANGELOG.md). The versioning policy that governs which release class a change lands in is described under *Versioning* below.
+On a remote whose forge is not yet supported, `/release` performs every git step (bump, commit, tag, push) and skips only the platform release, telling you so.
 
-## Scaffolding the standard into a project
+## Requirements
 
-The `coder` skill calls `bin/scaffold` automatically when scaffolding is appropriate, but the script can also be run directly. It is a command-style Python script — executable via its `#!/usr/bin/env -S uv run --script` shebang, with [uv](https://docs.astral.sh/uv/) as its only runtime dependency (it provisions Python from the script's PEP 723 metadata; the script itself is standard-library only):
+- **Claude Code or Cowork** with support for skills and YAML frontmatter.
+- **[uv](https://docs.astral.sh/uv/)** — runs the bundled Python scripts (`bin/scaffold`, `scripts/audit.py`, `scripts/help.py`, `scripts/release.py`); it provisions Python 3.12+ from each script's PEP 723 metadata, and all of them use the standard library only.
+- **git**, and for `/release`'s platform publishing, the relevant forge CLI — **`gh`** for GitHub today.
+- The `coder` skill itself applies the standard from context with no external dependencies. When there is no file-system access (chat-only, no working directory), it skips scaffolding and applies the standard from context.
+
+## Advanced usage
+
+Most usage is just invoking the skills. Two things are available for going further, short of contributing to the plugin itself.
+
+**Running the scaffolder directly.** `coder` calls `bin/scaffold` automatically when scaffolding is appropriate, but it can also be run by hand. It is a command-style Python script — executable via its `#!/usr/bin/env -S uv run --script` shebang, with [uv](https://docs.astral.sh/uv/) as its only runtime dependency (it provisions Python from the script's PEP 723 metadata; the script itself is standard-library only):
 
 ```bash
 skills/coder/bin/scaffold \
@@ -59,15 +77,26 @@ skills/coder/bin/scaffold \
     --touch-agents-md
 ```
 
-Pass the modules that match the project's profile. `general` is always included automatically. The script writes `docs/coding-standards.md` and adds the import to `CLAUDE.md` (and to `AGENTS.md` if `--touch-agents-md` is set). It refuses to overwrite an existing `docs/coding-standards.md` and prints its first 20 lines instead, so you can decide what to do.
+Pass the modules that match the project's profile; `general` is always included automatically. The script writes `docs/coding-standards.md` and adds the import to `CLAUDE.md` (and to `AGENTS.md` with `--touch-agents-md`). It refuses to overwrite an existing `docs/coding-standards.md` and prints its first 20 lines instead. Run `skills/coder/bin/scaffold --help` for the full set of options, including `--dry-run` and `--force`.
 
-Run `skills/coder/bin/scaffold --help` for the full set of options, including `--dry-run` and `--force`.
+**Release-skill arguments.** `/release` and `/push` take optional arguments:
 
-## Updating the standard
+- `/release minor` / `major` / `1.4.0` — force the bump level or an exact version, overriding the changelog-derived proposal.
+- `/release --no-build` — skip rebuilding the user archive (when you just built it).
+- `/release --yes` — skip the confirmation gate (never the first-run detection of where the version lives).
+- `/push "message"` — use an exact commit message instead of an auto-drafted one.
 
-Updating the standard means editing one or more module files in `skills/coder/`. Projects that have already scaffolded their own `docs/coding-standards.md` keep their snapshot until they explicitly re-scaffold; this is intentional, so updates to the standard don't silently change project behaviour.
+## Contributing
 
-## File structure
+Contributions are welcome within the project's scope. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for which kinds of changes are wanted, which want an issue first, and which are better kept in a fork. The rest of this section is the reference for changing the plugin safely.
+
+For local development, load the repo directly without installing:
+
+```bash
+claude --plugin-dir /path/to/kntnt-code-skills
+```
+
+## Repository layout
 
 ```
 kntnt-code-skills/
@@ -82,23 +111,31 @@ kntnt-code-skills/
 ├── commands/
 │   └── help.md
 ├── skills/
-│   └── coder/
-│       ├── SKILL.md
-│       ├── general.md
-│       ├── php.md
-│       ├── wordpress.md
-│       ├── wordpress-block.md
-│       ├── typescript.md
-│       ├── javascript-vanilla.md
-│       ├── python.md
-│       ├── bash.md
-│       ├── bin/
-│       │   └── scaffold
-│       └── templates/
-│           └── claude-md-template.md
+│   ├── coder/
+│   │   ├── SKILL.md
+│   │   ├── general.md
+│   │   ├── php.md
+│   │   ├── wordpress.md
+│   │   ├── wordpress-block.md
+│   │   ├── typescript.md
+│   │   ├── javascript-vanilla.md
+│   │   ├── python.md
+│   │   ├── bash.md
+│   │   ├── bin/
+│   │   │   └── scaffold
+│   │   └── templates/
+│   │       └── claude-md-template.md
+│   ├── push/
+│   │   └── SKILL.md
+│   └── release/
+│       └── SKILL.md
+├── lib/
+│   ├── changelog.md
+│   └── gitignore-base.txt
 ├── scripts/
 │   ├── audit.py
-│   └── help.py
+│   ├── help.py
+│   └── release.py
 ├── .pre-commit-config.yaml
 ├── .gitignore
 ├── CHANGELOG.md
@@ -108,11 +145,17 @@ kntnt-code-skills/
 └── README.md
 ```
 
-`SKILL.md` is a short router that references the topic modules. The modules are self-contained so each reads correctly whether loaded alone by the router or concatenated into a single `docs/coding-standards.md` by the scaffolder. All files are written in English, per the standard's own language rule.
+`commands/` holds the typed-only `/help` command. `skills/` holds the three skills: `coder` (the coding-standard router and its topic modules) and the `release`/`push` workflow skills. `lib/` holds text resources that skills include — `changelog.md` (the reconciliation procedure shared by `release` and `push`) and `gitignore-base.txt` (the universal `.gitignore` baseline). `scripts/` holds the standalone `uv`-run tools: the audit, the `/help` renderer, and `release.py`'s deterministic CHANGELOG mechanics.
+
+## How `coder` is organized
+
+The coding rules live in topic modules under `skills/coder/`, one file per language or framework. `SKILL.md` is a short **router** that decides which modules to load for a given project; the modules are the contract. They load in a canonical order (later wins on points where they differ), and override relationships are stated explicitly inside each module — WordPress overrides parts of PHP, the Gutenberg-block module overrides parts of TypeScript. The full flow, the override map, and the five-step *Adding a new module* checklist are in [`skills/coder/SKILL.md`](skills/coder/SKILL.md). The modules are self-contained, so each reads correctly whether the router loads it alone or the scaffolder concatenates it into one `docs/coding-standards.md`. All files are written in English, per the standard's own language rule.
+
+**Updating the standard** means editing one or more module files in `skills/coder/`. Projects that have already scaffolded their own `docs/coding-standards.md` keep that snapshot until they explicitly re-scaffold — intentional, so a change to the standard never silently changes a project's behaviour.
 
 ## Versioning
 
-The plugin follows Semantic Versioning, adapted to a domain where a *change* is usually a coding rule rather than executable behaviour. The unit that determines the bump class is the code the standard would prescribe for a given situation. Each release is recorded in [`CHANGELOG.md`](CHANGELOG.md) using Keep a Changelog 1.1.0.
+Two standards govern releases: **Semantic Versioning** for the version number, and **[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 1.1.0** for [`CHANGELOG.md`](CHANGELOG.md). SemVer is adapted here to a domain where a *change* is usually a coding rule rather than executable behaviour; the unit that determines the bump class is the code the standard would prescribe for a given situation.
 
 **Major (X.0.0).** A change that alters what the standard prescribes for a category of prior situations without being a bug fix. Examples: switching the default brace style, changing a default toolchain, dropping `declare(strict_types=1)`, or reversing an override relationship between modules. Re-applying the standard to existing code would now yield materially different code.
 
@@ -124,11 +167,11 @@ The plugin follows Semantic Versioning, adapted to a domain where a *change* is 
 
 **License change.** The transition to Apache 2.0 is recorded as a *Changed* event in whichever release ships it. It does not itself change what the standard prescribes, so it does not force a major bump.
 
-**Version-bump moment.** A release is one commit that does four things together: (1) bump the `version` field in `.claude-plugin/plugin.json`, (2) bump the matching `version` in `skills/coder/SKILL.md`'s frontmatter, (3) move the `[Unreleased]` block in `CHANGELOG.md` to a concrete version heading with an ISO date, and (4) set a matching git tag. `scripts/audit.py` verifies the first three are consistent; the git tag is a manual responsibility at release time.
+**Version-bump moment.** A release is one commit that does four things together: (1) bump the `version` field in `.claude-plugin/plugin.json`, (2) bump the matching `version` in `skills/coder/SKILL.md`'s frontmatter, (3) move the `[Unreleased]` block in `CHANGELOG.md` to a concrete version heading with an ISO date, and (4) set a matching git tag. `scripts/audit.py` verifies the first three are consistent; the git tag is a manual responsibility at release time. The `/release` skill performs all four steps end to end.
 
 ## Authoring rules
 
-These rules govern how to edit the files in this plugin. They exist to prevent a recurring failure mode where well-meaning changes reintroduce architectural drift — duplicated prose between modules, cross-references that bind a module to one specific sibling, rules that contradict each other silently. The rules apply to anyone (human or AI) modifying anything under `skills/`.
+These rules govern how to edit the files in this plugin. They exist to prevent a recurring failure mode where well-meaning changes reintroduce architectural drift — duplicated prose between modules, cross-references that bind a module to one specific sibling, rules that contradict each other silently. They apply to anyone (human or AI) modifying anything under `skills/`.
 
 **1. Modules are self-contained.** Each topic module reads correctly whether the router loads it alone or the scaffolder concatenates it into one file. A module describes its own rules; it does not depend on a sibling module being present to make sense.
 
@@ -146,7 +189,7 @@ These rules govern how to edit the files in this plugin. They exist to prevent a
 
 ### Audit checklist before committing changes
 
-Items marked **(auto)** are enforced by `scripts/audit.py`, which runs as a pre-commit hook and as the `audit` GitHub Actions job on every push and PR. Both run it with [uv](https://docs.astral.sh/uv/) (`uv run scripts/audit.py`), which provisions Python from the script's PEP 723 metadata. Items marked **(manual)** require human judgement and are not scripted. Install the pre-commit hook locally with `uv tool install pre-commit && pre-commit install`; from then on the audit fires before every commit and CI re-runs it on the remote.
+Items marked **(auto)** are enforced by `scripts/audit.py`, which runs as a pre-commit hook and as the `audit` GitHub Actions job on every push and PR. Both run it with [uv](https://docs.astral.sh/uv/) (`uv run scripts/audit.py`), which provisions Python from the script's PEP 723 metadata. Items marked **(manual)** require human judgement. Install the pre-commit hook locally with `uv tool install pre-commit && pre-commit install`; from then on the audit fires before every commit and CI re-runs it on the remote.
 
 - **(auto)** `.claude-plugin/plugin.json` parses as JSON, carries the `name`, `version`, and `description` fields, and its `version` matches the latest non-`[Unreleased]` heading in `CHANGELOG.md`.
 - **(auto)** The topic-module files in `skills/coder/` and `bin/scaffold`'s `CANONICAL_ORDER` list the same modules — no module file without a canonical-order entry, no entry without a file.
@@ -155,10 +198,6 @@ Items marked **(auto)** are enforced by `scripts/audit.py`, which runs as a pre-
 - **(manual)** Any override relationship a module participates in is stated in that module's own prose.
 - **(manual)** The modules table in `SKILL.md`, the detection clauses in step 1 of the flow, and the canonical order in step 4 all agree with the set of module files present.
 - **(manual)** All prose and identifiers are in English.
-
-## Requirements
-
-The plugin requires Claude Code or Cowork with support for skills and YAML frontmatter. The `coder` skill applies the standard from context with no external dependencies. The scaffolder (`bin/scaffold`) requires [uv](https://docs.astral.sh/uv/) (which provisions Python 3.12+ from the script's PEP 723 metadata) and file-system access to the project directory; when access is not available (chat-only, no working directory), the skill applies the standard from context and skips scaffolding. The helper scripts — the audit (`scripts/audit.py`) and the `/help` command's renderer (`scripts/help.py`) — are run with [uv](https://docs.astral.sh/uv/), which provisions Python 3.12+ from each script's PEP 723 metadata; both use the standard library only.
 
 ## License
 

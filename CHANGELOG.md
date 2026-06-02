@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-02
+
+### Added
+
+- `/release` and `/push` slash commands (skills) that automate the "bump, commit, tag, push, release" workflow across any project. `/release` reconciles `CHANGELOG.md` against the real changes since the last release, bumps the version per Semantic Versioning across every place it lives, integrates a feature branch into the main branch by rebase and fast-forward, commits, tags `vX.Y.Z`, pushes, and creates the platform release (GitHub) with notes drawn from the changelog and, when the project ships one, the built user archive. `/push` is the routine companion — it reconciles the changelog, commits, and pushes the current branch, without bumping, tagging, or releasing. Both are deliberately general-purpose (WordPress plugins, Laravel, Bun, React, Python, …) and gate every irreversible step behind a single confirmation, with a "when in doubt, ask" triggering posture.
+- `lib/` — shared text resources that skills include: `changelog.md`, the changelog-reconciliation procedure used by both `/release` and `/push`, and `gitignore-base.txt`, a universal `.gitignore` baseline offered on first run when a project has none.
+- `scripts/release.py` — a standalone PEP 723 script run via `uv` that performs the deterministic CHANGELOG mechanics: `promote` (promote `[Unreleased]` to a dated version heading, open a fresh `[Unreleased]`, maintain the reference-link block, and emit the release-note body with heading levels shifted up one) and `extract` (re-emit an existing version's body when resuming a partial release).
+
+### Changed
+
+- `README.md` restructured around three audiences (users, then builders, then contributors) and expanded to document the `/release` and `/push` skills, the planned forge support — GitHub today via `gh`; GitLab via `glab` and the Gitea/Forgejo family (including Codeberg) via `tea`, detected by the remote's host rather than a fixed domain — and the new `lib/` and `scripts/release.py`. *Versioning* now names both governing standards (Semantic Versioning and Keep a Changelog 1.1.0).
+
 ## [0.3.0] — 2026-05-29
 
 ### Added
@@ -60,7 +72,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.4.0
 [0.2.1]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.1.1
