@@ -1,6 +1,6 @@
 ---
 name: coder
-version: 0.5.0
+version: 0.6.0
 description: >
   Apply Kntnt's coding standard to any code-shaped task, in any
   language or framework. Writing, modifying, refactoring, reviewing,

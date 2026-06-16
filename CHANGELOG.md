@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.6.0] – 2026-06-16
+
 ### Added
 
 - `coder` standard — a **Defensive coding** rule in `general.md`. A guard is written only where a real, present condition needs it (an untrusted boundary, a documented platform quirk, a contract a caller can plausibly break); defensive code against states the surrounding invariants already rule out — redundant null checks, `try`/`catch` around calls that cannot throw, re-validation of already-validated data, dead `else` branches, fallbacks for a self-constructed dependency — is forbidden, and a warranted guard names the threat it defends against in its `//` topic sentence.
@@ -88,7 +90,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.3.0
