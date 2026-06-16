@@ -38,8 +38,17 @@ Extract duplication only when two things represent the same concept —
 not merely similar syntax.
 
 **TDD** — Write a failing test before writing production code. Follow
-Red/Green/Refactor. Structure each test as Arrange-Act-Assert with a
-name that states the expected behaviour.
+Red/Green/Refactor, each test structured as Arrange-Act-Assert with a
+name that states the expected behaviour. The RED step is not ceremony:
+a test that has never been observed to fail is of unknown value, so
+the failing run is a real artifact — demonstrate it (a test seen
+failing before the code that satisfies it exists), never infer it
+after the fact. And automate every test that can be made to constrain
+behaviour meaningfully: pick the lowest layer that does so, escalate
+to integration or end-to-end only where a unit test cannot capture
+the behaviour, and reserve human verification for the irreducibly
+subjective (visual feel, aesthetics, pacing) — stating that residual
+explicitly rather than leaving it implicit.
 
 **Deep modules** — A module's external interface must be narrow and
 simple relative to the complexity it hides. This depth creates a clean
@@ -239,6 +248,23 @@ Always prefer the modern construction over the legacy one. Use syntactic
 sugar where the language offers it: nullish coalescing, null-safe operator,
 spread, destructuring, arrow functions, match/switch expressions, pattern
 matching, template literals. Specific examples are in the language modules.
+
+### Defensive coding
+
+Write a guard only where a real, present condition needs it — an
+untrusted boundary (user input, a network response, deserialization),
+a documented platform quirk, a contract a caller can plausibly break.
+Defensive code against states the surrounding invariants already rule
+out is forbidden: redundant null checks, `try`/`catch` around calls
+that cannot throw, re-validation of data already validated upstream,
+`else` branches for conditions that cannot occur, fallbacks for a
+dependency the module constructs itself. Such code is dead weight — it
+adds paths no test covers, dilutes the real contract, and feigns a
+doubt the types and invariants have already settled. When a guard is
+warranted, the `//` topic sentence above it names the threat it
+defends against — exactly as the dispatch example under *Paragraphs
+and comments* does ("defense-in-depth in case the upstream validator
+is bypassed").
 
 ### Identifiers
 

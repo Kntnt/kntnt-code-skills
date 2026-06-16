@@ -44,13 +44,14 @@ import re
 import sys
 from pathlib import Path
 
-# A version heading, e.g. `## [0.3.0] — 2026-05-29`, or the dateless
-# `## [Unreleased]`. The separator tolerates either an em-dash or a hyphen
-# so the script mirrors whichever style the file already uses.
+# A version heading, e.g. `## [0.3.0] – 2026-05-29`, or the dateless
+# `## [Unreleased]`. The separator class accepts en-dash, em-dash, or a
+# hyphen so an existing heading parses whatever dash it was written with;
+# the writer always emits the canonical en-dash (see SEPARATOR).
 # The trailing `[ \t]*` matches only same-line whitespace — never a newline —
 # so substitution does not eat the blank line that follows a heading.
 VERSION_HEADING_RE = re.compile(
-    r"^## \[(?P<name>[^\]]+)\](?P<sep>[ \t]*[—\-][ \t]*)?(?P<date>\d{4}-\d{2}-\d{2})?[ \t]*$",
+    r"^## \[(?P<name>[^\]]+)\](?:[ \t]*[—–\-][ \t]*)?(?P<date>\d{4}-\d{2}-\d{2})?[ \t]*$",
     re.MULTILINE,
 )
 
@@ -67,6 +68,11 @@ LINK_BASE_RE = re.compile(
 # build suffix. Strict enough to catch a fat-fingered argument, loose enough
 # not to reject legitimate suffixes.
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+
+# The separator the writer emits between a version and its date. Kntnt's
+# house style is a spaced en-dash; this is the single source of that choice,
+# so a promoted heading is always consistent regardless of older headings.
+SEPARATOR = " – "
 
 
 def fail(message: str) -> None:
@@ -92,17 +98,6 @@ def normalize_repo_url(url: str) -> str:
     if ssh:
         return f"https://{ssh['host']}/{ssh['path']}"
     return re.sub(r"\.git$", "", url)
-
-
-def detect_separator(text: str) -> str:
-    """The `] <sep> date` separator used by the file's existing released
-    headings (mirroring its style), or the Keep a Changelog default ` - `
-    when there is no released heading to copy."""
-
-    for match in VERSION_HEADING_RE.finditer(text):
-        if match["date"] and match["sep"]:
-            return match["sep"]
-    return " - "
 
 
 def latest_released_version(text: str) -> str | None:
@@ -187,8 +182,7 @@ def promote(
     if not UNRELEASED_RE.search(text):
         raise ValueError("no '## [Unreleased]' heading found")
 
-    separator = detect_separator(text)
-    promoted = f"## [Unreleased]\n\n## [{version}]{separator}{date}"
+    promoted = f"## [Unreleased]\n\n## [{version}]{SEPARATOR}{date}"
     new_text = UNRELEASED_RE.sub(lambda _: promoted, text, count=1)
     new_text = update_links(new_text, version, repo_url)
 
