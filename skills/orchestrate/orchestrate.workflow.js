@@ -102,16 +102,24 @@ const budgetFloor = args.budgetFloor ?? 60000
 // Title lookup for logging and report records.
 const titleOf = (number) => issuesByNumber.get(number)?.title || `issue ${number}`
 
-// The verifier panel for an issue. EXTENSION POINT: scale to the issue's real
-// risk and use the project's own review agents (a silent-failure hunter, a
-// test-coverage analyzer, a type-design analyzer) via opts.agentType where they
-// exist. The default panel gives every issue an independent correctness lens
-// plus test-quality and security lenses; prune for a trivial change.
-const lensesFor = (_issue) => [
+// The default verifier panel, used when planning has not annotated the issue:
+// an independent correctness lens, a test-quality lens, and a security lens.
+const DEFAULT_LENSES = [
   'correctness against the issue intent and its acceptance criteria',
   'test quality — is the red demonstrated, are the tests load-bearing, does every criterion map to a test',
   'security, error handling, and edge cases',
 ]
+
+// The verifier panel for an issue. The orchestrator sets `lenses` per issue
+// during planning, scaled to its real risk — one lens for a trivial change,
+// the full panel plus a security lens for a write path, a permission gate, or
+// an irreversible delete. A lens is a plain brief string, or a
+// { brief, agentType } object to route to one of the project's own review
+// agents (a silent-failure hunter, a test-coverage analyzer, …).
+const lensesFor = (issue) => {
+  const lenses = issue?.lenses
+  return Array.isArray(lenses) && lenses.length > 0 ? lenses : DEFAULT_LENSES
+}
 
 // Shape an implementer result plus its verify outcome into the record that
 // orchestrate.py report consumes.
@@ -153,14 +161,19 @@ const fix = (number, impl, findings) =>
 const verify = async (number, impl) => {
   const lenses = lensesFor(issuesByNumber.get(number))
   const verdicts = await parallel(
-    lenses.map((lens) => () =>
-      agent(
-        `Adversarially review branch ${impl.branch} for issue #${number} ("${titleOf(number)}") through ONE lens: ${lens}.\n` +
+    lenses.map((lens) => () => {
+      // A lens is a brief string, or { brief, agentType } to use a named agent.
+      const brief = typeof lens === 'string' ? lens : lens.brief
+      const opts = { label: `verify:#${number}:${brief.split(' ')[0]}`, phase: 'Verify', schema: VERDICT_SCHEMA }
+      if (typeof lens === 'object' && lens.agentType) opts.agentType = lens.agentType
+
+      return agent(
+        `Adversarially review branch ${impl.branch} for issue #${number} ("${titleOf(number)}") through ONE lens: ${brief}.\n` +
           `You did NOT write this code. Read the issue's Agent Brief (\`gh issue view ${number} --comments\`) and the standard at ${standardsPath}.\n` +
           `Check ONLY what the gates cannot — do not re-check lint, build, or tests that already passed. Default to clear=false if you find anything real, and be specific.`,
-        { label: `verify:#${number}:${lens.split(' ')[0]}`, phase: 'Verify', schema: VERDICT_SCHEMA },
-      ),
-    ),
+        opts,
+      )
+    }),
   )
   return verdicts.filter(Boolean)
 }
@@ -197,8 +210,8 @@ const integrate = async (record) => {
     { label: `integrate:#${record.number}`, phase: 'Integrate', schema: INTEGRATE_SCHEMA },
   )
 
-  // A failed integration parks the otherwise-green issue with its reason.
-  if (result == null) return { ...record, verify: `${record.verify} | integration returned nothing` }
+  // A failed or missing integration parks the otherwise-green issue with its reason.
+  if (result == null) return { ...record, status: 'parked', blockers: [...record.blockers, 'integrator returned nothing'] }
   if (!result.integrated) return { ...record, status: 'parked', blockers: [...record.blockers, result.blocker || result.summary] }
   return { ...record, verify: `${record.verify} | ${result.summary}` }
 }
@@ -226,8 +239,15 @@ for (let index = 0; index < waves.length; index += 1) {
 
   // Integrate the green ones in issue order; park everything else for the report.
   for (const record of built.sort((a, b) => a.number - b.number)) {
-    if (record.status === 'done') verdicts.push(await integrate(record))
-    else parked.push(record)
+    if (record.status !== 'done') {
+      parked.push(record)
+      continue
+    }
+
+    // Route by the integration outcome: a clean land is done, a conflict parks.
+    const integrated = await integrate(record)
+    if (integrated.status === 'done') verdicts.push(integrated)
+    else parked.push(integrated)
   }
 }
 
