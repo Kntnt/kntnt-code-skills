@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-16
+
 ### Added
 
 - `/orchestrate` skill (`skills/orchestrate/SKILL.md`) — an away-from-keyboard, multi-agent build that turns a project's **`ready-for-agent`** issues (from the `to-issues` → `triage` pipeline, each with an agent brief and a `Blocked by` graph) into implemented, independently verified, integrated code. A deterministic helper (`scripts/orchestrate.py`, with a pytest suite in `tests/`) computes the dependency graph and concurrency waves, checks red-before-green commit ordering, and folds the sub-agents' verdicts into the final report; a Workflow-tool engine (`skills/orchestrate/orchestrate.workflow.js`) drives the per-issue lifecycle — implement (test-first, demonstrating the red), independently verify (adversarial, only what the gates cannot), integrate in dependency order — with the Agent tool (optionally `/goal`) as the portable fallback. Every sub-agent runs inside the interactive session (subscription pool, never headless `claude -p`), with the strong model and high effort spent on implementers and verifiers rather than routing; it excludes `ready-for-human` issues, scales verification to risk, caps the fix↔verify loop, and stops short of releasing — bump, tag, and platform release stay with `/release`. Auto-discovered by `scripts/help.py`, so `/help` lists it without further wiring.
@@ -76,7 +78,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.3.0
 [0.2.1]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.2.1
