@@ -19,7 +19,8 @@ __pycache__/
 
 
 # Claude Code
-.claude
+.claude/*
+!.claude/settings.json
 
 # Eval runner output
 evals/workspace/

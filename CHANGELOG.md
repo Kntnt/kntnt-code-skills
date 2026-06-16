@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Added
 
 - `coder` standard — a **Defensive coding** rule in `general.md`. A guard is written only where a real, present condition needs it (an untrusted boundary, a documented platform quirk, a contract a caller can plausibly break); defensive code against states the surrounding invariants already rule out — redundant null checks, `try`/`catch` around calls that cannot throw, re-validation of already-validated data, dead `else` branches, fallbacks for a self-constructed dependency — is forbidden, and a warranted guard names the threat it defends against in its `//` topic sentence.
+- `.claude/settings.json` — a tracked, curated settings file carrying the recommended `Bash(uv:*)` permission for contributors, while `.gitignore` is narrowed (`.claude/*` plus `!.claude/settings.json`) so that one shared file is versioned and per-user `.claude/` state (`settings.local.json`, and the like) stays ignored.
 
 ### Changed
 
