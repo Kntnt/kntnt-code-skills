@@ -85,7 +85,7 @@ Show the plan from step 2 — scope, graph, waves, and whether the run will merg
 
 ### 4. Build (engine)
 
-**Preferred — the Workflow tool.** Launch `skills/orchestrate/orchestrate.workflow.js` with the plan JSON (plus `merge`, `maxFixRounds`) as `args`. The control flow — wave order, the capped fix↔verify loop, parallel-implement-then-serial-integrate — is code there, so it cannot drift over a long unattended run; agents run in the subscription pool; parallel issues are worktree-isolated; the run is budget-bounded and resumable via its `runId`.
+**Preferred — the Workflow tool.** Launch `skills/orchestrate/orchestrate.workflow.js` with the plan JSON (plus `merge`, `maxFixRounds`, and each issue's risk-scaled verifier panel `lenses`, set during planning) as `args`. The control flow — wave order, the capped fix↔verify loop, parallel-implement-then-serial-integrate — is code there, so it cannot drift over a long unattended run; agents run in the subscription pool; parallel issues are worktree-isolated; the run is budget-bounded and resumable via its `runId`.
 
 **Fallback — the Agent tool.** Where the Workflow tool is unavailable (some Cowork / portable contexts), drive the same lifecycle from this session with the Agent tool, still calling `orchestrate.py` for the plan and the report. Use `/goal` for the outer loop (see below).
 
@@ -112,7 +112,7 @@ Put the strong model and the high effort where the judgement is, not where the r
 
 - **Implementers and the adversarial verifiers** (correctness-against-intent, security, error-handling) — **strongest tier, high reasoning effort.** This is where clean, correct code is born and where real bugs are caught; it is worth the spend.
 - **Mechanical leaves** — test-coverage mapping, an integration smoke pass — can run a cheaper tier or, better, be replaced by code.
-- **The spine is code, so there is no expensive "orchestrator LLM" doing routing.** The genuinely cheap deterministic work — is the graph acyclic, did the gates exit green, is there a red-before-green commit, does each criterion map to a test — belongs to the helper and the gate run (CPU, not tokens), never to a sub-agent reading text by eye.
+- **The spine is code, so there is no expensive "orchestrator LLM" doing routing.** The genuinely cheap deterministic work — is the graph acyclic (`orchestrate.py plan`), did the gates exit green, is there a red-before-green commit (`orchestrate.py redgreen`), does each criterion map to a test — belongs to the helper and the gate run (CPU, not tokens), never to a sub-agent reading text by eye.
 - The one-time planning judgement (reading the briefs to set each issue's risk and verifier panel) can run on the session model.
 
 The earlier instinct — "put the orchestrator on the top tier because verification rides on its judgement" — is inverted: the orchestrator only reads verdicts and routes, which is the cheapest work or pure code. The judgement lives in the verifier and implementer sub-agents, and that is where the tier and the effort should go.
@@ -145,6 +145,6 @@ Two cautions. Run `/goal` **interactively** — `claude -p "/goal …"` is headl
 
 ## Files this skill uses
 
-- `scripts/orchestrate.py` — deterministic helper: `plan` (issues JSON → dependency graph + waves) and `report` (verdicts JSON → consolidated report). Never calls `claude`.
+- `scripts/orchestrate.py` — deterministic helper: `plan` (issues JSON → dependency graph + waves), `redgreen` (git-log → red-before-green verdict), and `report` (verdicts JSON → consolidated report). Never calls `claude`; covered by `tests/test_orchestrate.py`.
 - `skills/orchestrate/orchestrate.workflow.js` — the Workflow-tool engine: implement → verify → integrate over the planned waves, agents in the subscription pool.
 - Reads (per project): `docs/coding-standards.md`, the issues' agent briefs, the definition of done, the test strategy, and the cited ADRs / design docs.

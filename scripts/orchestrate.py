@@ -19,9 +19,12 @@ must be done the same way every time:
 
 It never calls `claude`. Spawning sub-agents is the orchestrator's job and
 runs inside the interactive session — so it counts against the subscription
-pool, not the headless (`claude -p`) credit. This script only reads JSON on
-stdin and writes JSON or Markdown to stdout; it shells out to nothing. Feed
-`plan` the output of `gh issue list --json number,title,labels,body`.
+pool, not the headless (`claude -p`) credit. This script only reads from stdin
+and writes to stdout; it shells out to nothing — the caller runs `gh` and
+`git` and pipes their output in:
+
+  * `plan`     <- `gh issue list --json number,title,labels,body`
+  * `redgreen` <- `git log --reverse --no-merges --format='commit %H' --name-only <base>..<head>`
 
 Standard library only; the PEP 723 block pins only the Python version so
 `uv run scripts/orchestrate.py ...` works from anywhere.
@@ -29,6 +32,7 @@ Standard library only; the PEP 723 block pins only the Python version so
 Subcommands:
 
     plan      Build the dependency graph and dispatch waves from issues JSON.
+    redgreen  Check a branch demonstrates a failing test before the code.
     report    Render the consolidated final report from verdicts JSON.
 
 Exit codes:
@@ -40,10 +44,11 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, NoReturn, cast
 
@@ -66,6 +71,20 @@ ISSUE_REF_RE = re.compile(r"#(\d+)")
 DONE = "done"
 PARKED = "parked"
 BLOCKED = "blocked"
+
+# How a changed path is recognised as test code, across the languages the
+# standard covers: a directory segment that conventionally holds tests, or a
+# filename that conventionally names one. A project with an unusual layout can
+# override the whole heuristic with --test-glob.
+TEST_DIR_SEGMENTS = frozenset({"test", "tests", "spec", "specs", "__tests__"})
+TEST_FILE_RE = re.compile(
+    r"^(?:test_.*\.py"
+    r"|.*_test\.(?:py|go|rb)"
+    r"|.*\.(?:test|spec)\.[^.]+"
+    r"|.*Test\.(?:php|java|kt)"
+    r"|conftest\.py)$",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -95,6 +114,14 @@ class Verdict:
     remaining_for_human: list[str]
     assumptions: list[str]
     blockers: list[str]
+
+
+@dataclass
+class Commit:
+    """One commit on a branch, reduced to its SHA and the paths it touched."""
+
+    sha: str
+    files: list[str]
 
 
 def fail(message: str) -> NoReturn:
@@ -217,6 +244,100 @@ def external_dependencies(issues: list[Issue]) -> dict[int, list[int]]:
         if external:
             result[issue.number] = external
     return result
+
+
+def parse_git_log(text: str) -> list[Commit]:
+    """Parse `git log --format='commit %H' --name-only` output (oldest first)
+    into Commit records. A `commit <sha>` line opens a commit; every later
+    non-blank line is a path it touched until the next `commit` line."""
+
+    commits: list[Commit] = []
+    for line in text.splitlines():
+        # A marker line opens a new commit; anything else is one of its paths.
+        if line.startswith("commit "):
+            commits.append(Commit(sha=line[len("commit ") :].strip(), files=[]))
+        elif line.strip() and commits:
+            commits[-1].files.append(line.strip())
+    return commits
+
+
+def default_is_test(path: str) -> bool:
+    """Recognise a path as test code by a conventional directory segment or
+    filename. Used by `redgreen` when no --test-glob override is given."""
+
+    parts = path.replace("\\", "/").split("/")
+    if any(part.lower() in TEST_DIR_SEGMENTS for part in parts[:-1]):
+        return True
+    return bool(TEST_FILE_RE.match(parts[-1]))
+
+
+def make_test_classifier(globs: list[str] | None) -> Callable[[str], bool]:
+    """Build the predicate that decides whether a path is test code. With
+    explicit globs it matches any of them; otherwise it falls back to the
+    convention-based default."""
+
+    if globs:
+        return lambda path: any(fnmatch.fnmatch(path, glob) for glob in globs)
+    return default_is_test
+
+
+def assess_red_before_green(
+    commits: list[Commit], is_test: Callable[[str], bool]
+) -> dict[str, Any]:
+    """Decide whether a branch demonstrates a failing test before the code: the
+    first commit touching a test must come strictly before the first commit
+    touching non-test (source) code.
+
+    This is a structural guard, not proof the test failed — that stays with the
+    verifier sub-agent. It cheaply catches the common anti-patterns: no test
+    commit at all, or test and implementation landing in one commit so the red
+    was never demonstrated on its own.
+    """
+
+    # Locate the first test-touching and first source-touching commit.
+    red = next(
+        (commit for commit in commits if any(is_test(path) for path in commit.files)),
+        None,
+    )
+    green = next(
+        (
+            commit
+            for commit in commits
+            if any(not is_test(path) for path in commit.files)
+        ),
+        None,
+    )
+
+    # No test commit at all means the discipline cannot have been followed.
+    if red is None:
+        return {
+            "demonstrated": False,
+            "redCommit": None,
+            "greenCommit": green.sha if green else None,
+            "reason": "no commit touches a test file",
+        }
+
+    # A demonstrated red requires the test commit strictly before the source.
+    red_index = commits.index(red)
+    green_index = commits.index(green) if green else None
+    demonstrated = green_index is not None and red_index < green_index
+    if green_index is None:
+        reason = "test committed, but no implementing commit found"
+    elif red_index == green_index:
+        reason = (
+            "test and implementation landed in one commit; red not demonstrated alone"
+        )
+    elif demonstrated:
+        reason = "test committed before the implementing commit"
+    else:
+        reason = "implementing commit precedes the test commit"
+
+    return {
+        "demonstrated": demonstrated,
+        "redCommit": red.sha,
+        "greenCommit": green.sha if green else None,
+        "reason": reason,
+    }
 
 
 def load_verdicts(raw: str) -> list[Verdict]:
@@ -372,6 +493,16 @@ def cmd_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_redgreen(args: argparse.Namespace) -> int:
+    """Run the `redgreen` subcommand — read `git log` output from stdin and
+    print a JSON verdict on whether the branch demonstrates red before green."""
+
+    commits = parse_git_log(sys.stdin.read())
+    is_test = make_test_classifier(args.test_glob)
+    print(json.dumps(assess_red_before_green(commits, is_test), indent=2))
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     """Run the `report` subcommand — read per-issue verdicts JSON from stdin
     and print the consolidated Markdown report."""
@@ -411,6 +542,19 @@ def main() -> int:
         "ready-for-human as a defensive second line.",
     )
     plan_parser.set_defaults(func=cmd_plan)
+
+    redgreen_parser = subparsers.add_parser(
+        "redgreen",
+        help="Check a branch demonstrates a failing test before the code.",
+    )
+    redgreen_parser.add_argument(
+        "--test-glob",
+        action="append",
+        metavar="GLOB",
+        help="Treat paths matching this glob as test code (repeatable); "
+        "overrides the built-in convention-based detection.",
+    )
+    redgreen_parser.set_defaults(func=cmd_redgreen)
 
     report_parser = subparsers.add_parser(
         "report", help="Render the consolidated final report from verdicts JSON."

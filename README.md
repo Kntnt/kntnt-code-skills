@@ -66,7 +66,7 @@ The control flow runs through the **Workflow tool** (engine: `skills/orchestrate
 ## Requirements
 
 - **Claude Code or Cowork** with support for skills and YAML frontmatter.
-- **[uv](https://docs.astral.sh/uv/)** — runs the bundled Python scripts (`bin/scaffold`, `scripts/audit.py`, `scripts/help.py`, `scripts/orchestrate.py`, `scripts/release.py`); it provisions Python 3.12+ from each script's PEP 723 metadata, and all of them use the standard library only.
+- **[uv](https://docs.astral.sh/uv/)** — runs the bundled Python scripts (`bin/scaffold`, `scripts/audit.py`, `scripts/help.py`, `scripts/orchestrate.py`, `scripts/release.py`); it provisions Python 3.12+ from each script's PEP 723 metadata, and all of them use the standard library only. The test suite runs via `uv run --with pytest pytest`.
 - **git**, and for `/release`'s platform publishing, the relevant forge CLI — **`gh`** for GitHub today.
 - The `coder` skill itself applies the standard from context with no external dependencies. When there is no file-system access (chat-only, no working directory), it skips scaffolding and applies the standard from context.
 
@@ -147,6 +147,8 @@ kntnt-code-skills/
 │   ├── help.py
 │   ├── orchestrate.py
 │   └── release.py
+├── tests/
+│   └── test_orchestrate.py
 ├── .pre-commit-config.yaml
 ├── .gitignore
 ├── CHANGELOG.md
@@ -156,7 +158,7 @@ kntnt-code-skills/
 └── README.md
 ```
 
-`commands/` holds the typed-only `/help` command. `skills/` holds the four skills: `coder` (the coding-standard router and its topic modules), the `release`/`push` workflow skills, and `orchestrate` (the away-from-keyboard issue-to-code build). `lib/` holds text resources that skills include — `changelog.md` (the reconciliation procedure shared by `release` and `push`) and `gitignore-base.txt` (the universal `.gitignore` baseline). `scripts/` holds the standalone `uv`-run tools: the audit, the `/help` renderer, `release.py`'s deterministic CHANGELOG mechanics, and `orchestrate.py`'s dependency-graph and report mechanics for `/orchestrate` (whose Workflow engine, `orchestrate.workflow.js`, lives beside its skill).
+`commands/` holds the typed-only `/help` command. `skills/` holds the four skills: `coder` (the coding-standard router and its topic modules), the `release`/`push` workflow skills, and `orchestrate` (the away-from-keyboard issue-to-code build). `lib/` holds text resources that skills include — `changelog.md` (the reconciliation procedure shared by `release` and `push`) and `gitignore-base.txt` (the universal `.gitignore` baseline). `scripts/` holds the standalone `uv`-run tools: the audit, the `/help` renderer, `release.py`'s deterministic CHANGELOG mechanics, and `orchestrate.py`'s dependency-graph, red/green, and report mechanics for `/orchestrate` (whose Workflow engine, `orchestrate.workflow.js`, lives beside its skill). `tests/` holds the pytest suite for `orchestrate.py`, run by both the audit workflow and the pre-commit hook.
 
 ## How `coder` is organized
 
