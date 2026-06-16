@@ -1,6 +1,6 @@
 {
   "name": "kntnt-code-skills",
-  "description": "Kntnt's code-skills plugin — coding standards applied to any code-related task.",
+  "description": "Kntnt's code-skills plugin — a coding standard, a release workflow (/release, /push), and an issue-to-code orchestrator (/orchestrate).",
   "owner": {
     "name": "Thomas Barregren",
     "email": "thomas@kntnt.com"
@@ -9,7 +9,7 @@
     {
       "name": "kntnt-code-skills",
       "source": "./",
-      "description": "Kntnt's coding standards for PHP, JavaScript, TypeScript, WordPress, Gutenberg blocks, Python, Bash, and any framework added later.",
+      "description": "Kntnt's growing toolbox of code skills: a coding standard (PHP, JavaScript, TypeScript, WordPress, Gutenberg blocks, Python, Bash, and any framework added later), a release workflow (/release, /push), and an away-from-keyboard issue-to-code orchestrator (/orchestrate).",
       "homepage": "https://github.com/Kntnt/kntnt-code-skills"
     }
   ]

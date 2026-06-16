@@ -23,7 +23,7 @@ By submitting a contribution, you agree it is licensed under Apache 2.0 by virtu
 3. **Read the authoring rules** in the README (the *Authoring rules* section and the audit checklist beneath it) before editing files under `skills/`. The rules exist to prevent recurring architectural drift.
 4. **When adding a new module**, follow the *Adding a new module* checklist at the end of `skills/coder/SKILL.md`: create `<topic>.md`, add a row to the modules table, add a detection clause to step 1 of the flow, add the module to step 4's canonical order *and* to `bin/scaffold`'s `CANONICAL_ORDER`, and update the `description` frontmatter so the skill keeps triggering on the new framework's name.
 5. **One concern per PR.** Smaller PRs land faster.
-6. **Run the audit before committing.** `python3 scripts/audit.py` runs the scriptable checks (plugin.json shape and version sync, module ↔ `CANONICAL_ORDER` symmetry). Install the pre-commit hook with `pip install pre-commit && pre-commit install` so it fires automatically; CI re-runs it on every push and PR.
+6. **Run the audit and tests before committing.** `uv run scripts/audit.py` runs the scriptable checks (plugin.json shape and version sync, module ↔ `CANONICAL_ORDER` symmetry), and `uv run --with pytest pytest` runs the test suite for `scripts/orchestrate.py`. Install the pre-commit hook with `pip install pre-commit && pre-commit install` so both fire automatically; CI re-runs them on every push and PR.
 
 ## Style and language conventions
 
