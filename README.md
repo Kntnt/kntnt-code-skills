@@ -1,14 +1,15 @@
 # kntnt-code-skills
 
-`kntnt-code-skills` is a plugin for Claude Code and Cowork — a growing toolbox of generally useful tools for working with code, meant to take the routine and friction out of a developer's day. Today it holds two: **Kntnt's coding standard**, a set of rules applied automatically to any code-related task across PHP, JavaScript, TypeScript, Python, Bash, WordPress, Gutenberg blocks, Laravel, Svelte, SvelteKit, and any framework added later; and a **release workflow** — `/release` and `/push` — that automates the bump-commit-tag-push-release cycle for any project. More tools will join them as common developer chores prove worth packaging.
+`kntnt-code-skills` is a plugin for Claude Code and Cowork — a growing toolbox of generally useful tools for working with code, meant to take the routine and friction out of a developer's day. Today it holds three: **Kntnt's coding standard**, a set of rules applied automatically to any code-related task across PHP, JavaScript, TypeScript, Python, Bash, WordPress, Gutenberg blocks, Laravel, Svelte, SvelteKit, and any framework added later; a **release workflow** — `/release` and `/push` — that automates the bump-commit-tag-push-release cycle for any project; and an **issue-to-code orchestrator** — `/orchestrate` — that turns a project's open issues into implemented, independently verified, integrated code through a fleet of sub-agents. More tools will join them as common developer chores prove worth packaging.
 
 ## What you get
 
-The plugin exposes one router skill, two release-workflow skills, and one command:
+The plugin exposes one router skill, two release-workflow skills, an orchestration skill, and one command:
 
 - **`coder`** — the router for the coding standard. It auto-triggers on code-related prompts (in any language), profiles the project to see which language and framework axes apply, loads the matching topic modules, and applies their rules. It can also scaffold the standard into a project as files (see *The coding standard* below).
 - **`/release`** — the full release workflow on whatever project you invoke it in: reconcile the changelog with the real changes since the last release, bump the version per Semantic Versioning across every place it lives, integrate a feature branch into the main branch, commit, tag `vX.Y.Z`, push, and publish the platform release. Every irreversible step waits behind a single confirmation.
 - **`/push`** — the routine companion: reconcile the changelog, commit, and push the current branch — no bump, tag, or release. Run it often so the changelog never falls behind.
+- **`/orchestrate`** — an away-from-keyboard build that turns a project's open issues into finished code: it plans from the issues' dependency graph, dispatches one implementer sub-agent per issue (test-first), runs fresh independent sub-agents that adversarially verify what the gates cannot, integrates in dependency order, and ends with one consolidated report. It stops short of releasing.
 - **`/help`** — a typed-only command (`/kntnt-code-skills:help [skill-name]`): a manpage-style overview of the plugin's skills, or one skill's details. Its output is rendered from the plugin's own `.claude-plugin/plugin.json` and `skills/<name>/SKILL.md` by `scripts/help.py`, so it never drifts from the actual skills.
 
 ## Installation
@@ -55,6 +56,12 @@ Release notes for each version live in [`CHANGELOG.md`](CHANGELOG.md). The class
 - **Gitea** and **Forgejo** — including **Codeberg** (EU-hosted Forgejo) — via `tea`.
 
 On a remote whose forge is not yet supported, `/release` performs every git step (bump, commit, tag, push) and skips only the platform release, telling you so.
+
+## Orchestrating issues (`/orchestrate`)
+
+`/orchestrate` runs an away-from-keyboard build that turns a project's open issues into implemented, independently verified, integrated code. Invoke it once after the issues are filed; it plans from their dependency graph, then drives a fleet of sub-agents through three stages per issue — **implement** (one sub-agent, test-first red/green/refactor, demonstrating the failing test before the code), **verify** (fresh, independent sub-agents that adversarially review only what the gates cannot — correctness against intent, test quality, security and edge cases), and **integrate** (merge in dependency order, rebasing dependents). The orchestrator owns the quality bar and the decisions but never writes code or reads diffs itself; it reads the sub-agents' verdicts and ends with one consolidated report of what shipped and what still needs a human.
+
+It reads the project's own `AGENTS.md`, coding standard, definition of done, and test strategy and passes the relevant ones to each sub-agent, so the run obeys the project's rules rather than a fixed recipe. Verification depth scales with each issue's risk, and the fix↔verify loop is capped so a stubborn issue is parked in the report rather than burning tokens. By default it opens a pull request per issue and leaves the merge to you; `--merge` integrates automatically where the project authorizes it. It stops short of releasing — when the merged work is ready to ship, that is `/release`. See [`skills/orchestrate/SKILL.md`](skills/orchestrate/SKILL.md) for the full flow and arguments.
 
 ## Requirements
 
@@ -125,6 +132,8 @@ kntnt-code-skills/
 │   │   │   └── scaffold
 │   │   └── templates/
 │   │       └── claude-md-template.md
+│   ├── orchestrate/
+│   │   └── SKILL.md
 │   ├── push/
 │   │   └── SKILL.md
 │   └── release/
@@ -145,7 +154,7 @@ kntnt-code-skills/
 └── README.md
 ```
 
-`commands/` holds the typed-only `/help` command. `skills/` holds the three skills: `coder` (the coding-standard router and its topic modules) and the `release`/`push` workflow skills. `lib/` holds text resources that skills include — `changelog.md` (the reconciliation procedure shared by `release` and `push`) and `gitignore-base.txt` (the universal `.gitignore` baseline). `scripts/` holds the standalone `uv`-run tools: the audit, the `/help` renderer, and `release.py`'s deterministic CHANGELOG mechanics.
+`commands/` holds the typed-only `/help` command. `skills/` holds the four skills: `coder` (the coding-standard router and its topic modules), the `release`/`push` workflow skills, and `orchestrate` (the away-from-keyboard issue-to-code build). `lib/` holds text resources that skills include — `changelog.md` (the reconciliation procedure shared by `release` and `push`) and `gitignore-base.txt` (the universal `.gitignore` baseline). `scripts/` holds the standalone `uv`-run tools: the audit, the `/help` renderer, and `release.py`'s deterministic CHANGELOG mechanics.
 
 ## How `coder` is organized
 

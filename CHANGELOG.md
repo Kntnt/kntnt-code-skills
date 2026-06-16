@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- `/orchestrate` skill (`skills/orchestrate/SKILL.md`) — an away-from-keyboard, multi-agent build that turns a project's open issues into implemented, independently verified, integrated code. It plans from the issues' dependency graph, dispatches one implementer sub-agent per issue (test-first, red/green/refactor, demonstrating the failing test before the code), then fresh independent verifier sub-agents that adversarially review only what the gates cannot — correctness against intent, test quality, security and edge cases — integrates in dependency order, and ends with one consolidated report of what shipped and what still needs a human. The orchestrator owns the quality bar but never writes code or reads diffs itself; verification depth scales with each issue's risk; the fix↔verify loop is capped; and it reads the project's own `AGENTS.md`, coding standard, definition of done, and test strategy so the run obeys the project's rules. It stops short of releasing — bump, tag, and platform release stay with `/release`. Auto-discovered by `scripts/help.py`, so `/help` lists it without further wiring.
+
 ## [0.4.0] — 2026-06-02
 
 ### Added
