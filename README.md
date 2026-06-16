@@ -59,14 +59,14 @@ On a remote whose forge is not yet supported, `/release` performs every git step
 
 ## Orchestrating issues (`/orchestrate`)
 
-`/orchestrate` runs an away-from-keyboard build that turns a project's open issues into implemented, independently verified, integrated code. Invoke it once after the issues are filed; it plans from their dependency graph, then drives a fleet of sub-agents through three stages per issue — **implement** (one sub-agent, test-first red/green/refactor, demonstrating the failing test before the code), **verify** (fresh, independent sub-agents that adversarially review only what the gates cannot — correctness against intent, test quality, security and edge cases), and **integrate** (merge in dependency order, rebasing dependents). The orchestrator owns the quality bar and the decisions but never writes code or reads diffs itself; it reads the sub-agents' verdicts and ends with one consolidated report of what shipped and what still needs a human.
+`/orchestrate` runs an away-from-keyboard build that turns a project's **`ready-for-agent`** issues into implemented, independently verified, integrated code. It is the last stage of the issue pipeline: once `/grill-with-docs`, `/to-issues`, and triage have produced fully-specified issues — each with an agent brief, acceptance criteria, and a `Blocked by` graph — invoke it once and walk away. A deterministic helper (`scripts/orchestrate.py`) reads the issues and computes the dependency graph and the concurrency **waves**; then a fleet of sub-agents runs three stages per issue — **implement** (one sub-agent, test-first red/green/refactor, demonstrating the failing test before the code), **verify** (fresh, independent sub-agents that adversarially review only what the gates cannot — correctness against intent, test quality, security and edge cases), and **integrate** (merge in dependency order, rebasing dependents). The orchestrator owns the quality bar and the decisions but never writes code or reads diffs itself; it reads the sub-agents' verdicts and ends with one consolidated report of what shipped and what still needs a human.
 
-It reads the project's own `AGENTS.md`, coding standard, definition of done, and test strategy and passes the relevant ones to each sub-agent, so the run obeys the project's rules rather than a fixed recipe. Verification depth scales with each issue's risk, and the fix↔verify loop is capped so a stubborn issue is parked in the report rather than burning tokens. By default it opens a pull request per issue and leaves the merge to you; `--merge` integrates automatically where the project authorizes it. It stops short of releasing — when the merged work is ready to ship, that is `/release`. See [`skills/orchestrate/SKILL.md`](skills/orchestrate/SKILL.md) for the full flow and arguments.
+The control flow runs through the **Workflow tool** (engine: `skills/orchestrate/orchestrate.workflow.js`) where available — so the wave order, the capped fix↔verify loop, and worktree isolation are deterministic code rather than a long prose procedure an LLM re-interprets — and falls back to the Agent tool, optionally driven by `/goal`, where it is not. Every sub-agent runs **inside the interactive session** (counting against your subscription, never the headless `claude -p` credit pool), with the strong model and high reasoning effort spent on the implementers and adversarial verifiers rather than on routing. It **excludes `ready-for-human`** issues, scales verification depth to each issue's risk, and caps the fix↔verify loop so a stubborn issue is parked in the report rather than burning tokens. By default it opens a pull request per issue and leaves the merge to you; `--merge` integrates automatically where the project authorizes it. It stops short of releasing — when the merged work is ready to ship, that is `/release`. See [`skills/orchestrate/SKILL.md`](skills/orchestrate/SKILL.md) for the full flow, the cost model, and the arguments.
 
 ## Requirements
 
 - **Claude Code or Cowork** with support for skills and YAML frontmatter.
-- **[uv](https://docs.astral.sh/uv/)** — runs the bundled Python scripts (`bin/scaffold`, `scripts/audit.py`, `scripts/help.py`, `scripts/release.py`); it provisions Python 3.12+ from each script's PEP 723 metadata, and all of them use the standard library only.
+- **[uv](https://docs.astral.sh/uv/)** — runs the bundled Python scripts (`bin/scaffold`, `scripts/audit.py`, `scripts/help.py`, `scripts/orchestrate.py`, `scripts/release.py`); it provisions Python 3.12+ from each script's PEP 723 metadata, and all of them use the standard library only.
 - **git**, and for `/release`'s platform publishing, the relevant forge CLI — **`gh`** for GitHub today.
 - The `coder` skill itself applies the standard from context with no external dependencies. When there is no file-system access (chat-only, no working directory), it skips scaffolding and applies the standard from context.
 
@@ -133,7 +133,8 @@ kntnt-code-skills/
 │   │   └── templates/
 │   │       └── claude-md-template.md
 │   ├── orchestrate/
-│   │   └── SKILL.md
+│   │   ├── SKILL.md
+│   │   └── orchestrate.workflow.js
 │   ├── push/
 │   │   └── SKILL.md
 │   └── release/
@@ -144,6 +145,7 @@ kntnt-code-skills/
 ├── scripts/
 │   ├── audit.py
 │   ├── help.py
+│   ├── orchestrate.py
 │   └── release.py
 ├── .pre-commit-config.yaml
 ├── .gitignore
@@ -154,7 +156,7 @@ kntnt-code-skills/
 └── README.md
 ```
 
-`commands/` holds the typed-only `/help` command. `skills/` holds the four skills: `coder` (the coding-standard router and its topic modules), the `release`/`push` workflow skills, and `orchestrate` (the away-from-keyboard issue-to-code build). `lib/` holds text resources that skills include — `changelog.md` (the reconciliation procedure shared by `release` and `push`) and `gitignore-base.txt` (the universal `.gitignore` baseline). `scripts/` holds the standalone `uv`-run tools: the audit, the `/help` renderer, and `release.py`'s deterministic CHANGELOG mechanics.
+`commands/` holds the typed-only `/help` command. `skills/` holds the four skills: `coder` (the coding-standard router and its topic modules), the `release`/`push` workflow skills, and `orchestrate` (the away-from-keyboard issue-to-code build). `lib/` holds text resources that skills include — `changelog.md` (the reconciliation procedure shared by `release` and `push`) and `gitignore-base.txt` (the universal `.gitignore` baseline). `scripts/` holds the standalone `uv`-run tools: the audit, the `/help` renderer, `release.py`'s deterministic CHANGELOG mechanics, and `orchestrate.py`'s dependency-graph and report mechanics for `/orchestrate` (whose Workflow engine, `orchestrate.workflow.js`, lives beside its skill).
 
 ## How `coder` is organized
 
