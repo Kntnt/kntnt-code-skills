@@ -92,12 +92,47 @@ const INTEGRATE_SCHEMA = {
   },
 }
 
-// Run options, with the conservative defaults the skill documents.
-const issuesByNumber = new Map((args.issues || []).map((issue) => [issue.number, issue]))
-const maxFixRounds = args.maxFixRounds ?? 2
-const standardsPath = args.standardsPath || 'docs/coding-standards.md'
-const merge = args.merge === true
-const budgetFloor = args.budgetFloor ?? 60000
+/**
+ * Normalize the raw `args` the Workflow harness delivers into the single config
+ * object the engine reads every field off. The harness passes `args` as a JSON
+ * string, but a hand-launched or already-parsed run passes an object; tolerate
+ * both shapes. Anything absent or unparseable yields an empty plan so the
+ * empty-plan guard below — not a thrown error — decides how to react.
+ *
+ * @param {string|object|undefined} raw The harness-delivered run config: a JSON
+ *   string, an already-parsed object, or nothing.
+ * @returns {object} The normalized config the engine consumes:
+ *   `{ waves, issues, merge, maxFixRounds, standardsPath, budgetFloor }`.
+ */
+export const normalizeArgs = (raw) => {
+
+  // RED step (issue #9): this does NOT yet parse a JSON string. It reproduces
+  // today's bug — a string `args` is returned untouched, so every field read
+  // off it is `undefined`, `waves` is empty, and the run does nothing.
+  return raw ?? {}
+
+}
+
+/**
+ * True when a normalized plan has no waves to run. A zero-wave plan means the
+ * run was misdelivered or scoped to nothing; the engine surfaces that loudly
+ * rather than returning an empty success in milliseconds — the exact failure
+ * mode that made a broken run masquerade as a clean one.
+ *
+ * @param {object} config A config from {@link normalizeArgs}.
+ * @returns {boolean} Whether the plan would spawn no agents.
+ */
+export const planIsEmpty = (config) => !Array.isArray(config.waves) || config.waves.length === 0
+
+// Run options, with the conservative defaults the skill documents. Every field
+// is read off the normalized config, never off the raw `args` the harness
+// delivers as a JSON string.
+const config = normalizeArgs(args)
+const issuesByNumber = new Map((config.issues || []).map((issue) => [issue.number, issue]))
+const maxFixRounds = config.maxFixRounds ?? 2
+const standardsPath = config.standardsPath || 'docs/coding-standards.md'
+const merge = config.merge === true
+const budgetFloor = config.budgetFloor ?? 60000
 
 // Title lookup for logging and report records.
 const titleOf = (number) => issuesByNumber.get(number)?.title || `issue ${number}`
@@ -221,7 +256,16 @@ const integrate = async (record) => {
 // later wave depends on an earlier one, so the wave boundary is a real barrier.
 const verdicts = []
 const parked = []
-const waves = args.waves || []
+const waves = config.waves || []
+
+// Loud empty-plan guard: a misdelivered or empty plan must never masquerade as
+// a successful zero-agent run completing in milliseconds. Surface it
+// prominently and return a non-success status so the caller cannot mistake it
+// for a legitimately empty scope.
+if (planIsEmpty(config)) {
+  log('WARNING: orchestrate received an empty plan (0 waves) — nothing to run. Verify that `args` reached the engine (a JSON string is parsed; an object is used as-is).')
+  return { verdicts, parked, status: 'empty-plan', warning: 'No waves to run: the plan was empty or misdelivered.' }
+}
 
 for (let index = 0; index < waves.length; index += 1) {
   const wave = waves[index]
