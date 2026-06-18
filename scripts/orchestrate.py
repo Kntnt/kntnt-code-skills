@@ -77,9 +77,15 @@ HARD_EDGE_KEYWORDS = ("Blocked by", "Depends upon", "Depends on", "Requires", "N
 # Match a hard-edge keyword anywhere in the text, tolerating an optional bold
 # wrapper (`**Depends on:**`) and an optional colon. The keyword is captured so
 # the derived edge can record which word produced it; the reference region that
-# follows is scanned separately, because it may span a bullet list of `#N`.
+# follows is scanned separately, because it may span a bullet list of `#N`. The
+# `\b` anchors keep a keyword from matching inside a longer word (`prerequires`,
+# `misrequires`); the trailing horizontal-only whitespace (`[^\S\n]*`) keeps the
+# match from crossing a newline, so the reference scan's notion of "the keyword's
+# own line" stays accurate even after a `## Blocked by` heading.
 INLINE_EDGE_RE = re.compile(
-    r"\*{0,2}\s*(?P<keyword>" + "|".join(HARD_EDGE_KEYWORDS) + r")\s*\*{0,2}\s*:?",
+    r"\*{0,2}\s*\b(?P<keyword>"
+    + "|".join(HARD_EDGE_KEYWORDS)
+    + r")\b[^\S\n]*\*{0,2}[^\S\n]*:?",
     re.IGNORECASE,
 )
 
@@ -91,9 +97,22 @@ BULLET_REF_RE = re.compile(r"^\s*[-*]\s*#(\d+)\b")
 # a vague "relates to" would hold issues back for no real dependency — but they
 # are recorded as soft notes so a possible coupling stays visible after an
 # unattended run.
+SOFT_NOTE_PHRASE = r"relates to|related to|see also|touch(?:es|ing)? the same files? as"
 SOFT_NOTE_RE = re.compile(
-    r"(?P<phrase>relates to|related to|see also|touch(?:es|ing)? the same files? as)"
+    rf"(?P<phrase>{SOFT_NOTE_PHRASE})"
     r"\s*:?\s*(?P<refs>(?:#\d+[\s,and&]*)+)",
+    re.IGNORECASE,
+)
+
+# Where a hard keyword's same-line authority ends: a sentence terminator, or the
+# start of the next hard keyword or soft phrase. A keyword governs only the `#N`
+# in its own clause, so `Depends on #45. Relates to #44.` (or `Requires #1.
+# Touches the same files as #2.`) does not absorb the trailing soft ref as a hard
+# edge — exactly the AC's "NO edge for a soft phrase" criterion.
+CLAUSE_BOUNDARY_RE = re.compile(
+    r"[.!?]\s"
+    r"|\b(?:" + "|".join(HARD_EDGE_KEYWORDS) + r")\b"
+    rf"|\b(?:{SOFT_NOTE_PHRASE})\b",
     re.IGNORECASE,
 )
 
@@ -184,15 +203,22 @@ def fail(message: str) -> NoReturn:
 
 def _scan_reference_region(body: str, start: int) -> list[int]:
     """Collect the issue numbers a hard-edge keyword governs, starting just past
-    the keyword at `start`. References on the keyword's own line are taken; if
-    the label stands alone, an immediately following bullet list of `#N` is
-    consumed too (`**Depends on:**\\n- #44\\n- #45`). Scanning stops at the first
-    line that is neither blank nor a bullet reference, so trailing prose and
-    later unrelated lists are left out."""
+    the keyword at `start`. References in the keyword's own clause are taken — the
+    same-line remainder up to the next sentence terminator or the next hard/soft
+    keyword (so a soft phrase sharing the line keeps its refs out). If the label
+    stands alone, an immediately following bullet list of `#N` is consumed too
+    (`**Depends on:**\\n- #44\\n- #45`). Scanning stops at the first line that is
+    neither blank nor a bullet reference, so trailing prose and later unrelated
+    lists are left out."""
 
-    # Take any references on the remainder of the keyword's own line.
+    # Take the references in the keyword's own clause: the same-line remainder cut
+    # at the first clause boundary, so a trailing soft phrase or a second keyword
+    # on the line does not pull its refs into this edge.
     newline = body.find("\n", start)
     head = body[start:] if newline == -1 else body[start:newline]
+    boundary = CLAUSE_BOUNDARY_RE.search(head)
+    if boundary is not None:
+        head = head[: boundary.start()]
     numbers = [int(number) for number in ISSUE_REF_RE.findall(head)]
 
     # Then walk the following lines: skip blanks, absorb bullet references, and
