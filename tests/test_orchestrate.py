@@ -148,6 +148,93 @@ def test_parse_dependencies_see_only_is_neither_edge_nor_note() -> None:
     assert signals.soft_notes == []
 
 
+# --- parse_dependencies: a keyword governs only its own clause -----------------
+#
+# These pin the AC's "NO edge for a soft phrase" criterion against the form
+# triage actually emits: a directional keyword and a soft phrase in separate
+# sentences on the SAME line. The keyword must claim only the refs in its own
+# clause; the soft phrase's ref must be a soft note and never a hard edge.
+
+
+def test_parse_dependencies_soft_phrase_after_a_keyword_on_one_line_is_not_an_edge() -> (
+    None
+):
+    signals = orchestrate.parse_dependencies("Depends on #45. Relates to #44.")
+    assert signals.edges == {45: "Depends on"}
+    assert any("#44" in note for note in signals.soft_notes)
+
+
+def test_parse_dependencies_bold_label_then_soft_phrase_on_one_line() -> None:
+    body = "**Depends on:** #44 (schema). Relates to #46 for context."
+    signals = orchestrate.parse_dependencies(body)
+    assert signals.edges == {44: "Depends on"}
+    assert any("#46" in note for note in signals.soft_notes)
+
+
+def test_parse_dependencies_see_also_after_blocked_by_on_one_line_is_not_an_edge() -> (
+    None
+):
+    signals = orchestrate.parse_dependencies(
+        "Blocked by #44 and #45. See also the discussion in #12."
+    )
+    assert signals.edges == {44: "Blocked by", 45: "Blocked by"}
+    assert 12 not in signals.edges
+
+
+def test_parse_dependencies_same_files_after_requires_on_one_line_is_not_an_edge() -> (
+    None
+):
+    # The literal Agent Brief example: "touches the same files as #N" is NEVER an
+    # edge, even when a hard keyword shares the line.
+    signals = orchestrate.parse_dependencies(
+        "Requires #1. Touches the same files as #2."
+    )
+    assert signals.edges == {1: "Requires"}
+    assert 2 not in signals.edges
+    assert any("#2" in note for note in signals.soft_notes)
+
+
+def test_parse_dependencies_two_hard_keywords_on_one_line_keep_their_own_origin() -> (
+    None
+):
+    # Each keyword governs its own clause, so #2's provenance is its real origin.
+    signals = orchestrate.parse_dependencies("Depends on #1, requires #2 too.")
+    assert signals.edges == {1: "Depends on", 2: "Requires"}
+
+
+# --- parse_dependencies: keyword needs a word boundary ------------------------
+#
+# A hard keyword embedded in a longer word (prerequires, misrequires) must not
+# mint a spurious edge — only a standalone keyword counts.
+
+
+def test_parse_dependencies_keyword_inside_a_larger_word_is_not_an_edge() -> None:
+    assert orchestrate.parse_dependencies("Misrequires #6.").edges == {}
+    assert orchestrate.parse_dependencies("prerequires #3.").edges == {}
+
+
+# --- parse_dependencies: heading section is the only source for some refs ------
+
+
+def test_parse_dependencies_heading_inline_keyword_keeps_its_specific_origin() -> None:
+    # `## Blocked by\n\n- depends on #43`: the more-specific inline keyword wins,
+    # so the recorded provenance is "Depends on", not the heading's "Blocked by"
+    # (the behaviour parse_dependencies' own comment promises).
+    signals = orchestrate.parse_dependencies("## Blocked by\n\n- depends on #43")
+    assert signals.edges == {43: "Depends on"}
+
+
+def test_parse_dependencies_heading_section_recovers_a_prose_only_ref() -> None:
+    # A ref that sits in a prose paragraph under `## Blocked by` — no bullet, no
+    # directional keyword — is reachable ONLY by BLOCKED_BY_SECTION_RE; the inline
+    # scanner stops at the first non-bullet line. This binds the regression AC to
+    # the heading-specific code so deleting it is caught.
+    signals = orchestrate.parse_dependencies(
+        "## Blocked by\n\nThe migration in #77 must merge first."
+    )
+    assert signals.edges == {77: "Blocked by"}
+
+
 # --- load_issues --------------------------------------------------------------
 
 
