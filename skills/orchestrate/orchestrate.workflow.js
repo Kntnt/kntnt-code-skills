@@ -28,7 +28,9 @@
  *   }
  *
  * Returns { verdicts, parked } in the shape `orchestrate.py report` consumes:
- * the main session pipes them back to it to render the final report.
+ * the main session pipes them back to it to render the final report. An empty
+ * or misdelivered plan instead returns { verdicts: [], parked: [], status:
+ * 'empty-plan', warning } so a zero-agent run can never pass for a clean one.
  */
 export const meta = {
   name: 'orchestrate',
@@ -106,9 +108,17 @@ const INTEGRATE_SCHEMA = {
  */
 export const normalizeArgs = (raw) => {
 
-  // RED step (issue #9): this does NOT yet parse a JSON string. It reproduces
-  // today's bug — a string `args` is returned untouched, so every field read
-  // off it is `undefined`, `waves` is empty, and the run does nothing.
+  // Tolerate a JSON string from the harness; a malformed string degrades to an
+  // empty plan rather than throwing, so the loud empty-plan guard owns the
+  // response. The boundary is untrusted: the harness contract is what bit us.
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw) ?? {}
+    } catch {
+      return {}
+    }
+  }
+
   return raw ?? {}
 
 }
