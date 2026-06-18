@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "kntnt-code-skills",
-      "source": "./",
+      "source": { "source": "github", "repo": "Kntnt/kntnt-code-skills" },
       "description": "Kntnt's growing toolbox of code skills: a coding standard (PHP, JavaScript, TypeScript, WordPress, Gutenberg blocks, Python, Bash, and any framework added later), a release workflow (/release, /push), and an away-from-keyboard issue-to-code orchestrator (/orchestrate).",
       "homepage": "https://github.com/Kntnt/kntnt-code-skills"
     }

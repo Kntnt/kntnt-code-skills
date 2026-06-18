@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- `.claude-plugin/marketplace.json` — the bundled plugin's `source` was the string shorthand `"./"`, which a local `/plugin marketplace add` accepts but Claude Cowork's remote sync rejects: Cowork clones the repository server-side and requires each plugin's `source` to be an object whose `source` field is one of `github`, `url`, or `git-subdir`, so adding the repository as a marketplace failed with `REMOTE_SYNC_FAILED`. The entry now uses the `github` object form (`{ "source": "github", "repo": "Kntnt/kntnt-code-skills" }`), so the Cowork marketplace add syncs successfully while the local `/plugin marketplace add` keeps resolving as before.
+
 ## [0.7.0] – 2026-06-18
 
 ### Added
