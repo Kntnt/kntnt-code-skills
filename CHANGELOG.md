@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.7.0] – 2026-06-18
+
+### Added
+
+- `/orchestrate` plan output (`scripts/orchestrate.py`) — the deterministic plan now records dependency provenance and integration guidance: a `dependency_edges` list giving each derived edge with the keyword it came from, a `soft_notes` list that surfaces non-blocking mentions (`Relates to`, "touches the same files as …") without turning them into edges, and a `merge_required` flag with a human-readable `merge_note`, raised whenever the in-scope graph has any cross-issue edge so a coupled set is integrated in merge mode rather than branching dependents off bare `main`. The fields are additive — the five existing top-level plan keys are unchanged, so the Workflow engine that consumes the plan is unaffected. `skills/orchestrate/SKILL.md` documents the new `merge_required` signal.
+
+### Fixed
+
+- `/orchestrate` engine (`skills/orchestrate/orchestrate.workflow.js`) — the Workflow engine read its run configuration as if `args` were an object, but the harness delivers `args` as a JSON **string**, so every field was `undefined`: the wave loop ran zero iterations and the run returned an empty success in milliseconds with no agents — a silent no-op indistinguishable from a legitimately empty plan. The engine now normalizes `args` once at entry (tolerating both a JSON string and an already-parsed object) and routes every configuration read through the normalized object; a misdelivered or empty plan now emits a prominent warning and a non-success status instead of masquerading as a clean run.
+- `/orchestrate` planner (`scripts/orchestrate.py`) — dependencies written as inline prose or a bold label (e.g. `**Depends on:** #44`, `Blocked by: #44, #45`, or a label followed by a bullet list of `#N`) were invisible to the planner, which recognized only a `## Blocked by` heading; a coupled issue set then collapsed into a single wave that built dependents before their prerequisites and raced parallel edits on a shared file. The planner now derives edges from labelled, directional forms (`Blocked by`, `Depends on`, `Depends upon`, `Requires`, `Needs`) anywhere in an issue body or agent brief, producing a correct multi-wave, dependency-ordered plan. Vague, non-directional mentions and self-references are deliberately not treated as edges.
+
 ## [0.6.0] – 2026-06-16
 
 ### Added
@@ -90,7 +101,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.4.0

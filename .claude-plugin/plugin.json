@@ -1,6 +1,6 @@
 {
   "name": "kntnt-code-skills",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Kntnt's growing toolbox of code skills: a coding standard (PHP, JavaScript, TypeScript, WordPress, Gutenberg blocks, Python, Bash, and any framework added later), a release workflow (/release, /push), and an away-from-keyboard issue-to-code orchestrator (/orchestrate).",
   "author": {
     "name": "Thomas Barregren",
