@@ -72,6 +72,88 @@ def test_parse_blocked_by_stops_at_the_next_heading() -> None:
     assert orchestrate.parse_blocked_by(body) == {1}
 
 
+def test_parse_blocked_by_reads_an_inline_label_without_a_heading() -> None:
+    # An inline `**Depends on:** #44` with no `## Blocked by` heading anywhere
+    # must still produce the edge (the core regression this issue fixes).
+    assert orchestrate.parse_blocked_by("Some prose.\n\n**Depends on:** #44") == {44}
+
+
+def test_parse_blocked_by_keeps_see_under_notes_a_non_edge() -> None:
+    # "See #999" under a Notes heading is a soft reference, never a hard edge.
+    body = "## Notes\n\nSee #999 for context. It relates to #888."
+    assert orchestrate.parse_blocked_by(body) == set()
+
+
+# --- parse_dependencies (hard edges with provenance + soft notes) -------------
+
+
+def test_parse_dependencies_inline_label_yields_edge_with_origin() -> None:
+    signals = orchestrate.parse_dependencies("**Depends on:** #44")
+    assert signals.edges == {44: "Depends on"}
+    assert signals.soft_notes == []
+
+
+def test_parse_dependencies_blocked_by_single_line_yields_both_edges() -> None:
+    signals = orchestrate.parse_dependencies("Blocked by: #44, #45")
+    assert signals.edges == {44: "Blocked by", 45: "Blocked by"}
+
+
+def test_parse_dependencies_label_then_bullet_list_yields_one_edge_each() -> None:
+    body = "**Depends on:**\n\n- #44\n- #45\n- #46"
+    signals = orchestrate.parse_dependencies(body)
+    assert signals.edges == {44: "Depends on", 45: "Depends on", 46: "Depends on"}
+
+
+def test_parse_dependencies_recognises_every_hard_keyword() -> None:
+    body = (
+        "Depends upon #1.\n"
+        "Requires #2.\n"
+        "Needs #3.\n"
+        "Blocked by #4.\n"
+        "Depends on #5.\n"
+    )
+    signals = orchestrate.parse_dependencies(body)
+    assert signals.edges == {
+        1: "Depends upon",
+        2: "Requires",
+        3: "Needs",
+        4: "Blocked by",
+        5: "Depends on",
+    }
+
+
+def test_parse_dependencies_heading_section_still_works() -> None:
+    body = "## Blocked by\n\n- #42\n\n## Notes\n\nSee #999."
+    signals = orchestrate.parse_dependencies(body)
+    assert signals.edges == {42: "Blocked by"}
+
+
+def test_parse_dependencies_keeps_relates_to_a_soft_note_not_an_edge() -> None:
+    signals = orchestrate.parse_dependencies("Relates to #44.")
+    assert signals.edges == {}
+    assert any("#44" in note for note in signals.soft_notes)
+
+
+def test_parse_dependencies_keeps_same_files_a_soft_note_not_an_edge() -> None:
+    signals = orchestrate.parse_dependencies("This touches the same files as #56.")
+    assert signals.edges == {}
+    assert any("#56" in note for note in signals.soft_notes)
+
+
+def test_parse_dependencies_ignores_a_self_reference() -> None:
+    # A self-reference cannot be a blocker; the caller passes its own number.
+    signals = orchestrate.parse_dependencies("Depends on #7.", self_number=7)
+    assert signals.edges == {}
+
+
+def test_parse_dependencies_see_only_is_neither_edge_nor_note() -> None:
+    # Bare "See #999" (not "See also") is the pre-existing Notes-section case; it
+    # must remain a non-edge and must not pollute the soft-note list either.
+    signals = orchestrate.parse_dependencies("## Notes\n\nSee #999 for context.")
+    assert signals.edges == {}
+    assert signals.soft_notes == []
+
+
 # --- load_issues --------------------------------------------------------------
 
 
@@ -94,6 +176,100 @@ def test_load_issues_rejects_malformed_json() -> None:
 def test_load_issues_rejects_a_non_array() -> None:
     with pytest.raises(ValueError, match="array"):
         orchestrate.load_issues('{"number":1}')
+
+
+def test_load_issues_derives_an_inline_edge_with_provenance() -> None:
+    raw = (
+        '[{"number":45,"title":"B","labels":[],'
+        '"body":"**Depends on:** #44 (schema first)."}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    assert issues[0].blocked_by == {44}
+    assert issues[0].blocked_by_origin == {44: "Depends on"}
+
+
+def test_load_issues_ignores_a_self_referencing_dependency() -> None:
+    raw = '[{"number":7,"title":"C","labels":[],"body":"Depends on #7."}]'
+    issues = orchestrate.load_issues(raw)
+    assert issues[0].blocked_by == set()
+
+
+def test_load_issues_collects_soft_notes() -> None:
+    raw = (
+        '[{"number":8,"title":"D","labels":[],'
+        '"body":"Relates to #44. Touches the same files as #56."}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    assert issues[0].blocked_by == set()
+    assert any("#44" in note for note in issues[0].soft_notes)
+    assert any("#56" in note for note in issues[0].soft_notes)
+
+
+# --- build_plan ---------------------------------------------------------------
+
+
+def test_build_plan_multi_waves_a_coupled_set_from_inline_deps() -> None:
+    raw = (
+        '[{"number":44,"title":"Schema","labels":[],"body":"Foundational."},'
+        '{"number":45,"title":"Eval","labels":[],'
+        '"body":"**Depends on:** #44 (the schema)."}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    assert plan["waves"] == [[44], [45]]
+
+
+def test_build_plan_records_edge_provenance() -> None:
+    raw = (
+        '[{"number":44,"title":"Schema","labels":[],"body":"Foundational."},'
+        '{"number":45,"title":"Eval","labels":[],"body":"Depends on #44."}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    assert {"from": 45, "to": 44, "origin": "Depends on"} in plan["dependency_edges"]
+
+
+def test_build_plan_flags_merge_required_when_any_edge_exists() -> None:
+    raw = (
+        '[{"number":44,"title":"Schema","labels":[],"body":"Foundational."},'
+        '{"number":45,"title":"Eval","labels":[],"body":"Depends on #44."}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    assert plan["merge_required"] is True
+
+
+def test_build_plan_does_not_flag_merge_for_independent_issues() -> None:
+    raw = (
+        '[{"number":1,"title":"A","labels":[],"body":"Standalone."},'
+        '{"number":2,"title":"B","labels":[],"body":"Standalone."}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    assert plan["merge_required"] is False
+    assert plan["dependency_edges"] == []
+
+
+def test_build_plan_surfaces_soft_notes() -> None:
+    raw = (
+        '[{"number":1,"title":"A","labels":[],'
+        '"body":"Touches the same files as #2."},'
+        '{"number":2,"title":"B","labels":[],"body":"Standalone."}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    assert any(
+        note["number"] == 1 and "#2" in note["note"] for note in plan["soft_notes"]
+    )
+
+
+def test_build_plan_keeps_existing_top_level_fields() -> None:
+    # Backward compatibility: the Workflow engine consumes these keys as args.
+    raw = '[{"number":1,"title":"A","labels":[],"body":"Standalone."}]'
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    for key in ("scope_label", "issues", "waves", "external_dependencies", "excluded"):
+        assert key in plan
 
 
 # --- exclude_by_label ---------------------------------------------------------
