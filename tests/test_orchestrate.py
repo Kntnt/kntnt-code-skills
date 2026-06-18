@@ -105,13 +105,7 @@ def test_parse_dependencies_label_then_bullet_list_yields_one_edge_each() -> Non
 
 
 def test_parse_dependencies_recognises_every_hard_keyword() -> None:
-    body = (
-        "Depends upon #1.\n"
-        "Requires #2.\n"
-        "Needs #3.\n"
-        "Blocked by #4.\n"
-        "Depends on #5.\n"
-    )
+    body = "Depends upon #1.\nRequires #2.\nNeeds #3.\nBlocked by #4.\nDepends on #5.\n"
     signals = orchestrate.parse_dependencies(body)
     assert signals.edges == {
         1: "Depends upon",
