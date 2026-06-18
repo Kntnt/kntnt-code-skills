@@ -49,7 +49,7 @@ import json
 import re
 import sys
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, NoReturn, cast
 
 # The triage state that marks an issue as fully specified and safe to build
@@ -65,6 +65,56 @@ BLOCKED_BY_SECTION_RE = re.compile(
     re.MULTILINE | re.DOTALL | re.IGNORECASE,
 )
 ISSUE_REF_RE = re.compile(r"#(\d+)")
+
+# Directional blocking keywords that name a real hard edge wherever they
+# appear in the body — not only under a `## Blocked by` heading. Triage writes
+# dependencies into the agent brief as inline labels (`**Depends on:** #44`),
+# so the planner must read those forms too or a coupled set collapses into one
+# unsafe wave (issue #10). Longest forms come first so `Depends upon` wins over
+# the `Depends on` prefix when both could match.
+HARD_EDGE_KEYWORDS = ("Blocked by", "Depends upon", "Depends on", "Requires", "Needs")
+
+# Match a hard-edge keyword anywhere in the text, tolerating an optional bold
+# wrapper (`**Depends on:**`) and an optional colon. The keyword is captured so
+# the derived edge can record which word produced it; the reference region that
+# follows is scanned separately, because it may span a bullet list of `#N`. The
+# `\b` anchors keep a keyword from matching inside a longer word (`prerequires`,
+# `misrequires`); the trailing horizontal-only whitespace (`[^\S\n]*`) keeps the
+# match from crossing a newline, so the reference scan's notion of "the keyword's
+# own line" stays accurate even after a `## Blocked by` heading.
+INLINE_EDGE_RE = re.compile(
+    r"\*{0,2}\s*\b(?P<keyword>"
+    + "|".join(HARD_EDGE_KEYWORDS)
+    + r")\b[^\S\n]*\*{0,2}[^\S\n]*:?",
+    re.IGNORECASE,
+)
+
+# A single bullet-list item that carries one issue reference — the continuation
+# form of a label followed by a list (`**Depends on:**\n- #44\n- #45`).
+BULLET_REF_RE = re.compile(r"^\s*[-*]\s*#(\d+)\b")
+
+# Non-directional coupling phrases. These are NEVER edges — over-serialising on
+# a vague "relates to" would hold issues back for no real dependency — but they
+# are recorded as soft notes so a possible coupling stays visible after an
+# unattended run.
+SOFT_NOTE_PHRASE = r"relates to|related to|see also|touch(?:es|ing)? the same files? as"
+SOFT_NOTE_RE = re.compile(
+    rf"(?P<phrase>{SOFT_NOTE_PHRASE})"
+    r"\s*:?\s*(?P<refs>(?:#\d+[\s,and&]*)+)",
+    re.IGNORECASE,
+)
+
+# Where a hard keyword's same-line authority ends: a sentence terminator, or the
+# start of the next hard keyword or soft phrase. A keyword governs only the `#N`
+# in its own clause, so `Depends on #45. Relates to #44.` (or `Requires #1.
+# Touches the same files as #2.`) does not absorb the trailing soft ref as a hard
+# edge — exactly the AC's "NO edge for a soft phrase" criterion.
+CLAUSE_BOUNDARY_RE = re.compile(
+    r"[.!?]\s"
+    r"|\b(?:" + "|".join(HARD_EDGE_KEYWORDS) + r")\b"
+    rf"|\b(?:{SOFT_NOTE_PHRASE})\b",
+    re.IGNORECASE,
+)
 
 # The set of statuses a verdict may carry, in the order the report presents
 # them: shipped work leads, work parked or blocked for a human trails.
@@ -88,13 +138,33 @@ TEST_FILE_RE = re.compile(
 
 
 @dataclass
+class DependencySignals:
+    """The dependency signals extracted from one issue body.
+
+    `edges` maps each blocking issue number to the keyword that produced it
+    (the audit trail an unattended run is inspected by). `soft_notes` holds the
+    non-directional coupling phrases that must stay visible but never block.
+    """
+
+    edges: dict[int, str] = field(default_factory=dict)
+    soft_notes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Issue:
-    """One in-scope issue, reduced to what dependency planning needs."""
+    """One in-scope issue, reduced to what dependency planning needs.
+
+    `blocked_by` is the bare set of in/out-of-scope blockers used by the graph;
+    `blocked_by_origin` records which keyword produced each edge for the plan's
+    audit trail; `soft_notes` carries possible-coupling phrases for the report.
+    """
 
     number: int
     title: str
     labels: list[str]
     blocked_by: set[int]
+    blocked_by_origin: dict[int, str] = field(default_factory=dict)
+    soft_notes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -131,15 +201,112 @@ def fail(message: str) -> NoReturn:
     raise SystemExit(1)
 
 
-def parse_blocked_by(body: str) -> set[int]:
-    """Extract the issue numbers referenced under an issue's `Blocked by`
-    heading. Returns an empty set when the section is absent, empty, or an
-    explicit "None"."""
+def _scan_reference_region(body: str, start: int) -> list[int]:
+    """Collect the issue numbers a hard-edge keyword governs, starting just past
+    the keyword at `start`. References in the keyword's own clause are taken — the
+    same-line remainder up to the next sentence terminator or the next hard/soft
+    keyword (so a soft phrase sharing the line keeps its refs out). If the label
+    stands alone, an immediately following bullet list of `#N` is consumed too
+    (`**Depends on:**\\n- #44\\n- #45`), and if the next non-blank line is plain
+    prose it is read as the keyword's continuation — its first clause supplies the
+    refs (`Depends on\\nthe #44 schema.`), the conservative reach issue #10 asks
+    for. Scanning stops at the first line that is neither blank nor a bullet (and,
+    once any ref is in hand, the prose-continuation reach is not taken), so
+    trailing prose and later unrelated lists are left out."""
 
-    match = BLOCKED_BY_SECTION_RE.search(body or "")
-    if match is None:
-        return set()
-    return {int(number) for number in ISSUE_REF_RE.findall(match["body"])}
+    # Take the references in the keyword's own clause: the same-line remainder cut
+    # at the first clause boundary, so a trailing soft phrase or a second keyword
+    # on the line does not pull its refs into this edge.
+    newline = body.find("\n", start)
+    head = body[start:] if newline == -1 else body[start:newline]
+    numbers = _refs_in_first_clause(head)
+
+    # Then walk the following lines: skip blanks, absorb bullet references, and
+    # stop the moment a line is neither. A non-bullet line ends the bullet list;
+    # but when nothing has matched yet (a bare label whose `#N` sits on the next
+    # line as prose, not a bullet), that first prose line is the keyword's
+    # continuation, so its own clause supplies the refs before scanning stops.
+    rest = "" if newline == -1 else body[newline + 1 :]
+    for line in rest.splitlines():
+        if not line.strip():
+            continue
+        bullet = BULLET_REF_RE.match(line)
+        if bullet is None:
+            if not numbers:
+                numbers.extend(_refs_in_first_clause(line))
+            break
+        numbers.append(int(bullet[1]))
+
+    return numbers
+
+
+def _refs_in_first_clause(line: str) -> list[int]:
+    """Return the `#N` references in the first clause of `line` — the run up to
+    the first clause boundary (a sentence terminator, or the start of the next
+    hard keyword or soft phrase). Cutting at the boundary keeps a soft phrase or a
+    second keyword sharing the line from pulling its refs into the current edge."""
+
+    boundary = CLAUSE_BOUNDARY_RE.search(line)
+    clause = line if boundary is None else line[: boundary.start()]
+    return [int(number) for number in ISSUE_REF_RE.findall(clause)]
+
+
+def parse_dependencies(body: str, self_number: int | None = None) -> DependencySignals:
+    """Derive the dependency signals from an issue body: hard blocking edges
+    (with the keyword that produced each) and soft, non-directional coupling
+    notes.
+
+    Hard edges come from two sources treated identically: the heading-form
+    `## Blocked by` section, and inline/labelled forms anywhere in the text
+    (`Blocked by`, `Depends on`, `Depends upon`, `Requires`, `Needs`) followed
+    by one or more `#N` — optionally bold-wrapped and optionally trailing into a
+    bullet list. Vague phrases ("relates to", "touches the same files as") are
+    recorded as soft notes only. A self-reference is never an edge.
+    """
+
+    text = body or ""
+    edges: dict[int, str] = {}
+
+    # Inline/labelled forms anywhere in the body. The keyword's canonical
+    # spelling (not the author's casing) is recorded as the edge origin.
+    for match in INLINE_EDGE_RE.finditer(text):
+        keyword = next(
+            canonical
+            for canonical in HARD_EDGE_KEYWORDS
+            if canonical.lower() == match["keyword"].lower()
+        )
+        for number in _scan_reference_region(text, match.end()):
+            edges.setdefault(number, keyword)
+
+    # The heading-form `## Blocked by` section: every reference under it is an
+    # edge, attributed to "Blocked by" unless an inline keyword already claimed
+    # it (so `- depends on #43` keeps its more specific origin).
+    section = BLOCKED_BY_SECTION_RE.search(text)
+    if section is not None:
+        for number in ISSUE_REF_RE.findall(section["body"]):
+            edges.setdefault(int(number), "Blocked by")
+
+    # Non-directional coupling: visible as a soft note, never an edge. A ref
+    # already claimed as a hard edge keeps its edge and is not down-graded.
+    soft_notes: list[str] = []
+    for match in SOFT_NOTE_RE.finditer(text):
+        note = f"{match['phrase'].strip()} {match['refs'].strip()}".strip()
+        soft_notes.append(re.sub(r"\s+", " ", note))
+
+    # A self-reference cannot block its own issue; drop it from the edge set.
+    if self_number is not None:
+        edges.pop(self_number, None)
+
+    return DependencySignals(edges=edges, soft_notes=soft_notes)
+
+
+def parse_blocked_by(body: str, self_number: int | None = None) -> set[int]:
+    """Extract the issue numbers that block an issue — from the `## Blocked by`
+    heading section and from inline/labelled blocking forms anywhere in the
+    body. Returns an empty set when none are present. A self-reference, when the
+    issue's own number is supplied, is excluded."""
+
+    return set(parse_dependencies(body, self_number).edges)
 
 
 def load_issues(raw: str) -> list[Issue]:
@@ -166,12 +333,19 @@ def load_issues(raw: str) -> list[Issue]:
             for label in entry.get("labels", [])
         ]
 
+        # Derive the hard edges (with provenance) and soft notes once, passing
+        # the issue's own number so a self-reference is dropped as a blocker.
+        number = int(entry["number"])
+        signals = parse_dependencies(entry.get("body", ""), self_number=number)
+
         issues.append(
             Issue(
-                number=int(entry["number"]),
+                number=number,
                 title=str(entry.get("title", "")).strip(),
                 labels=labels,
-                blocked_by=parse_blocked_by(entry.get("body", "")),
+                blocked_by=set(signals.edges),
+                blocked_by_origin=signals.edges,
+                soft_notes=signals.soft_notes,
             )
         )
 
@@ -244,6 +418,74 @@ def external_dependencies(issues: list[Issue]) -> dict[int, list[int]]:
         if external:
             result[issue.number] = external
     return result
+
+
+def dependency_edges(issues: list[Issue]) -> list[dict[str, Any]]:
+    """List every in-scope blocking edge with its origin keyword, so an
+    unattended run can be audited afterwards (`#45 -> #44 (from "Depends on")`).
+    Edges to issues outside this run are surfaced by `external_dependencies`
+    instead and are not repeated here."""
+
+    in_scope = {issue.number for issue in issues}
+    edges: list[dict[str, Any]] = []
+    for issue in issues:
+        for blocker in sorted(issue.blocked_by):
+            if blocker in in_scope:
+                edges.append(
+                    {
+                        "from": issue.number,
+                        "to": blocker,
+                        "origin": issue.blocked_by_origin.get(blocker, "Blocked by"),
+                    }
+                )
+    return edges
+
+
+def build_plan(
+    kept: list[Issue], excluded: list[Issue], scope_label: str
+) -> dict[str, Any]:
+    """Assemble the plan the orchestrator dispatches from. The existing fields
+    (`scope_label`, `issues`, `waves`, `external_dependencies`, `excluded`) are
+    preserved verbatim for the Workflow engine that consumes this as its args;
+    the dependency provenance, soft notes, and merge signal are added alongside.
+
+    Raises ValueError (via `build_waves`) when the in-scope graph has a cycle.
+    """
+
+    waves = build_waves(kept)
+    edges = dependency_edges(kept)
+
+    # When any cross-issue edge exists, dependents must build on a base that
+    # already contains their prerequisites — flag merge mode so the engine does
+    # not branch them off bare `main` and N PRs over one file do not conflict.
+    merge_required = bool(edges)
+    soft_notes = [
+        {"number": issue.number, "note": note}
+        for issue in kept
+        for note in issue.soft_notes
+    ]
+
+    return {
+        "scope_label": scope_label,
+        "issues": [
+            {"number": i.number, "title": i.title, "blocked_by": sorted(i.blocked_by)}
+            for i in kept
+        ],
+        "waves": waves,
+        "dependency_edges": edges,
+        "merge_required": merge_required,
+        "merge_note": (
+            "Intra-set dependencies detected; integrate with merge mode so "
+            "dependents build on a base that includes their prerequisites."
+            if merge_required
+            else "No intra-set dependencies; one-PR-per-issue integration is safe."
+        ),
+        "soft_notes": soft_notes,
+        "external_dependencies": external_dependencies(kept),
+        "excluded": [
+            {"number": i.number, "title": i.title, "labels": i.labels} for i in excluded
+        ],
+    }
 
 
 def parse_git_log(text: str) -> list[Commit]:
@@ -473,22 +715,10 @@ def cmd_plan(args: argparse.Namespace) -> int:
     kept, excluded = exclude_by_label(issues, args.exclude_label or [])
 
     try:
-        waves = build_waves(kept)
+        plan = build_plan(kept, excluded, args.scope_label)
     except ValueError as exc:
         fail(str(exc))
 
-    plan = {
-        "scope_label": args.scope_label,
-        "issues": [
-            {"number": i.number, "title": i.title, "blocked_by": sorted(i.blocked_by)}
-            for i in kept
-        ],
-        "waves": waves,
-        "external_dependencies": external_dependencies(kept),
-        "excluded": [
-            {"number": i.number, "title": i.title, "labels": i.labels} for i in excluded
-        ],
-    }
     print(json.dumps(plan, indent=2))
     return 0
 
