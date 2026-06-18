@@ -79,6 +79,8 @@ gh issue list --label ready-for-agent --state open \
 
 It returns the dependency graph, the topologically ordered **waves** (issues in one wave are independent and may run concurrently), any dependency that points outside the scope, and the issues it excluded. A dependency cycle is a hard error it reports rather than guessing past. With `--plan`, present this and stop.
 
+The plan also carries a `merge_required` flag (with a human-readable `merge_note`): it is `true` whenever the in-scope graph has any cross-issue edge. Treat it as the cue for the merge-vs-PR decision below — when it is `true`, set the engine's `merge` arg (step 4) so dependents build on a base that already contains their prerequisites, rather than branching off bare `main`. The conservative one-PR-per-issue default is safe only when `merge_required` is `false`.
+
 ### 3. Confirm (single gate)
 
 Show the plan from step 2 — scope, graph, waves, and whether the run will merge or open pull requests — and wait for one confirmation. `--yes`, or a `--plan` you have already reviewed, skips it. Beyond this gate the run does not stop, with one exception: integrating into the default branch happens only under `--merge` or an explicit project authorization; otherwise the work lands as pull requests.
