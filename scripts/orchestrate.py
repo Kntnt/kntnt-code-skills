@@ -207,32 +207,48 @@ def _scan_reference_region(body: str, start: int) -> list[int]:
     same-line remainder up to the next sentence terminator or the next hard/soft
     keyword (so a soft phrase sharing the line keeps its refs out). If the label
     stands alone, an immediately following bullet list of `#N` is consumed too
-    (`**Depends on:**\\n- #44\\n- #45`). Scanning stops at the first line that is
-    neither blank nor a bullet reference, so trailing prose and later unrelated
-    lists are left out."""
+    (`**Depends on:**\\n- #44\\n- #45`), and if the next non-blank line is plain
+    prose it is read as the keyword's continuation — its first clause supplies the
+    refs (`Depends on\\nthe #44 schema.`), the conservative reach issue #10 asks
+    for. Scanning stops at the first line that is neither blank nor a bullet (and,
+    once any ref is in hand, the prose-continuation reach is not taken), so
+    trailing prose and later unrelated lists are left out."""
 
     # Take the references in the keyword's own clause: the same-line remainder cut
     # at the first clause boundary, so a trailing soft phrase or a second keyword
     # on the line does not pull its refs into this edge.
     newline = body.find("\n", start)
     head = body[start:] if newline == -1 else body[start:newline]
-    boundary = CLAUSE_BOUNDARY_RE.search(head)
-    if boundary is not None:
-        head = head[: boundary.start()]
-    numbers = [int(number) for number in ISSUE_REF_RE.findall(head)]
+    numbers = _refs_in_first_clause(head)
 
     # Then walk the following lines: skip blanks, absorb bullet references, and
-    # stop the moment a line is neither — that line begins unrelated content.
+    # stop the moment a line is neither. A non-bullet line ends the bullet list;
+    # but when nothing has matched yet (a bare label whose `#N` sits on the next
+    # line as prose, not a bullet), that first prose line is the keyword's
+    # continuation, so its own clause supplies the refs before scanning stops.
     rest = "" if newline == -1 else body[newline + 1 :]
     for line in rest.splitlines():
         if not line.strip():
             continue
         bullet = BULLET_REF_RE.match(line)
         if bullet is None:
+            if not numbers:
+                numbers.extend(_refs_in_first_clause(line))
             break
         numbers.append(int(bullet[1]))
 
     return numbers
+
+
+def _refs_in_first_clause(line: str) -> list[int]:
+    """Return the `#N` references in the first clause of `line` — the run up to
+    the first clause boundary (a sentence terminator, or the start of the next
+    hard keyword or soft phrase). Cutting at the boundary keeps a soft phrase or a
+    second keyword sharing the line from pulling its refs into the current edge."""
+
+    boundary = CLAUSE_BOUNDARY_RE.search(line)
+    clause = line if boundary is None else line[: boundary.start()]
+    return [int(number) for number in ISSUE_REF_RE.findall(clause)]
 
 
 def parse_dependencies(body: str, self_number: int | None = None) -> DependencySignals:
