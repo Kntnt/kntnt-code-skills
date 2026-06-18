@@ -202,6 +202,39 @@ def test_parse_dependencies_two_hard_keywords_on_one_line_keep_their_own_origin(
     assert signals.edges == {1: "Depends on", 2: "Requires"}
 
 
+# --- parse_dependencies: a bare keyword reaches onto the next prose line --------
+#
+# When a directional keyword ends its own line with no ref (the label sits alone
+# and the `#N` is on the next line as plain prose, not a bullet), the keyword's
+# authority still reaches the immediately following non-blank line. This is the
+# conservative direction issue #10 asks for: a missed edge is the bug. The reach
+# is bounded by the same clause boundary as the same-line scan, so a soft phrase
+# or a sentence break on the next line does not get absorbed.
+
+
+def test_parse_dependencies_keyword_then_prose_ref_on_next_line_yields_edge() -> None:
+    signals = orchestrate.parse_dependencies("Depends on\nthe #44 schema.")
+    assert signals.edges == {44: "Depends on"}
+
+
+def test_parse_dependencies_bare_keyword_next_line_stops_at_clause_boundary() -> None:
+    # The keyword's reach onto the next line is its own clause only: #44 is the
+    # edge, but the soft phrase after the sentence break stays a soft note.
+    signals = orchestrate.parse_dependencies("Depends on\n#44. Relates to #46.")
+    assert signals.edges == {44: "Depends on"}
+    assert any("#46" in note for note in signals.soft_notes)
+
+
+def test_parse_dependencies_keyword_with_same_line_ref_ignores_next_prose_line() -> (
+    None
+):
+    # When the keyword's own line already carries a ref, the next prose line is
+    # unrelated content and must not be absorbed (the "stop at the first
+    # non-bullet line" guarantee for the satisfied case).
+    signals = orchestrate.parse_dependencies("Depends on #44.\nUnrelated #99 mention.")
+    assert signals.edges == {44: "Depends on"}
+
+
 # --- parse_dependencies: keyword needs a word boundary ------------------------
 #
 # A hard keyword embedded in a longer word (prerequires, misrequires) must not
