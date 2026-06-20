@@ -30,9 +30,8 @@ from pathlib import Path
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 
 # Directory and file shortcuts.
-SKILL_DIR: Path = REPO_ROOT / "skills" / "coder"
-SKILL_MD: Path = SKILL_DIR / "SKILL.md"
-SCAFFOLD: Path = SKILL_DIR / "bin" / "scaffold"
+MODULES_DIR: Path = REPO_ROOT / "lib" / "coding-standard"
+SCAFFOLD: Path = REPO_ROOT / "scripts" / "scaffold.py"
 PLUGIN_JSON: Path = REPO_ROOT / ".claude-plugin" / "plugin.json"
 CHANGELOG: Path = REPO_ROOT / "CHANGELOG.md"
 
@@ -77,20 +76,21 @@ def relpath(path: Path) -> str:
 
 
 def module_files() -> set[str]:
-    """The set of topic-module stems in skills/coder/ — every `*.md` except
-    SKILL.md, which is the router rather than a module."""
+    """The set of topic-module stems in lib/coding-standard/ — every `*.md`
+    except files whose name starts with `_` (e.g. `_index.md`), which carry
+    shared profiling knowledge rather than a materialisable module."""
 
-    if not SKILL_DIR.exists():
+    if not MODULES_DIR.exists():
         return set()
     return {
         p.stem
-        for p in SKILL_DIR.iterdir()
-        if p.is_file() and p.suffix == ".md" and p.name != "SKILL.md"
+        for p in MODULES_DIR.iterdir()
+        if p.is_file() and p.suffix == ".md" and not p.name.startswith("_")
     }
 
 
 def canonical_order() -> list[str] | None:
-    """Extract the `CANONICAL_ORDER` array from bin/scaffold. Returns None when
+    """Extract the `CANONICAL_ORDER` array from scripts/scaffold.py. Returns None when
     the array cannot be located so the caller can report the structural
     problem rather than silently comparing against an empty list."""
 
@@ -117,20 +117,6 @@ def latest_changelog_version() -> str | None:
             continue
         return name
     return None
-
-
-def frontmatter_version(text: str) -> str | None:
-    """The `version:` value from a markdown file's YAML frontmatter, read with
-    a flat regex so the audit needs no YAML dependency."""
-
-    if not text.startswith("---\n"):
-        return None
-    end = text.find("\n---", 4)
-    if end == -1:
-        return None
-    block = text[4:end]
-    match = re.search(r"^version:\s*(.+?)\s*$", block, flags=re.MULTILINE)
-    return match.group(1).strip().strip("'\"") if match else None
 
 
 def check_plugin_json_and_version() -> CheckResult:
@@ -181,10 +167,10 @@ def check_plugin_json_and_version() -> CheckResult:
 
 
 def check_module_canonical_order_sync() -> CheckResult:
-    """(b) — the topic-module files in skills/coder/ and bin/scaffold's
-    `CANONICAL_ORDER` list the same modules. A module file with no entry would
-    be invisible to the scaffolder; an entry with no file would make the
-    scaffolder read a missing file. Both directions are flagged."""
+    """(b) — the topic-module files in lib/coding-standard/ and scripts/
+    scaffold.py's `CANONICAL_ORDER` list the same modules. A module file with no
+    entry would be invisible to the scaffolder; an entry with no file would make
+    the scaffolder read a missing file. Both directions are flagged."""
 
     result = CheckResult(name="(b) modules <-> CANONICAL_ORDER symmetry")
     order = canonical_order()
@@ -215,39 +201,7 @@ def check_module_canonical_order_sync() -> CheckResult:
                 result.name,
                 relpath(SCAFFOLD),
                 None,
-                f"CANONICAL_ORDER entry '{stem}' has no module file in skills/coder/",
-            )
-        )
-    return result
-
-
-def check_skill_version_sync() -> CheckResult:
-    """(c) — the `coder` skill's frontmatter `version` matches plugin.json.
-    The skill and the plugin are released together; a drift here means a
-    release updated one but not the other."""
-
-    result = CheckResult(name="(c) SKILL.md version matches plugin.json")
-    try:
-        plugin_version = str(
-            json.loads(read_text(PLUGIN_JSON)).get("version", "")
-        ).strip()
-    except json.JSONDecodeError:
-        # The malformed-JSON case is already reported by check (a).
-        return result
-    skill_version = frontmatter_version(read_text(SKILL_MD))
-    if skill_version is None:
-        result.findings.append(
-            Finding(
-                result.name, relpath(SKILL_MD), None, "no version field in frontmatter"
-            )
-        )
-    elif skill_version != plugin_version:
-        result.findings.append(
-            Finding(
-                result.name,
-                relpath(SKILL_MD),
-                None,
-                f"SKILL.md version '{skill_version}' does not match plugin.json version '{plugin_version}'",
+                f"CANONICAL_ORDER entry '{stem}' has no module file in lib/coding-standard/",
             )
         )
     return result
@@ -256,7 +210,6 @@ def check_skill_version_sync() -> CheckResult:
 CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_plugin_json_and_version,
     check_module_canonical_order_sync,
-    check_skill_version_sync,
 )
 
 

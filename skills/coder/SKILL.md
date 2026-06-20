@@ -1,113 +1,46 @@
 ---
 name: coder
-version: 0.7.0
 description: >
   Apply Kntnt's coding standard to any code-shaped task, in any
   language or framework. Writing, modifying, refactoring, reviewing,
-  debugging, or designing code; starting a new project; or scaffolding
-  the standard into a project as files — all count. The standard
-  covers PHP, JavaScript, TypeScript, Python, Bash, WordPress,
-  Gutenberg blocks, Laravel, Svelte, SvelteKit, and any framework
-  added later, but the skill is not limited to those. Trigger on any
-  request to write, implement, refactor, fix, review, or design code —
-  a class, function, script, plugin, app, module, or CLI; a bug fix;
-  setting up or scaffolding the coding standard — and on any task that
-  mentions a programming language, framework, or code construct. The
-  examples here are English, but trigger equally on the equivalent
-  request in any language. When in doubt, trigger.
+  debugging, or designing code; starting a new project; writing a
+  standalone script — all count. The standard covers PHP, JavaScript,
+  TypeScript, Python, Bash, WordPress, Gutenberg blocks, Laravel,
+  Svelte, SvelteKit, and any framework added later, but the skill is
+  not limited to those. Trigger on any request to write, implement,
+  refactor, fix, review, or design code — a class, function, script,
+  plugin, app, module, or CLI; a bug fix — and on any task that
+  mentions a programming language, framework, or code construct. This
+  skill only reads the standard and applies it; it never writes files
+  into the project. To materialise or update the standard as files in a
+  project, that is the `coding-standard` skill. The examples here are
+  English, but trigger equally on the equivalent request in any
+  language. When in doubt, trigger.
 ---
 
 # coder
 
-This skill is the entry point for any code-related task in Thomas's setup. It is shipped as part of the `kntnt-code-skills` plugin — invoked as `kntnt-code-skills:coder` when referenced explicitly. The actual coding rules live in topic modules; this file is the router. It decides which modules to load, whether to scaffold the standard into the project as files, and either way it ends by applying the standard to the work Thomas asked for.
+This skill applies Kntnt's coding standard to a code task. It is shipped as part of the `kntnt-code-skills` plugin — invoked as `kntnt-code-skills:coder` when referenced explicitly. It is read-only on the project: it loads the standard into context and honours it while writing, refactoring, reviewing, or designing code. It never writes the standard into the project as files — that is the sibling `coding-standard` skill's job (see *Related skills* below).
 
-## The modules
-
-| File | When to load |
-|---|---|
-| `general.md` | Always. The universal rules every other module presupposes. |
-| `php.md` | When PHP is present in the project. |
-| `wordpress.md` | When the project is a WordPress plugin or theme (always together with `php.md`). |
-| `wordpress-block.md` | When the project includes Gutenberg blocks. Always together with `wordpress.md` and `typescript.md`. Detect by `block.json` files, `@wordpress/scripts` in `package.json`, `register_block_type()` in PHP, or a clear textual statement. |
-| `typescript.md` | When TypeScript is present in the project. |
-| `javascript-vanilla.md` | When the project has plain browser JavaScript without a build step (typically PHP / WP plugin admin scripts). |
-| `python.md` | When Python is present in the project. |
-| `bash.md` | When Bash is present in the project. |
-
-Future additions (Laravel, Svelte, SvelteKit, etc.) follow the same pattern. To add a new module, see *Adding a new module* at the end of this file.
+The standard itself lives in topic modules under the plugin's `lib/coding-standard/`, with a shared `_index.md` that lists the modules and how to detect which ones a project needs. This file is the router: it profiles the project, loads the matching modules, and applies them.
 
 ## The flow
 
-Run through these four steps for every invocation. Any single task may use all of them or just the last one.
+Two steps. Every invocation runs both.
 
 ### 1. Profile the project
 
-Always read `general.md` first — it is the foundation every language module presupposes (priority order, language, identifiers, comment philosophy, prefix conventions). Then determine which language and framework axes apply by inspecting the working directory and the prompt:
+Load `${CLAUDE_PLUGIN_ROOT}/lib/coding-standard/_index.md` first — it carries the module table, the detection signals (which file markers and textual cues imply which language/framework axes), and the canonical order with its override relationships. Using it, inspect the working directory and the prompt to determine which axes apply.
 
-- **PHP** — `composer.json`, `*.php`, or a clear textual statement.
-- **TypeScript** — `tsconfig.json`, `*.ts`, `*.tsx`, or a textual statement.
-- **WordPress** — `wp-config*`, a plugin/theme header in a PHP file, a `Plugin Name:` header, or a textual statement.
-- **Gutenberg blocks** — `block.json`, `@wordpress/scripts` in `package.json`, `register_block_type()` in PHP, or a textual cue ("block plugin", "Gutenberg block", "block editor").
-- **Plain browser JavaScript** — `*.js` without a TypeScript build in the project (typical in WordPress plugins).
-- **Python** — `pyproject.toml`, `requirements.txt`, `*.py`, or a textual statement.
-- **Bash** — `*.sh`, `*.bash`, a `#!/usr/bin/env bash` shebang, or a textual statement.
-- **Future framework axes** (Laravel, Svelte, SvelteKit, …) — detect by their conventional markers: `artisan` for Laravel, `svelte.config.js` for Svelte, `svelte.config.js` plus a `@sveltejs/kit` dependency for SvelteKit, etc. If the framework matches but no module file exists yet for it, say so plainly, apply `general.md` plus the language module, and proceed.
+A project may belong to several axes at once: WordPress plugins are PHP + WordPress; block plugins add WordPress + TypeScript + WordPress-block. If the profile is genuinely unclear after looking — typically when code is requested in isolation with no surrounding project context — match the language(s) of the request and proceed without pausing to ask, unless something materially depends on the answer.
 
-A project may belong to several axes at once. WordPress plugins are PHP + WordPress; block plugins add WordPress + TypeScript + WordPress-block. If the profile is genuinely unclear after looking — typically when Thomas asks for code in isolation with no surrounding project context — load the modules that match the language(s) of the request and proceed without pausing to ask, unless something materially depends on the answer.
+If the project already has the standard scaffolded into `agents.d/coding-standard/`, those files are what the project's own agents load, and they are an intentional snapshot. Reconcile silently and proceed; do not offer to re-scaffold (the `coding-standard` skill owns that).
 
-### 2. Decide whether to scaffold the standard into the project
+### 2. Apply the standard
 
-Three buckets:
+Read the modules matching the profile from `${CLAUDE_PLUGIN_ROOT}/lib/coding-standard/`, in the canonical order given by `_index.md` (later wins on points where they differ):
 
-**Scaffold without asking** when Thomas explicitly requests it: "scaffold the coding standard", "add the coding standard", "init coding standards", "set up coding standards", "scaffold standards", or similar phrasing. Go straight to step 3.
-
-**Offer to scaffold** (one short question, then proceed on the answer) when *all* of the following hold:
-
-- The task creates or initialises a real project — "create a WordPress plugin", "start a Laravel app", "scaffold a new SvelteKit application", or work that will produce a multi-file codebase rather than a single snippet.
-- The working directory is either empty (perhaps with `.git`) or does not yet contain `agents.d/coding-general.md`.
-- The profile from step 1 is non-trivial — more than a single language axis, or any framework axis (WordPress, WordPress-block, Laravel, SvelteKit, …).
-
-The question is roughly: *"This looks like a real project — want me to scaffold the coding standard into `agents.d/` and wire it into `AGENTS.md` / `CLAUDE.md` before I write code?"* If yes, go to step 3. If no, go to step 4.
-
-**Skip scaffolding** otherwise — go straight to step 4. This covers:
-
-- Isolated code tasks ("write a function that …", "fix this bug", "review this snippet").
-- Existing projects that already have `agents.d/coding-general.md` — the project's files win. Reconcile silently and proceed.
-- Quick experiments, throwaway scripts, snippets with no project context.
-
-### 3. Scaffold (when requested or accepted)
-
-Scaffolding is deterministic file work. Do it through the bundled script rather than reconstructing the logic each time:
-
-```bash
-<skill-dir>/bin/scaffold \
-    --project-dir <project-root> \
-    --skill-dir <skill-dir> \
-    --include php,wordpress,typescript,wordpress-block
-```
-
-`bin/scaffold` is a command-style Python script — executable via its `#!/usr/bin/env -S uv run --script` shebang, so it runs directly without a `uv run` prefix. uv is the only runtime dependency; it provisions Python from the script's PEP 723 metadata, and the script itself is standard-library only.
-
-Pass the same module names you'd load for the project's profile (omit `general` — the script always includes it). Order on the command line doesn't matter; the script imposes the canonical order internally.
-
-The script:
-
-1. Sanity-checks the project directory. Refuses to write into a directory with no `.git`, `composer.json`, or `package.json` unless `--force` is set.
-2. Writes each requested module (plus `general`) as its own on-demand file `agents.d/coding-<module>.md`, with a generated header: a read-when line and, for an override module, a prerequisite + precedence line so the override resolves however the file is reached. The source modules stay generic; the concrete wiring lives in `bin/scaffold`'s `MODULE_META`.
-3. Refuses to overwrite an existing `agents.d/coding-<module>.md` (exit code 2, names the clashing files). The project's snapshot is intentional; re-scaffold deliberately.
-4. Ensures `AGENTS.md` carries a `## References` entry pointing at each module file (with a co-load note on override modules). When `AGENTS.md` is missing, writes a *minimal* one — title + References only — and tells you to run `/agents-md` to flesh it out. It does not build out the rest of the file; that is `/agents-md`'s job.
-5. Ensures `CLAUDE.md` bridges to `AGENTS.md` with `@AGENTS.md` (Claude Code reads `CLAUDE.md`, not `AGENTS.md`). Creates the one-line bridge when missing; prepends it to an existing `CLAUDE.md` that lacks it.
-6. Prints a one-line summary of what it did per file. (`--touch-agents-md` is a deprecated no-op — `AGENTS.md` is always written now.)
-
-If the script returns a non-zero exit code, read its stderr, explain the situation to Thomas, and don't attempt to redo the work by hand — the script is the source of truth for what scaffolding looks like.
-
-After scaffolding, continue to step 4 to apply the standard to whatever task came next.
-
-### 4. Apply the standard
-
-Read the modules matching the project profile, in this canonical order (later wins on points where they differ):
-
-1. `general.md` (already loaded in step 1)
+1. `general.md` — always.
 2. `php.md` (if PHP)
 3. `wordpress.md` (if WordPress) — overrides parts of `php.md`
 4. `typescript.md` (if TypeScript)
@@ -116,17 +49,15 @@ Read the modules matching the project profile, in this canonical order (later wi
 7. `python.md` (if Python)
 8. `bash.md` (if Bash)
 
-The override relationships are stated explicitly inside each module — WordPress projects override PSR-12 with the WordPress Coding Standards; block code stays on the `@wordpress/scripts` happy path instead of the Bun/Biome TypeScript pipeline.
-
 Then write, refactor, review, or design the code Thomas asked for, honouring the loaded rules. The modules are the contract; this file just gets you there.
 
 ## Standalone scripts
 
-A flow-level meta-rule that fires only when step 1's language detection finds nothing — typically when Thomas asks for a standalone script in isolation, with no surrounding project context to lock the language down.
+A meta-rule that fires only when step 1's language detection finds nothing — typically when Thomas asks for a standalone script in isolation, with no surrounding project context to lock the language down.
 
 ### When this applies
 
-The rule fires when *both* of the following hold:
+Both of these must hold:
 
 1. The task is to create a standalone script — not a class, not a function in an existing file, not part of a larger codebase.
 2. No language is given by the context.
@@ -137,7 +68,7 @@ When the context already pins the language, the existing flow wins and this sect
 - A TypeScript or JavaScript project → TypeScript on Bun (per the TypeScript module's defaults).
 - An explicit language in the prompt ("write me a Python script", "write a bash script") → that language.
 
-In all those cases, jump straight to step 4 and apply the matching module(s).
+In all those cases, apply the matching module(s) directly.
 
 ### Choosing the language
 
@@ -148,9 +79,7 @@ When the rule fires, pick the language by this order:
 3. **PHP** — when the script must live long untouched or shares code with a PHP codebase.
 4. **Bash** — short, pure orchestration only.
 
-Never default to Python merely because the task is "a script".
-
-Then apply the matching language module (`typescript.md`, `python.md`, `php.md`, or `bash.md`) the same way step 4 of the flow does.
+Never default to Python merely because the task is "a script". Then apply the matching language module (`typescript.md`, `python.md`, `php.md`, or `bash.md`) the same way step 2 does.
 
 ### Packaging
 
@@ -162,7 +91,7 @@ The packaging shape depends on the script's target directory, not on its languag
 - First line is a shebang (see below).
 - File is executable (`chmod +x`).
 
-This applies whether or not `bin/` happens to be on `PATH`. Making a command globally available is the user's decision — never the script's and never the scaffold's. Never modify `PATH`.
+This applies whether or not `bin/` happens to be on `PATH`. Making a command globally available is the user's decision — never the script's. Never modify `PATH`.
 
 **Anywhere else** → *internal*. The script is invoked by another script, a skill, or a tool, not by a human as a command:
 
@@ -186,33 +115,11 @@ Never `#!/bin/bash` — Apple's `/bin/bash` is frozen at 3.2 and `bash.md` calls
 - **Bun / TypeScript** — pin an exact version in the import specifier (no `^` or `~` ranges): `import { x } from "pkg@1.2.3";`. Bun auto-installs on first run.
 - **Python** — declare dependencies and `requires-python` via PEP 723 inline metadata at the top of the file (see `python.md`). `uv run` resolves the environment automatically.
 
-## Adding a new module
+## Related skills
 
-When adding a new framework or language to the standard:
-
-1. **Create `<topic>.md`** in this skill folder. Match the existing modules' shape — a one-paragraph "When this applies" intro, then sections for baseline / required modern features / surface style / file layout / tooling. State any override relationships explicitly inside the module so a reader who loads the module alone still understands the bigger picture.
-2. **Add a row to the modules table** at the top of this file, including the detection signal.
-3. **Add a detection clause to step 1** of the flow above. Match the shape of the existing axes.
-4. **Add the module to the canonical order** in step 4 and to `bin/scaffold`'s `CANONICAL_ORDER` — always; the scaffold validates every `--include` against that list and rejects unknown modules. Its *position* only matters when it has override relationships with an existing module (later wins on differences), and the canonical order is also the precedence order the generated headers refer to.
-5. **Add a `bin/scaffold` `MODULE_META` entry** (`label`, `read_when`, `requires`). If the module overrides another, list it in `requires` and add an `OVERRIDE_HEADER` sentence; the script asserts these maps stay in sync with `CANONICAL_ORDER` and fails loudly otherwise.
-6. **Update the `description` frontmatter** to name the new framework among the covered languages and frameworks, so the description stays accurate. The trigger is already broad and language-agnostic, so this keeps the list current rather than enabling triggering.
-
-The modules are self-contained on purpose. Cross-references between them use generic phrasing (e.g. "WordPress projects override the PSR-12 surface style") so each module reads correctly whether the router loads it alone or the scaffold writes it to its own `agents.d/coding-<module>.md` file. The concrete prerequisite wiring an override module needs (read X first) is generated by the scaffold from `MODULE_META`, never written into the module prose.
+- **`coding-standard`** — materialises the standard into a project as files under `agents.d/coding-standard/` and keeps them in sync (create / investigate drift / update). When Thomas asks to *scaffold*, *set up*, or *update the coding standard* in a project, that is the skill — not this one. `coder` only reads and applies; it writes no standard files.
 
 ## Notes
 
-- Updating the standard means editing one or more module files in this skill. Projects that have already scaffolded their own `agents.d/coding-<module>.md` files keep their snapshot until they explicitly re-scaffold; this is intentional, so updates to the skill don't silently change project behaviour.
-- Scaffolding requires file-system access to the project directory (Claude Code or Cowork). If access is not available — chat-only, no working directory — say so, skip step 3, and apply the standard from context instead.
-
-## Files in this skill
-
-- `SKILL.md` — this file.
-- `general.md` — universal rules (always loaded).
-- `php.md` — PHP rules.
-- `wordpress.md` — WordPress overrides and additions.
-- `wordpress-block.md` — Gutenberg block-specific rules.
-- `typescript.md` — TypeScript rules.
-- `javascript-vanilla.md` — plain browser JavaScript rules.
-- `python.md` — Python rules.
-- `bash.md` — Bash rules.
-- `bin/scaffold` — command-style Python script (run via uv) that writes the modules to `agents.d/coding-<module>.md` and wires the References into `AGENTS.md` / `CLAUDE.md`.
+- Updating the standard means editing one or more module files in `lib/coding-standard/`. Projects that have already scaffolded their own `agents.d/coding-standard/` keep their snapshot until they explicitly re-run the `coding-standard` skill with an update; this is intentional, so updates to the standard don't silently change project behaviour.
+- Adding a new framework or language to the standard is described in `lib/coding-standard/_index.md` and `scripts/scaffold.py` (the two places the module list and canonical order live).

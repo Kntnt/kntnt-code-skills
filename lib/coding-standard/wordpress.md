@@ -64,7 +64,7 @@ kntnt-<name>/
 ├── AGENTS.md                 ← AI agent instructions; References point
 │                                to agents.d/
 ├── agents.d/                 ← Kntnt coding standard, on demand:
-│                                coding-<module>.md (scaffolded)
+│                                coding-standard/<module>.md (scaffolded)
 ├── classes/                  ← PSR-4: <Class_Name>.php
 │   ├── Plugin.php            ← Singleton, component wiring, hooks
 │   ├── Migrator.php

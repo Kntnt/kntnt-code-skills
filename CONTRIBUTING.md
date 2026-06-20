@@ -20,14 +20,14 @@ By submitting a contribution, you agree it is licensed under Apache 2.0 by virtu
 
 1. **Open an issue first** for anything in the *discussed* row of the table above. For *welcomed* items, you can open a PR directly. Use the issue tracker at <https://github.com/Kntnt/kntnt-code-skills/issues>.
 2. **Bug reports** should follow the template under `.github/ISSUE_TEMPLATE/bug.md` — which module, which language/framework, which input, observed versus expected outcome.
-3. **Read the authoring rules** in the README (the *Authoring rules* section and the audit checklist beneath it) before editing files under `skills/`. The rules exist to prevent recurring architectural drift.
-4. **When adding a new module**, follow the *Adding a new module* checklist at the end of `skills/coder/SKILL.md`: create `<topic>.md`, add a row to the modules table, add a detection clause to step 1 of the flow, add the module to step 4's canonical order *and* to `bin/scaffold`'s `CANONICAL_ORDER`, add a `bin/scaffold` `MODULE_META` entry (and an `OVERRIDE_HEADER` sentence if it overrides another module), and update the `description` frontmatter so the skill keeps triggering on the new framework's name.
+3. **Read the authoring rules** in the README (the *Authoring rules* section and the audit checklist beneath it) before editing the standard's files. The rules exist to prevent recurring architectural drift.
+4. **When adding a new module**, follow the checklist in the README's *Authoring rules*: create `<topic>.md` in `lib/coding-standard/`, add a row and a detection clause to `lib/coding-standard/_index.md`, and add the module to `scripts/scaffold.py`'s `CANONICAL_ORDER` and `MODULE_META` (and an `OVERRIDE_HEADER` sentence if it overrides another module). The script asserts these maps stay in sync; the audit checks the module files against `CANONICAL_ORDER`.
 5. **One concern per PR.** Smaller PRs land faster.
-6. **Run the audit and tests before committing.** `uv run scripts/audit.py` runs the scriptable checks (plugin.json shape and version sync, module ↔ `CANONICAL_ORDER` symmetry), and `uv run --with pytest pytest` runs the test suite for `scripts/orchestrate.py`. Install the pre-commit hook with `pip install pre-commit && pre-commit install` so both fire automatically; CI re-runs them on every push and PR.
+6. **Run the audit and tests before committing.** `uv run scripts/audit.py` runs the scriptable checks (plugin.json shape and CHANGELOG version match, module ↔ `CANONICAL_ORDER` symmetry), and `uv run --with pytest pytest` runs the test suites for `scripts/orchestrate.py` and `scripts/scaffold.py`. Install the pre-commit hook with `pip install pre-commit && pre-commit install` so both fire automatically; CI re-runs them on every push and PR.
 
 ## Style and language conventions
 
-- All identifiers and comments in English (this is itself one of the standard's rules — see `skills/coder/general.md`).
+- All identifiers and comments in English (this is itself one of the standard's rules — see `lib/coding-standard/general.md`).
 - Module prose is written for a reader who may load the module alone, so cross-references between modules use generic phrasing (e.g. "WordPress projects override the PSR-12 surface style") rather than naming sibling files.
 - Each module is self-contained: a one-paragraph "When this applies" intro, then sections for baseline, required modern features, surface style, file layout, and tooling. State any override relationships explicitly inside the module.
 

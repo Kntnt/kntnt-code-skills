@@ -97,7 +97,7 @@ project/
 │       └── …
 ├── docs/                     ← Architecture, algorithm, conventions, …
 ├── tests/                    ← Cross-package and e2e (Playwright)
-├── agents.d/                 ← Kntnt coding standard (coding-<module>.md)
+├── agents.d/                 ← Kntnt coding standard (coding-standard/<module>.md)
 ├── AGENTS.md                 ← References point to agents.d/
 ├── CLAUDE.md                 ← @AGENTS.md bridge
 ├── README.md
