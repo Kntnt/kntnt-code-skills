@@ -6,7 +6,7 @@
 
 The plugin exposes two coding-standard skills, two release-workflow skills, an orchestration skill, and one command:
 
-- **`coder`** — applies the coding standard. It auto-triggers on code-related prompts (in any language), profiles the project to see which language and framework axes apply, loads the matching topic modules, and writes code to their rules. It is read-only on the project: it never writes the standard into the project as files.
+- **`coder`** — applies the coding standard. It auto-triggers on code-related prompts (in any language) and loads as a lazy bootstrap: at trigger it reads only the standard's router, then pulls in each topic module the moment the working context proves a language or framework axis applies — never the whole standard up front — and keeps pulling more as new axes surface through the session. It writes code to those rules and is read-only on the project: it never writes the standard into the project as files.
 - **`/coding-standard`** — materialises the standard into a project as files under `agents.d/coding-standard/` and keeps them in sync. Explicitly invoked only: it creates the files on a fresh project, reports how they have drifted on an already-scaffolded one, and reconciles them on `--update` (see *The coding standard* below).
 - **`/release`** — the full release workflow on whatever project you invoke it in: reconcile the changelog with the real changes since the last release, bump the version per Semantic Versioning across every place it lives, integrate a feature branch into the main branch, commit, tag `vX.Y.Z`, push, and publish the platform release. Every irreversible step waits behind a single confirmation.
 - **`/push`** — the routine companion: reconcile the changelog, commit, and push the current branch — no bump, tag, or release. Run it often so the changelog never falls behind.
@@ -26,7 +26,7 @@ The first line registers the marketplace from the GitHub repo (the bare `owner/r
 
 ## The coding standard (`coder` and `/coding-standard`)
 
-The `coder` skill is the entry point for code work. It triggers on any request to write, implement, refactor, fix, review, or design code — in any language — profiles the project, loads the rules that apply, and writes to them. Nothing to invoke explicitly, nothing to configure. Its trigger boundary is broad on purpose: it fires on any code-shaped task and on anything that mentions a covered language, framework, or construct, in any language (the description's examples are English, but the equivalent request in any language triggers it equally). It only reads the standard and applies it — it never writes the standard's files into a project.
+The `coder` skill is the entry point for code work. It triggers on any request to write, implement, refactor, fix, review, or design code — in any language — and loads the rules lazily: a minimal bootstrap that pulls in each module only as the context reveals it needs it, then writes to them. Nothing to invoke explicitly, nothing to configure. Its trigger boundary is broad on purpose: it fires on any code-shaped task and on anything that mentions a covered language, framework, or construct, in any language (the description's examples are English, but the equivalent request in any language triggers it equally). It only reads the standard and applies it — it never writes the standard's files into a project.
 
 It covers:
 
@@ -41,7 +41,7 @@ It covers:
 | `python.md` | When Python is present. |
 | `bash.md` | When Bash is present. |
 
-A project can sit on several axes at once — a WordPress block plugin is PHP + WordPress + TypeScript + Gutenberg — and the skill loads them all. How that load order and the override relationships work, and how to extend the standard with a new language or framework, is in *How `coder` is organized* below.
+A project can sit on several axes at once — a WordPress block plugin is PHP + WordPress + TypeScript + Gutenberg — and the skill pulls each module in as its axis surfaces rather than all at once: PHP code that turns out to be WordPress draws in the WordPress module then; a block draws in the Gutenberg and TypeScript modules when the block's UI appears. How the precedence and override relationships work, and how to extend the standard with a new language or framework, is in *How `coder` is organized* below.
 
 **Materialising into a project (`/coding-standard`).** `coder` itself writes no files into a project. To put the standard into a project as files, invoke the `/coding-standard` skill explicitly. It writes the relevant rules into `agents.d/coding-standard/<module>.md` (one on-demand file per module), records a private `manifest.json` beside them, wires a `## References` pointer to each into `AGENTS.md`, and bridges `CLAUDE.md` to it via `@AGENTS.md`. The standard is then loaded on demand — an agent reads only the modules a task needs, the moment it sets out to write or change code — rather than paid for on every session.
 
@@ -122,7 +122,8 @@ kntnt-code-skills/
 │   └── help.md
 ├── skills/
 │   ├── coder/
-│   │   └── SKILL.md
+│   │   ├── SKILL.md
+│   │   └── standalone-scripts.md
 │   ├── coding-standard/
 │   │   └── SKILL.md
 │   ├── orchestrate/
