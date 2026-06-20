@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.8.2] – 2026-06-20
+
+### Fixed
+
+- `/kntnt-code-skills:help <skill-name>` always rendered the overview instead of the named skill's detail. The command template passed the skill name to `scripts/help.py` through `$1`, but Claude Code's slash-command substitution numbers positional arguments from zero — `$0` is the first argument and `$1` the second — so with a single argument `$1` expanded to empty and the script received no skill name, falling back to the overview. The template now uses `$ARGUMENTS`, which carries the whole argument string (here the lone skill name), so `help <skill-name>` renders that skill's detail.
+
 ## [0.8.1] – 2026-06-20
 
 ### Changed
@@ -136,7 +142,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.2
 [0.8.1]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.1
 [0.8.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.7.0
