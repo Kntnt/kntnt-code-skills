@@ -138,6 +138,26 @@ Never `\Kntnt\Kntnt_<Project>\…` — the `\Kntnt` segment already provides the
 
 **When the prefix is not needed.** It exists to prevent collisions in a global registry. Where there is none — inside a TypeScript package whose public API is named exports, a Laravel app's `App\` namespace, a SvelteKit `$lib`, a standalone script whose identifiers stay in its own scope — the package, namespace, or file boundary already isolates, and an extra `kntnt` prefix is noise. Apply the prefix where collisions can happen (WordPress hooks, npm packages on a public registry, browser globals, custom DOM events, custom HTML data attributes); skip it where they cannot.
 
+## Standalone-script packaging
+
+When a single-file script is written to run on its own, its packaging shape depends on the directory it lives in, not on its language.
+
+**In a directory named `bin/`** → *command-style*, meant to be invoked as a unix command:
+
+- Filename has no extension.
+- First line is an env-based shebang (the exact line is in the language module).
+- File is executable (`chmod +x`).
+
+This holds whether or not `bin/` is on `PATH`; making a command globally available is the user's decision, never the script's. Never modify `PATH`.
+
+**Anywhere else** → *internal*, invoked by another script, skill, or tool rather than as a command:
+
+- Filename keeps its extension (`.ts`, `.py`, `.php`, `.sh`).
+- No shebang.
+- The caller invokes it explicitly (`bun foo.ts`, `php foo.php`, `uv run foo.py`, `bash foo.sh`).
+
+Shebangs are always env-based (`#!/usr/bin/env …`), never a hard-coded interpreter path. Each language module gives its exact shebang and any inline-dependency mechanism that keeps a single-file script self-contained.
+
 ## Universal tooling
 
 Applies to every project regardless of language; language-specific tools live in that language's module. Substitutions are allowed for specific project constraints; document them in the project's `README.md`.

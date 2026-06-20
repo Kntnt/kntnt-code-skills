@@ -37,6 +37,8 @@ Single-file scripts: declare dependencies and required Python version inline at 
 
 Pin exact versions. `uv run` resolves and caches the environment automatically.
 
+A script meant to run from the terminal uses the env-based shebang `#!/usr/bin/env -S uv run --script`, so `uv` provisions the environment from this PEP 723 metadata on invocation. Packaging shape (command-style in `bin/` vs internal) follows the universal *Standalone-script packaging* rules in the general module.
+
 ### Python tooling
 
 - **uv** as runtime, package manager, and virtualenv tool. `uv run` executes a PEP 723 script directly; for project work, `uv` manages the project venv and lockfile.

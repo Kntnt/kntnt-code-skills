@@ -6,7 +6,7 @@ Applies whenever the project contains Bash code — standalone scripts and short
 
 - GNU Bash 5+ from a current source (Homebrew on macOS). Not POSIX `sh`, not Apple's frozen `/bin/bash` 3.2.
 - Safety preamble at top of every script: `set -euo pipefail`.
-- Shebang, when present: `#!/usr/bin/env bash`. Never `#!/bin/bash`.
+- Shebang, when present: `#!/usr/bin/env bash`. Never `#!/bin/bash`. Packaging shape (command-style in `bin/` vs internal) follows the universal *Standalone-script packaging* rules in the general module.
 
 ### Style
 

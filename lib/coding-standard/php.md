@@ -59,6 +59,10 @@ One class, interface, enum, or trait per file. Filename equals the symbol name, 
 
 Conventional source directory is `src/`. WordPress plugins use `classes/` instead — see the WordPress rules.
 
+### Standalone scripts
+
+A single-file PHP script meant to run from the terminal uses the env-based shebang `#!/usr/bin/env php`, and otherwise follows the universal command-style / internal packaging rules (see *Standalone-script packaging* in the general module).
+
 ### Doc comments
 
 Every file, class, trait, interface, enum, method, function, property, and constant has a PHPDoc block. Include `@since` from the first release. Document the why and the contract; the type system already shows the shape.

@@ -79,6 +79,10 @@ Every public symbol carries a JSDoc/TSDoc block. The type system shows the shape
 recalibrate(newDurationSeconds: number): void { … }
 ```
 
+### Standalone scripts
+
+A single-file TypeScript script runs on Bun with the env-based shebang `#!/usr/bin/env bun`. Keep it self-contained by pinning an exact version in the import specifier — `import { x } from "pkg@1.2.3";` (no `^` / `~` ranges); Bun installs it on first run. Packaging shape (command-style in `bin/` vs internal) follows the universal *Standalone-script packaging* rules in the general module.
+
 ### TypeScript project structure (library / monorepo)
 
 ```

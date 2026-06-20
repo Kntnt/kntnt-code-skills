@@ -6,7 +6,7 @@
 
 The plugin exposes two coding-standard skills, two release-workflow skills, an orchestration skill, and one command:
 
-- **`coder`** — applies the coding standard. It auto-triggers on code-related prompts (in any language) and loads as a lazy bootstrap: at trigger it reads only the standard's router, then pulls in each topic module the moment the working context proves a language or framework axis applies — never the whole standard up front — and keeps pulling more as new axes surface through the session. It writes code to those rules and is read-only on the project: it never writes the standard into the project as files.
+- **`coder`** — applies the coding standard. It auto-triggers on code-related prompts (in any language) and loads as a lazy bootstrap: at trigger it reads only the standard's router, then pulls in each topic module the moment the working context proves a language or framework axis applies — never the whole standard up front — and keeps pulling more as new axes surface through the session. When a project has already scaffolded the standard into `agents.d/coding-standard/` (via `/coding-standard`), it loads nothing from the plugin at all and defers to the project's own on-demand `AGENTS.md` References — the deliberate snapshot — which the harness already follows on its own. It writes code to those rules and is read-only on the project: it never writes the standard into the project as files.
 - **`/coding-standard`** — materialises the standard into a project as files under `agents.d/coding-standard/` and keeps them in sync. Explicitly invoked only: it creates the files on a fresh project, reports how they have drifted on an already-scaffolded one, and reconciles them on `--update` (see *The coding standard* below).
 - **`/release`** — the full release workflow on whatever project you invoke it in: reconcile the changelog with the real changes since the last release, bump the version per Semantic Versioning across every place it lives, integrate a feature branch into the main branch, commit, tag `vX.Y.Z`, push, and publish the platform release. Every irreversible step waits behind a single confirmation.
 - **`/push`** — the routine companion: reconcile the changelog, commit, and push the current branch — no bump, tag, or release. Run it often so the changelog never falls behind.
@@ -122,8 +122,7 @@ kntnt-code-skills/
 │   └── help.md
 ├── skills/
 │   ├── coder/
-│   │   ├── SKILL.md
-│   │   └── standalone-scripts.md
+│   │   └── SKILL.md
 │   ├── coding-standard/
 │   │   └── SKILL.md
 │   ├── orchestrate/
