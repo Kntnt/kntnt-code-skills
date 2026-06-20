@@ -1,6 +1,6 @@
 # Coding Standards
 
-Project coding standard. General rules below apply to all code; language- and framework-specific rules live in companion modules.
+Project coding standard. General rules apply to all code; language- and framework-specific rules live in companion modules.
 
 ## Priority order
 
@@ -18,7 +18,7 @@ These principles often conflict. Find the design that best honours all of them �
 - **YAGNI** — implement only what the current requirement demands. No abstraction until more than one concrete implementation exists.
 - **KISS** — prefer the simpler solution. Complexity must justify itself through a concrete, present requirement.
 - **DRY** — one authoritative source per piece of knowledge. Extract duplication only when two things are the same concept, not merely similar syntax.
-- **TDD** — failing test before production code; Red/Green/Refactor; each test Arrange-Act-Assert with a name stating the expected behaviour. The RED step is not ceremony: a test never observed to fail is of unknown value, so demonstrate the failing run as a real artifact (seen failing before the satisfying code exists), never inferred after the fact. Automate every test that can meaningfully constrain behaviour at the lowest layer that does; escalate to integration or end-to-end only where a unit test cannot capture the behaviour; reserve human verification for the irreducibly subjective (visual feel, aesthetics, pacing), stating that residual explicitly.
+- **TDD** — failing test before production code; Red/Green/Refactor; each test Arrange-Act-Assert with a name stating the expected behaviour. The RED step is not ceremony: a test never observed to fail is of unknown value, so demonstrate the failing run as an artifact (seen failing before the satisfying code exists), never inferred after the fact. Automate every test that can meaningfully constrain behaviour at the lowest layer that does; escalate to integration or end-to-end only where a unit test cannot capture the behaviour; reserve human verification for the irreducibly subjective (visual feel, aesthetics, pacing), stating that residual explicitly.
 - **Deep modules** — a module's external interface is narrow and simple relative to the complexity it hides. This depth is the primary quality metric for a module boundary and creates a clean seam for mocking. Design the external interface as a commitment, as if it cannot be changed.
 - **SOLID inside a module** — governs the internal structure of classes and components, never the module's external interface. Inject dependencies (DIP); keep ISP decomposition internal so the external interface stays deep.
 
@@ -79,7 +79,7 @@ The example is PHP; the rule is identical in TypeScript and plain JavaScript.
 
 **Single-paragraph block.** When a block is one paragraph that needs no explanation of its own, drop both the `//` comment and the surrounding blank lines, and let the comment introducing the **enclosing statement** carry everything. For a function body that is the PHPDoc / JSDoc; for an `if` / `else` / `while` / `for` / `try` body it is the `//` comment above the control statement.
 
-**Doc comments.** Every file, class, interface, enum, trait, function, method, public property, and exported constant carries a doc comment (PHPDoc / JSDoc / TSDoc). Include the why, the contract, and edge cases — not the what. Use `@param`, `@return`, `@throws`, `@since`, `@example` where they add real value.
+**Doc comments.** Every file, class, interface, enum, trait, function, method, public property, and exported constant carries a doc comment (PHPDoc / JSDoc / TSDoc). Include the why, the contract, and edge cases — not the what. Use `@param`, `@return`, `@throws`, `@since`, `@example` where they add value.
 
 **End-of-line comments.** Use sparingly, only where a reader could plausibly miss a subtle but critical detail (a magic constant chosen for a reason, a non-obvious off-by-one, a workaround for a known platform bug).
 
@@ -89,9 +89,9 @@ The example is PHP; the rule is identical in TypeScript and plain JavaScript.
 
 ### Whitespace
 
-- **No vertical alignment of `=` or `=>`.** Single-space the operator and move on; the realignment churn on every edit costs more than the negligible visual benefit.
+- **No vertical alignment of `=` or `=>`.** Single-space the operator and move on; realignment churn on every edit costs more than the negligible visual benefit.
 - **No padding inside short collections.** Short array literals stay on one line: `[1, 2, 3]`.
-- **No gratuitous line breaks** in parameter lists. One line unless it genuinely becomes hard to read or exceeds the formatter's max width.
+- **No gratuitous line breaks** in parameter lists. One line unless it becomes hard to read or exceeds the formatter's max width.
 - **Motivated line breaks are fine.** Break an array literal across lines when its elements naturally form a list or matrix — lookup tables, observer thresholds, route definitions, fixture rows. Content-driven, not character-count-driven. Do not split a short call like `create_user( $name, $email, $role )`.
 
 ### Modern syntax
@@ -100,7 +100,7 @@ Always prefer the modern construction over the legacy one: nullish coalescing, n
 
 ### Defensive coding
 
-Write a guard only where a real, present condition needs it — an untrusted boundary (user input, a network response, deserialization), a documented platform quirk, a contract a caller can plausibly break. Defensive code against states the surrounding invariants already rule out is forbidden: redundant null checks, `try`/`catch` around calls that cannot throw, re-validation of data already validated upstream, `else` branches for conditions that cannot occur, fallbacks for a dependency the module constructs itself. Such code adds paths no test covers, dilutes the real contract, and feigns a doubt the types and invariants have already settled. When a guard is warranted, its `//` topic sentence names the threat it defends against — as the dispatch example above does.
+Write a guard only where a real, present condition needs it — an untrusted boundary (user input, a network response, deserialization), a documented platform quirk, a contract a caller can plausibly break. Defensive code against states the surrounding invariants already rule out is forbidden: redundant null checks, `try`/`catch` around calls that cannot throw, re-validation of data already validated upstream, `else` branches for conditions that cannot occur, fallbacks for a dependency the module constructs itself. Such code adds paths no test covers, dilutes the contract, and feigns a doubt the types and invariants have already settled. When a guard is warranted, its `//` topic sentence names the threat it defends against — as the dispatch example above does.
 
 ### Identifiers
 
@@ -140,7 +140,7 @@ Never `\Kntnt\Kntnt_<Project>\…` — the `\Kntnt` segment already provides the
 
 ## Standalone-script packaging
 
-When a single-file script is written to run on its own, its packaging shape depends on the directory it lives in, not on its language.
+When a single-file script runs on its own, its packaging shape depends on the directory it lives in, not on its language.
 
 **In a directory named `bin/`** → *command-style*, meant to be invoked as a unix command:
 

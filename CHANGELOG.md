@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.8.3] – 2026-06-20
+
+### Changed
+
+- `coder` standard — the prose of `general.md` and `typescript.md` was tightened across nine small edits, dropping filler and redundancy (`real`, `genuinely`, a stray `below` and `instead`, "is written to run" → "runs", and the like) from the connective text around a handful of rules. Every normative rule, code sample, table, directory tree, and identifier is byte-for-byte unchanged; only wording was trimmed.
+
 ## [0.8.2] – 2026-06-20
 
 ### Fixed
@@ -142,7 +148,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.3
 [0.8.2]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.2
 [0.8.1]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.1
 [0.8.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.0

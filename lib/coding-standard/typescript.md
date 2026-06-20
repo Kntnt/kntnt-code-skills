@@ -34,7 +34,7 @@ Applies whenever the project contains TypeScript code.
 - Prefer `interface` over `type` for object shapes.
 - Use `type` for unions, intersections, mapped types, and aliases that aren't purely object shapes.
 - Mark properties `readonly` whenever they are not reassigned after construction.
-- Avoid `any`. Use `unknown` when the type is genuinely unknown and narrow at the boundary.
+- Avoid `any`. Use `unknown` when the type is unknown and narrow at the boundary.
 - Use the `satisfies` operator to verify a literal against a type without widening it.
 - Prefer literal/template literal types and discriminated unions over enum-style flags.
 
@@ -61,7 +61,7 @@ Bun strips types at runtime — it does not type-check. Enforce the type system 
 - Pure where possible. Side effects pushed to the edges.
 - Single responsibility. ~30 lines is a soft guideline, not a hard cap.
 - Early returns to flatten nesting.
-- More than three parameters: take an options object instead.
+- More than three parameters: take an options object.
 - DOM event listeners use `{ passive: true }` whenever applicable.
 
 ### Doc comments
