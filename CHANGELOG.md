@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.8.1] – 2026-06-20
+
+### Changed
+
+- `README.md` prose was reworked to British English typographic conventions: every em-dash (`—`) became a spaced en-dash (`–`), the serial (Oxford) commas were dropped from lists of three or more items (one deliberately retained where the items' own internal *or* would otherwise read ambiguously), and the two American `-ize` spellings (*organized*, *authorizes*) became British `-ise` (*organised*, *authorises*). Prose wording and meaning are unchanged — only mechanics.
+
+### Fixed
+
+- A stale cross-reference in `README.md` pointed at a section called *How `coder` is organized*; the actual heading is *How the coding standard is organised*. The reference now matches the heading.
+
 ## [0.8.0] – 2026-06-20
 
 ### Added
@@ -126,7 +136,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.1
 [0.8.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.6.0
