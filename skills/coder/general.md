@@ -1,144 +1,77 @@
 # Coding Standards
 
-This document defines the project's coding standard. The general rules
-below apply to all code in the project. Language- and framework-specific
-rules follow in their own sections (PHP, WordPress, TypeScript, plain
-JavaScript). Only the sections that match the project's actual shape
-are included.
+This document defines the project's coding standard. The general rules below apply to all code in the project. Language- and framework-specific rules follow in their own sections (PHP, WordPress, TypeScript, plain JavaScript). Only the sections that match the project's actual shape are included.
 
 ## Priority order
 
 When two rules conflict, the higher-priority rule wins:
 
-1. **This document and its companion modules.** Together they are the
-   project's coding standard.
-2. **The recommended coding standard for the language** — PSR-12 for
-   PHP, the WordPress Coding Standards for WordPress projects, the
-   TypeScript handbook style, MDN's JavaScript style, etc.
-3. **Best practice** — well-reasoned community advice (Airbnb JS,
-   Clean Code, the WordPress Plugin Handbook, etc.).
-4. **Widely accepted conventions** — what most code in the wild looks
-   like.
+1. **This document and its companion modules.** Together they are the project's coding standard.
+2. **The recommended coding standard for the language** — PSR-12 for PHP, the WordPress Coding Standards for WordPress projects, the TypeScript handbook style, MDN's JavaScript style, etc.
+3. **Best practice** — well-reasoned community advice (Airbnb JS, Clean Code, the WordPress Plugin Handbook, etc.).
+4. **Widely accepted conventions** — what most code in the wild looks like.
 
 ## Design philosophy
 
-These principles often conflict. The task is to find the design that
-best honours all of them — not to apply each mechanically in sequence.
-When in doubt, start with YAGNI and work down the list.
+These principles often conflict. The task is to find the design that best honours all of them — not to apply each mechanically in sequence. When in doubt, start with YAGNI and work down the list.
 
-**YAGNI** — Implement only what the current requirement demands. Do
-not create abstractions until more than one concrete implementation
-exists.
+**YAGNI** — Implement only what the current requirement demands. Do not create abstractions until more than one concrete implementation exists.
 
-**KISS** — Prefer the simpler solution. Complexity must justify itself
-through a concrete, present requirement.
+**KISS** — Prefer the simpler solution. Complexity must justify itself through a concrete, present requirement.
 
-**DRY** — Each piece of knowledge has one authoritative source.
-Extract duplication only when two things represent the same concept —
-not merely similar syntax.
+**DRY** — Each piece of knowledge has one authoritative source. Extract duplication only when two things represent the same concept — not merely similar syntax.
 
-**TDD** — Write a failing test before writing production code. Follow
-Red/Green/Refactor, each test structured as Arrange-Act-Assert with a
-name that states the expected behaviour. The RED step is not ceremony:
-a test that has never been observed to fail is of unknown value, so
-the failing run is a real artifact — demonstrate it (a test seen
-failing before the code that satisfies it exists), never infer it
-after the fact. And automate every test that can be made to constrain
-behaviour meaningfully: pick the lowest layer that does so, escalate
-to integration or end-to-end only where a unit test cannot capture
-the behaviour, and reserve human verification for the irreducibly
-subjective (visual feel, aesthetics, pacing) — stating that residual
-explicitly rather than leaving it implicit.
+**TDD** — Write a failing test before writing production code. Follow Red/Green/Refactor, each test structured as Arrange-Act-Assert with a name that states the expected behaviour. The RED step is not ceremony: a test that has never been observed to fail is of unknown value, so the failing run is a real artifact — demonstrate it (a test seen failing before the code that satisfies it exists), never infer it after the fact. And automate every test that can be made to constrain behaviour meaningfully: pick the lowest layer that does so, escalate to integration or end-to-end only where a unit test cannot capture the behaviour, and reserve human verification for the irreducibly subjective (visual feel, aesthetics, pacing) — stating that residual explicitly rather than leaving it implicit.
 
-**Deep modules** — A module's external interface must be narrow and
-simple relative to the complexity it hides. This depth creates a clean
-seam for mocking and is the primary quality metric for a module
-boundary. The external interface is a commitment; design it as if it
-cannot be changed.
+**Deep modules** — A module's external interface must be narrow and simple relative to the complexity it hides. This depth creates a clean seam for mocking and is the primary quality metric for a module boundary. The external interface is a commitment; design it as if it cannot be changed.
 
-**SOLID** applies inside a module — to the internal structure of classes
-and components, not to the module's external interface:
+**SOLID** applies inside a module — to the internal structure of classes and components, not to the module's external interface:
 
 - **SRP** — one reason to change per class.
 - **OCP** — extend through new code, not by modifying existing code.
 - **LSP** — subtypes must fully honour the base type's contract.
-- **ISP** — internal components depend only on the interface slice they
-  actually use. Decompose large internal interfaces into focused ones.
+- **ISP** — internal components depend only on the interface slice they actually use. Decompose large internal interfaces into focused ones.
 - **DIP** — depend on abstractions; inject dependencies.
 
-**Boundary rule**: ISP decomposition is an internal detail and must
-never surface in the module's external interface. The external
-interface stays deep.
+**Boundary rule**: ISP decomposition is an internal detail and must never surface in the module's external interface. The external interface stays deep.
 
 ## Universal rules
 
 ### Language
 
-- All identifiers (classes, interfaces, enums, traits, functions, methods,
-  variables, constants, properties, type parameters, etc.) are in **English**.
-- All comments — file-level, block-level, end-of-line, PHPDoc, JSDoc, TSDoc —
-  are in **English**.
-- All technical documentation (`README.md`, `CLAUDE.md`, `AGENTS.md`, files
-  in `docs/`) is in **English**.
-- User-facing strings are translatable and may be authored in any language;
-  the source string in `__()` / `gettext()` calls is English.
+- All identifiers (classes, interfaces, enums, traits, functions, methods, variables, constants, properties, type parameters, etc.) are in **English**.
+- All comments — file-level, block-level, end-of-line, PHPDoc, JSDoc, TSDoc — are in **English**.
+- All technical documentation (`README.md`, `CLAUDE.md`, `AGENTS.md`, files in `docs/`) is in **English**.
+- User-facing strings are translatable and may be authored in any language; the source string in `__()` / `gettext()` calls is English.
 
 ### Versions and targets
 
-- Use the latest stable major.minor of any chosen language — UNLESS
-  an earlier version is required by the project you're working in or
-  by a library/dependency the project depends on. Pin the constraint
-  explicitly when it applies; don't drift below latest by accident.
-- For browser-targeted code, target the most recent edition of
-  ECMAScript supported by the current stable releases of Safari,
-  Firefox, Chrome, and Edge. In practice this currently means **ES2022**;
-  revisit the target as evergreen support for newer editions catches up.
-- No polyfills, no transpiler-emitted runtime helpers for older
-  targets.
+- Use the latest stable major.minor of any chosen language — UNLESS an earlier version is required by the project you're working in or by a library/dependency the project depends on. Pin the constraint explicitly when it applies; don't drift below latest by accident.
+- For browser-targeted code, target the most recent edition of ECMAScript supported by the current stable releases of Safari, Firefox, Chrome, and Edge. In practice this currently means **ES2022**; revisit the target as evergreen support for newer editions catches up.
+- No polyfills, no transpiler-emitted runtime helpers for older targets.
 
-This rule is stated once here and not restated in the per-language
-modules.
+This rule is stated once here and not restated in the per-language modules.
 
 ### Code is read as prose
 
-Code is read as prose. The reader is always a senior developer fluent
-in the language and the framework. Loosely:
+Code is read as prose. The reader is always a senior developer fluent in the language and the framework. Loosely:
 
 - A file is a chapter or short essay.
 - A class or function is a section.
-- A *paragraph* (Swedish *stycke*) — a group of consecutive statements
-  that logically belong together — is the basic unit of structure
-  inside a block, with a `//` comment as its topic sentence.
+- A *paragraph* (Swedish *stycke*) — a group of consecutive statements that logically belong together — is the basic unit of structure inside a block, with a `//` comment as its topic sentence.
 - A statement is a sentence.
 
-This shapes how blocks are paragraphed and how comments are written.
-The next section is the most central rule in this whole standard:
-follow it carefully.
+This shapes how blocks are paragraphed and how comments are written. The next section is the most central rule in this whole standard: follow it carefully.
 
 ### Paragraphs and comments
 
-**Paragraphing inside blocks.** Inside any block — a function body, a
-loop body, an `if` / `else` branch, a `try` / `catch` branch — group
-consecutive statements that logically belong together into a *paragraph*
-(*stycke*). A paragraph has:
+**Paragraphing inside blocks.** Inside any block — a function body, a loop body, an `if` / `else` branch, a `try` / `catch` branch — group consecutive statements that logically belong together into a *paragraph* (*stycke*). A paragraph has:
 
 - No blank line between its statements.
-- A single-line `//` comment above it that names what the paragraph
-  does. The comment is a topic sentence, not an explanation; it lets
-  the reader skim and skip.
-- A blank line above the comment and a blank line below the last
-  statement — even when the paragraph is the first or last thing in
-  the enclosing block, so it sits flush against the opening `{` or
-  the closing `}`.
+- A single-line `//` comment above it that names what the paragraph does. The comment is a topic sentence, not an explanation; it lets the reader skim and skip.
+- A blank line above the comment and a blank line below the last statement — even when the paragraph is the first or last thing in the enclosing block, so it sits flush against the opening `{` or the closing `}`.
 
-A *trivial* paragraph — a lone `return $x;`, a single `global $wpdb;`,
-a one-line assignment whose intent the surrounding code makes obvious —
-may stand without a `//` comment. **The blank-line rule still applies,
-though**: when the other paragraphs in the same block are separated by
-blank lines, the trivial one is too. The first line after `{` must not
-be jammed against the brace when other paragraphs breathe; a closing
-`return` must not sit immediately above `}` either. Visual consistency
-across the block matters.
+A *trivial* paragraph — a lone `return $x;`, a single `global $wpdb;`, a one-line assignment whose intent the surrounding code makes obvious — may stand without a `//` comment. **The blank-line rule still applies, though**: when the other paragraphs in the same block are separated by blank lines, the trivial one is too. The first line after `{` must not be jammed against the brace when other paragraphs breathe; a closing `return` must not sit immediately above `}` either. Visual consistency across the block matters.
 
 ```php
 public function dispatch( string $token ): void {
@@ -164,17 +97,9 @@ public function dispatch( string $token ): void {
 }
 ```
 
-The example is in PHP but the rule is identical in TypeScript and
-plain JavaScript.
+The example is in PHP but the rule is identical in TypeScript and plain JavaScript.
 
-**Single-paragraph block — the introducing comment absorbs the
-explanation.** When a block consists of one paragraph that needs no
-explanation of its own, drop both the `//` comment and the surrounding
-blank lines, and make sure the comment that introduces the **enclosing
-statement** carries everything a reader needs. For a function body that
-introducing comment is the PHPDoc / JSDoc; for an `if` / `else` /
-`while` / `for` / `try` body it is the `//` comment that sits above the
-control statement.
+**Single-paragraph block — the introducing comment absorbs the explanation.** When a block consists of one paragraph that needs no explanation of its own, drop both the `//` comment and the surrounding blank lines, and make sure the comment that introduces the **enclosing statement** carries everything a reader needs. For a function body that introducing comment is the PHPDoc / JSDoc; for an `if` / `else` / `while` / `for` / `try` body it is the `//` comment that sits above the control statement.
 
 ```php
 /**
@@ -194,38 +119,20 @@ if ( ! $cached_token ) {
 }
 ```
 
-**Doc comments.** Every file, class, interface, enum, trait, function,
-method, public property, and exported constant carries a doc comment
-(PHPDoc / JSDoc / TSDoc). Include the why, the contract, and edge cases —
-not the what. Use `@param`, `@return`, `@throws`, `@since`, `@example`
-where they add real value.
+**Doc comments.** Every file, class, interface, enum, trait, function, method, public property, and exported constant carries a doc comment (PHPDoc / JSDoc / TSDoc). Include the why, the contract, and edge cases — not the what. Use `@param`, `@return`, `@throws`, `@since`, `@example` where they add real value.
 
-**End-of-line comments.** Use sparingly, only where a reader could plausibly
-miss a subtle but critical detail (a magic constant chosen for a reason, a
-non-obvious off-by-one, a workaround for a known platform bug).
+**End-of-line comments.** Use sparingly, only where a reader could plausibly miss a subtle but critical detail (a magic constant chosen for a reason, a non-obvious off-by-one, a workaround for a known platform bug).
 
-**Audience.** All comments are written for an experienced developer reading
-the file for the first time. Do not restate what the code already shows.
-Do not write tutorials, do not address juniors, do not narrate the obvious.
+**Audience.** All comments are written for an experienced developer reading the file for the first time. Do not restate what the code already shows. Do not write tutorials, do not address juniors, do not narrate the obvious.
 
-**Line wrapping.** Comments wrap at column 80. Code may go wider where it
-improves readability — see formatter settings per language below.
+**Line wrapping.** Comments wrap at column 80. Code may go wider where it improves readability — see formatter settings per language below.
 
 ### Whitespace
 
-- **No vertical alignment of `=` or `=>`.** Do not align assignment
-  operators or array arrows across multiple lines. Single-space the
-  operator and move on. The realignment churn on every edit is a real
-  cost and the visual benefit is negligible for a senior reader.
-- **No padding inside short collections.** Short array literals stay on one
-  line: `[1, 2, 3]`, not split.
-- **No gratuitous line breaks** in parameter lists. Pass parameters on one
-  line unless the line genuinely becomes hard to read or exceeds the
-  formatter's max line width.
-- **Motivated line breaks are fine.** Break an array literal across lines
-  when its elements naturally form a list or a matrix — for example, lookup
-  tables, observer thresholds, route definitions, fixture rows. The
-  break-or-not decision is content-driven, not character-count-driven.
+- **No vertical alignment of `=` or `=>`.** Do not align assignment operators or array arrows across multiple lines. Single-space the operator and move on. The realignment churn on every edit is a real cost and the visual benefit is negligible for a senior reader.
+- **No padding inside short collections.** Short array literals stay on one line: `[1, 2, 3]`, not split.
+- **No gratuitous line breaks** in parameter lists. Pass parameters on one line unless the line genuinely becomes hard to read or exceeds the formatter's max line width.
+- **Motivated line breaks are fine.** Break an array literal across lines when its elements naturally form a list or a matrix — for example, lookup tables, observer thresholds, route definitions, fixture rows. The break-or-not decision is content-driven, not character-count-driven.
 
 ```php
 // Motivated: the elements form a fixed list.
@@ -244,55 +151,26 @@ $user = create_user( $name, $email, $role );
 
 ### Modern syntax
 
-Always prefer the modern construction over the legacy one. Use syntactic
-sugar where the language offers it: nullish coalescing, null-safe operator,
-spread, destructuring, arrow functions, match/switch expressions, pattern
-matching, template literals. Specific examples are in the language modules.
+Always prefer the modern construction over the legacy one. Use syntactic sugar where the language offers it: nullish coalescing, null-safe operator, spread, destructuring, arrow functions, match/switch expressions, pattern matching, template literals. Specific examples are in the language modules.
 
 ### Defensive coding
 
-Write a guard only where a real, present condition needs it — an
-untrusted boundary (user input, a network response, deserialization),
-a documented platform quirk, a contract a caller can plausibly break.
-Defensive code against states the surrounding invariants already rule
-out is forbidden: redundant null checks, `try`/`catch` around calls
-that cannot throw, re-validation of data already validated upstream,
-`else` branches for conditions that cannot occur, fallbacks for a
-dependency the module constructs itself. Such code is dead weight — it
-adds paths no test covers, dilutes the real contract, and feigns a
-doubt the types and invariants have already settled. When a guard is
-warranted, the `//` topic sentence above it names the threat it
-defends against — exactly as the dispatch example under *Paragraphs
-and comments* does ("defense-in-depth in case the upstream validator
-is bypassed").
+Write a guard only where a real, present condition needs it — an untrusted boundary (user input, a network response, deserialization), a documented platform quirk, a contract a caller can plausibly break. Defensive code against states the surrounding invariants already rule out is forbidden: redundant null checks, `try`/`catch` around calls that cannot throw, re-validation of data already validated upstream, `else` branches for conditions that cannot occur, fallbacks for a dependency the module constructs itself. Such code is dead weight — it adds paths no test covers, dilutes the real contract, and feigns a doubt the types and invariants have already settled. When a guard is warranted, the `//` topic sentence above it names the threat it defends against — exactly as the dispatch example under *Paragraphs and comments* does ("defense-in-depth in case the upstream validator is bypassed").
 
 ### Identifiers
 
-- Names are self-documenting. Avoid abbreviations except well-established
-  ones (`url`, `id`, `db`, `i` in tight loops).
-- No magic strings or numbers in business logic — extract them to named
-  constants or enum cases.
-- Boolean variables and methods read as predicates: `isReady`, `hasConsent`,
-  `should_retry()`.
+- Names are self-documenting. Avoid abbreviations except well-established ones (`url`, `id`, `db`, `i` in tight loops).
+- No magic strings or numbers in business logic — extract them to named constants or enum cases.
+- Boolean variables and methods read as predicates: `isReady`, `hasConsent`, `should_retry()`.
 
 ### Naming and prefixes
 
-Wherever there is a real risk of name collision in a global registry —
-WordPress plugins and themes are the canonical case, but the same logic
-applies to npm package names, browser globals, custom DOM events, and
-similar — use a project prefix:
+Wherever there is a real risk of name collision in a global registry — WordPress plugins and themes are the canonical case, but the same logic applies to npm package names, browser globals, custom DOM events, and similar — use a project prefix:
 
-- **`kntnt-`** (with hyphens) where the surrounding convention requires
-  hyphens: plugin/theme directory names, plugin slugs, text domains,
-  REST namespaces, file paths, CSS class names, npm package names,
-  custom HTML data attributes.
-- **`kntnt_`** (with underscores) where the surrounding convention
-  requires underscores: PHP function names, hook names, option keys,
-  transient keys, post-type slugs, capability slugs, user-meta keys,
-  JavaScript globals.
+- **`kntnt-`** (with hyphens) where the surrounding convention requires hyphens: plugin/theme directory names, plugin slugs, text domains, REST namespaces, file paths, CSS class names, npm package names, custom HTML data attributes.
+- **`kntnt_`** (with underscores) where the surrounding convention requires underscores: PHP function names, hook names, option keys, transient keys, post-type slugs, capability slugs, user-meta keys, JavaScript globals.
 
-After the prefix comes the project's own name, then one or more words
-describing the purpose:
+After the prefix comes the project's own name, then one or more words describing the purpose:
 
 ```
 kntnt-<project>                        ← plugin slug, repo name, dir name
@@ -300,64 +178,36 @@ kntnt_<project>_<purpose>              ← hook, option, post-type slug
 kntnt-<project>-<purpose>              ← CSS class, REST endpoint segment
 ```
 
-The project name itself does **not** start with `kntnt` — the prefix
-provides that segment exactly once. A project called simply `<project>`
-gets the slug `kntnt-<project>`, not `kntnt-kntnt-<project>`; its hooks
-are `kntnt_<project>_<purpose>`, not `kntnt_kntnt_<project>_<purpose>`.
+The project name itself does **not** start with `kntnt` — the prefix provides that segment exactly once. A project called simply `<project>` gets the slug `kntnt-<project>`, not `kntnt-kntnt-<project>`; its hooks are `kntnt_<project>_<purpose>`, not `kntnt_kntnt_<project>_<purpose>`.
 
-When the project name is long, an abbreviation may be used in
-identifiers where length matters (hooks, option keys, post-type slugs).
-The plugin's own `README.md` documents the abbreviation. Human-facing
-places — the plugin name, the repository name, the documentation —
-keep the full name.
+When the project name is long, an abbreviation may be used in identifiers where length matters (hooks, option keys, post-type slugs). The plugin's own `README.md` documents the abbreviation. Human-facing places — the plugin name, the repository name, the documentation — keep the full name.
 
-PHP namespaces follow the same composition rule with their own casing.
-The root is `\Kntnt`, then the project's name (without re-prefixing) in
-`Pascal_Snake_Case`, then any sub-namespaces:
+PHP namespaces follow the same composition rule with their own casing. The root is `\Kntnt`, then the project's name (without re-prefixing) in `Pascal_Snake_Case`, then any sub-namespaces:
 
 ```
 \Kntnt\<Project>                       ← root namespace for the project
 \Kntnt\<Project>\<Sub>\<Class_Name>    ← organised further as needed
 ```
 
-Never `\Kntnt\Kntnt_<Project>\…` — the `\Kntnt` segment already provides
-the prefix.
+Never `\Kntnt\Kntnt_<Project>\…` — the `\Kntnt` segment already provides the prefix.
 
-**When the prefix is not needed.** The prefix exists to prevent
-collisions in a global registry. Where there is no global registry —
-inside a TypeScript package whose public API is a set of named
-exports, inside a Laravel application's `App\` namespace, inside a
-SvelteKit project's `$lib`, inside a standalone script whose
-identifiers stay in the script's own scope, etc. — the package,
-namespace, or file boundary already provides the isolation, and an
-extra `kntnt` prefix is noise. Apply the prefix where collisions can
-happen (WordPress hooks, npm package names published to a public
-registry, browser globals, custom DOM events, custom HTML data
-attributes); skip it where they cannot.
+**When the prefix is not needed.** The prefix exists to prevent collisions in a global registry. Where there is no global registry — inside a TypeScript package whose public API is a set of named exports, inside a Laravel application's `App\` namespace, inside a SvelteKit project's `$lib`, inside a standalone script whose identifiers stay in the script's own scope, etc. — the package, namespace, or file boundary already provides the isolation, and an extra `kntnt` prefix is noise. Apply the prefix where collisions can happen (WordPress hooks, npm package names published to a public registry, browser globals, custom DOM events, custom HTML data attributes); skip it where they cannot.
 
 ## Universal tooling
 
-The tools below apply to every project regardless of language. Tools
-specific to a language live in that language's module. Substitutions
-are allowed when a project has specific constraints; in that case the
-substitution is documented in the project's `README.md`.
+The tools below apply to every project regardless of language. Tools specific to a language live in that language's module. Substitutions are allowed when a project has specific constraints; in that case the substitution is documented in the project's `README.md`.
 
 ### Version control, hosting, and CI
 
 - **Git** for local version control.
-- **GitHub** for the remote, issues, pull requests, releases, and code
-  review.
+- **GitHub** for the remote, issues, pull requests, releases, and code review.
 - **GitHub Actions** for continuous integration.
 
 ## CLAUDE.md / AGENTS.md convention
 
 The project root contains both `CLAUDE.md` and `AGENTS.md`.
 
-- `CLAUDE.md` is the entry point for Claude Code. It uses `@`-imports
-  to pull in `AGENTS.md` and the relevant files in `docs/`, including
-  this file (`docs/coding-standards.md`).
-- `AGENTS.md` is the universal AI-agent file. Other tools (Copilot,
-  Cursor, Codex, etc.) read it directly.
+- `CLAUDE.md` is the entry point for Claude Code. It uses `@`-imports to pull in `AGENTS.md` and the relevant files in `docs/`, including this file (`docs/coding-standards.md`).
+- `AGENTS.md` is the universal AI-agent file. Other tools (Copilot, Cursor, Codex, etc.) read it directly.
 
-Both files reference this document so that any AI agent working on
-the codebase has the coding standard in context before writing code.
+Both files reference this document so that any AI agent working on the codebase has the coding standard in context before writing code.

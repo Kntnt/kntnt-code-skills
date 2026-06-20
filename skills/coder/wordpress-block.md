@@ -1,49 +1,28 @@
 ## WordPress blocks
 
-This section extends the WordPress and TypeScript rules with rules
-specific to the Gutenberg block editor — registering custom blocks,
-building their UI in React, and shipping them as part of a plugin or
-theme. It applies in addition to (and in places overrides) the
-WordPress and TypeScript rules.
+This section extends the WordPress and TypeScript rules with rules specific to the Gutenberg block editor — registering custom blocks, building their UI in React, and shipping them as part of a plugin or theme. It applies in addition to (and in places overrides) the WordPress and TypeScript rules.
 
 ### When this applies
 
-These rules apply when the project registers Gutenberg blocks. A
-project is treated as a "block project" if any of the following are
-true:
+These rules apply when the project registers Gutenberg blocks. A project is treated as a "block project" if any of the following are true:
 
 - `package.json` declares a dependency on `@wordpress/scripts`.
 - The codebase contains one or more `block.json` files.
 - The codebase uses `register_block_type()` server-side.
 
-A project may be a hybrid: a classic plugin (covered by the WordPress
-rules) that also registers blocks. In that case, both sets of rules
-apply.
+A project may be a hybrid: a classic plugin (covered by the WordPress rules) that also registers blocks. In that case, both sets of rules apply.
 
 ### Guiding principle: stay on `@wordpress/scripts`' happy path
 
-Block development uses **`@wordpress/scripts` and its bundled defaults
-for everything it covers** — building, linting, formatting, style
-linting, type-checking, and testing. The package ships a Webpack
-config, ESLint config, Prettier config, Stylelint config, Babel/TS
-preset, and Jest config that are all tuned for the block editor's
-React runtime, the `@wordpress/*` packages, and `block.json`-driven
-registration. Replacing any of them with a project-wide alternative
-(Biome, Vitest, Bun's bundler, etc.) costs more time than it saves
-and breaks compatibility with the WordPress ecosystem's expectations.
+Block development uses **`@wordpress/scripts` and its bundled defaults for everything it covers** — building, linting, formatting, style linting, type-checking, and testing. The package ships a Webpack config, ESLint config, Prettier config, Stylelint config, Babel/TS preset, and Jest config that are all tuned for the block editor's React runtime, the `@wordpress/*` packages, and `block.json`-driven registration. Replacing any of them with a project-wide alternative (Biome, Vitest, Bun's bundler, etc.) costs more time than it saves and breaks compatibility with the WordPress ecosystem's expectations.
 
-The project's other tooling — Bun, Biome, Vitest, Lefthook, Playwright
-for non-block e2e — still applies to code **outside** `src/blocks/`.
-The principle is scope-local: blocks are an `@wordpress/scripts`
-island in an otherwise modern toolchain.
+The project's other tooling — Bun, Biome, Vitest, Lefthook, Playwright for non-block e2e — still applies to code **outside** `src/blocks/`. The principle is scope-local: blocks are an `@wordpress/scripts` island in an otherwise modern toolchain.
 
-When in doubt, prefer the `@wordpress/scripts` default over a custom
-configuration.
+When in doubt, prefer the `@wordpress/scripts` default over a custom configuration.
 
 ### File layout for blocks
 
-Block source files live under a single root directory and are
-compiled by `@wordpress/scripts` into a build directory:
+Block source files live under a single root directory and are compiled by `@wordpress/scripts` into a build directory:
 
 ```
 <plugin-root>/
@@ -65,98 +44,58 @@ compiled by `@wordpress/scripts` into a build directory:
                                      Committed but never hand-edited.
 ```
 
-One folder per block. Each block has its own `block.json`. Static
-blocks have `save.tsx`; server-rendered blocks have `render.php`
-(referenced from `block.json` via `"render": "file:./render.php"`).
+One folder per block. Each block has its own `block.json`. Static blocks have `save.tsx`; server-rendered blocks have `render.php` (referenced from `block.json` via `"render": "file:./render.php"`).
 
 ### `block.json` conventions
 
-- **`name`** is `kntnt-<project>/<block-slug>`. The namespace before
-  the slash matches the plugin's text domain.
+- **`name`** is `kntnt-<project>/<block-slug>`. The namespace before the slash matches the plugin's text domain.
 - **`apiVersion`** is the latest supported version (currently 3).
 - **`textdomain`** matches the plugin's text domain.
-- **`category`** is one of WordPress's built-in categories or a custom
-  category registered by the plugin.
-- Prefer **static** rendering (a `save.tsx`) when the block's output
-  is determined at edit time. Use **dynamic** rendering (`render`)
-  only when the output depends on the request, the user, or live
-  data.
+- **`category`** is one of WordPress's built-in categories or a custom category registered by the plugin.
+- Prefer **static** rendering (a `save.tsx`) when the block's output is determined at edit time. Use **dynamic** rendering (`render`) only when the output depends on the request, the user, or live data.
 
 ### React conventions for blocks
 
 - **Functional components only.** No class components.
-- **Hooks** for state and side effects (`useState`, `useEffect`,
-  `useSelect`, `useDispatch`, etc.).
-- **Edit and save components named after the block** in `PascalCase`:
-  `<BlockNameEdit>`, `<BlockNameSave>`.
+- **Hooks** for state and side effects (`useState`, `useEffect`, `useSelect`, `useDispatch`, etc.).
+- **Edit and save components named after the block** in `PascalCase`: `<BlockNameEdit>`, `<BlockNameSave>`.
 - **TSX, not JSX** — every block file is TypeScript.
-- **Block attributes are typed.** Define an interface for each
-  block's attributes and reuse it in both `edit.tsx` and `save.tsx`.
+- **Block attributes are typed.** Define an interface for each block's attributes and reuse it in both `edit.tsx` and `save.tsx`.
 
 ### TypeScript rules for blocks
 
-These extend, and in two cases override, the general TypeScript rules.
-The override cases are direct consequences of the *Guiding principle*
-above.
+These extend, and in two cases override, the general TypeScript rules. The override cases are direct consequences of the *Guiding principle* above.
 
-- **Build tool: `@wordpress/scripts`, not Bun.** Block JS/TS goes
-  through `wp-scripts build` / `wp-scripts start`. The TypeScript
-  rules about Bun apply to non-block TypeScript in the same project.
-- **Linting and formatting: `@wordpress/scripts`, not Biome.**
-  `wp-scripts lint-js` and `wp-scripts format` use the WordPress
-  ESLint and Prettier configurations as-is. Do not introduce Biome
-  configuration for block code. The *Tools deliberately not used*
-  list in the TypeScript rules does not apply inside
-  `@wordpress/scripts`.
-- **Style linting: `wp-scripts lint-style`.** Same principle — accept
-  the bundled Stylelint configuration without customisation.
+- **Build tool: `@wordpress/scripts`, not Bun.** Block JS/TS goes through `wp-scripts build` / `wp-scripts start`. The TypeScript rules about Bun apply to non-block TypeScript in the same project.
+- **Linting and formatting: `@wordpress/scripts`, not Biome.** `wp-scripts lint-js` and `wp-scripts format` use the WordPress ESLint and Prettier configurations as-is. Do not introduce Biome configuration for block code. The *Tools deliberately not used* list in the TypeScript rules does not apply inside `@wordpress/scripts`.
+- **Style linting: `wp-scripts lint-style`.** Same principle — accept the bundled Stylelint configuration without customisation.
 - **Type-checking: `wp-scripts build`** does this automatically.
-- **Files:** `kebab-case.tsx` for components, `kebab-case.ts` for
-  non-component TypeScript. Same as the general TS rule.
-- **Imports** use the `@wordpress/*` packages for everything the block
-  editor exposes — `@wordpress/blocks`, `@wordpress/element`,
-  `@wordpress/i18n`, `@wordpress/components`, `@wordpress/block-editor`,
-  `@wordpress/data`. Do not bundle a separate copy of React; the
-  editor provides one through `@wordpress/element`.
-- **Default exports** are still avoided. Each block exports its
-  components as named exports; `index.ts` imports them and registers
-  the block.
+- **Files:** `kebab-case.tsx` for components, `kebab-case.ts` for non-component TypeScript. Same as the general TS rule.
+- **Imports** use the `@wordpress/*` packages for everything the block editor exposes — `@wordpress/blocks`, `@wordpress/element`, `@wordpress/i18n`, `@wordpress/components`, `@wordpress/block-editor`, `@wordpress/data`. Do not bundle a separate copy of React; the editor provides one through `@wordpress/element`.
+- **Default exports** are still avoided. Each block exports its components as named exports; `index.ts` imports them and registers the block.
 
 ### i18n in blocks
 
 - Use `__()` from `@wordpress/i18n` in TypeScript and React code.
-- The `textdomain` in calls matches the `textdomain` in `block.json`
-  and the plugin's PHP text domain.
+- The `textdomain` in calls matches the `textdomain` in `block.json` and the plugin's PHP text domain.
 - `_n()`, `_x()`, `sprintf()` work the same as in PHP-side i18n.
 
 ### Server-side concerns
 
-The PHP that registers blocks follows the WordPress rules. In
-particular:
+The PHP that registers blocks follows the WordPress rules. In particular:
 
-- `register_block_type()` is called from a hook (`init` is
-  conventional) inside the plugin's `Plugin` class.
-- Dynamic render callbacks sanitise their attributes and escape their
-  output the same way as any other WordPress PHP — see *Security and
-  i18n* in the WordPress rules.
+- `register_block_type()` is called from a hook (`init` is conventional) inside the plugin's `Plugin` class.
+- Dynamic render callbacks sanitise their attributes and escape their output the same way as any other WordPress PHP — see *Security and i18n* in the WordPress rules.
 
 ### Block testing
 
-- **Block PHP** is unit-tested with Pest and integration-tested with
-  WordPress Playground, the same as any other WordPress PHP.
-- **Block JS/TS unit tests** use `wp-scripts test-unit-js`, which
-  runs the Jest setup that `@wordpress/scripts` ships. Do not
-  introduce Vitest or any other test runner for block code, even when
-  the rest of the project's TypeScript uses Vitest. Per the *Guiding
-  principle*, blocks live on the `@wordpress/scripts` happy path.
-- **End-to-end tests** for the editor experience use Playwright with
-  `@wordpress/e2e-test-utils-playwright`, run against a Playground
-  instance.
+- **Block PHP** is unit-tested with Pest and integration-tested with WordPress Playground, the same as any other WordPress PHP.
+- **Block JS/TS unit tests** use `wp-scripts test-unit-js`, which runs the Jest setup that `@wordpress/scripts` ships. Do not introduce Vitest or any other test runner for block code, even when the rest of the project's TypeScript uses Vitest. Per the *Guiding principle*, blocks live on the `@wordpress/scripts` happy path.
+- **End-to-end tests** for the editor experience use Playwright with `@wordpress/e2e-test-utils-playwright`, run against a Playground instance.
 
 ### Block tooling — at a glance
 
-For block JS/TS work inside `src/blocks/`, use only what
-`@wordpress/scripts` provides:
+For block JS/TS work inside `src/blocks/`, use only what `@wordpress/scripts` provides:
 
 | Concern | Command |
 |---|---|
@@ -168,13 +107,8 @@ For block JS/TS work inside `src/blocks/`, use only what
 | Format | `wp-scripts format` |
 | Unit-test JS/TS | `wp-scripts test-unit-js` |
 
-For block PHP, use the same tools as the WordPress rules: Pest,
-PHPStan + `szepeviktor/phpstan-wordpress`, Brain Monkey, Mockery,
-WordPress Playground.
+For block PHP, use the same tools as the WordPress rules: Pest, PHPStan + `szepeviktor/phpstan-wordpress`, Brain Monkey, Mockery, WordPress Playground.
 
-For editor end-to-end tests, use Playwright with
-`@wordpress/e2e-test-utils-playwright` against a Playground instance.
+For editor end-to-end tests, use Playwright with `@wordpress/e2e-test-utils-playwright` against a Playground instance.
 
-For everything else in the project (non-block code), the project's
-default tooling applies as documented in the TypeScript and PHP
-rules.
+For everything else in the project (non-block code), the project's default tooling applies as documented in the TypeScript and PHP rules.

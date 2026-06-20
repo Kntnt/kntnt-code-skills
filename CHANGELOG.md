@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- Markdown sources across the plugin (the `coder` standard modules and its `SKILL.md`, `skills/push/SKILL.md`, `commands/help.md`, `lib/changelog.md`, and `skills/coder/templates/claude-md-template.md`) were reflowed so each paragraph is a single physical line instead of being hard-wrapped at a fixed column width. The prose is byte-for-byte identical once whitespace is normalized — only the intra-paragraph line breaks were removed, and code blocks, tables, blockquotes, and YAML frontmatter were left untouched — so the files render cleanly in viewers that show hard breaks and future edits produce one-line-per-paragraph diffs.
+
 ### Fixed
 
 - `.claude-plugin/marketplace.json` — the bundled plugin's `source` was the string shorthand `"./"`, which a local `/plugin marketplace add` accepts but Claude Cowork's remote sync rejects: Cowork clones the repository server-side and requires each plugin's `source` to be an object whose `source` field is one of `github`, `url`, or `git-subdir`, so adding the repository as a marketplace failed with `REMOTE_SYNC_FAILED`. The entry now uses the `github` object form (`{ "source": "github", "repo": "Kntnt/kntnt-code-skills" }`), so the Cowork marketplace add syncs successfully while the local `/plugin marketplace add` keeps resolving as before.
