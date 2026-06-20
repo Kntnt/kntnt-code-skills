@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 
 - Markdown sources across the plugin (the `coder` standard modules and its `SKILL.md`, `skills/push/SKILL.md`, `commands/help.md`, `lib/changelog.md`, and `skills/coder/templates/claude-md-template.md`) were reflowed so each paragraph is a single physical line instead of being hard-wrapped at a fixed column width. The prose is byte-for-byte identical once whitespace is normalized — only the intra-paragraph line breaks were removed, and code blocks, tables, blockquotes, and YAML frontmatter were left untouched — so the files render cleanly in viewers that show hard breaks and future edits produce one-line-per-paragraph diffs.
+- The `coder` skill now scaffolds its coding standard as **on-demand, per-axis files** instead of one always-loaded document. `bin/scaffold` writes each language/framework module to its own `agents.d/coding-<module>.md`, records a `## References` pointer to each in `AGENTS.md` ("read before writing or changing PHP", etc.), and bridges `CLAUDE.md` to it with `@AGENTS.md`. An agent reads only the modules a task needs, the moment it sets out to write or change code, instead of carrying the whole standard in every session. Override modules (WordPress over PHP, Gutenberg blocks over TypeScript) get a generated prerequisite-and-precedence header so the override resolves however the file is reached; the source modules stay generic, with the concrete wiring living in the scaffolder's `MODULE_META`. When `AGENTS.md` is missing, the scaffolder writes a minimal one (title plus References) and points the user to `/agents-md` to flesh it out, rather than generating boilerplate itself.
+- The `coder` standard modules were tightened for the on-demand model — roughly 15% fewer words overall, and about 25% in `general.md` — by dropping definitions every coding agent already knows (SOLID, Red/Green/Refactor) and examples that merely re-illustrate an unambiguous rule, while preserving every normative rule and all code samples that disambiguate one.
+
+### Deprecated
+
+- `bin/scaffold --touch-agents-md` is now a no-op. `AGENTS.md` is always written (it holds the References), so the flag is no longer needed; it is still accepted so existing invocations keep working.
+
+### Removed
+
+- `skills/coder/templates/claude-md-template.md` — the scaffolder now generates the `CLAUDE.md` bridge and a minimal `AGENTS.md` inline, so the starter template is no longer used.
 
 ### Fixed
 

@@ -5,14 +5,24 @@
 # ///
 """Scaffold Kntnt's coding standard into a project.
 
-Concatenates the requested module files from this skill into
-``docs/coding-standards.md`` and wires the import into ``CLAUDE.md``
-(and optionally ``AGENTS.md``).
+Writes each requested module as its own on-demand file under
+``agents.d/coding-<module>.md``, ensures ``AGENTS.md`` carries a
+``## References`` entry pointing at each one, and ensures ``CLAUDE.md``
+bridges to ``AGENTS.md`` with ``@AGENTS.md``.
 
-The skill's ``SKILL.md`` is the source of truth for which modules exist
-and which apply to a given project. This script just executes the file
-work — concatenation, file creation, surgical edits to existing files —
-so the calling agent doesn't have to recreate the logic every time.
+The standard is reached on demand: an agent follows a References pointer
+and reads only the modules a task needs, rather than paying for the whole
+standard on every session. Override modules (WordPress over PHP, Gutenberg
+blocks over TypeScript) carry a generated prerequisite + precedence header
+so the override resolves however the file is reached. The concrete wiring
+lives in MODULE_META here, so the source modules stay generic and portable.
+
+The skill's ``SKILL.md`` is the source of truth for which modules exist and
+which apply to a given project. This script executes the file work —
+per-module file creation, surgical edits to existing AGENTS.md/CLAUDE.md —
+so the calling agent doesn't recreate the logic every time. It does not
+build a full AGENTS.md: when AGENTS.md is missing it writes a minimal one
+(title + References) and tells the caller to run /agents-md to flesh it out.
 
 Typical use:
 
@@ -21,16 +31,16 @@ Typical use:
         --skill-dir   /path/to/kntnt-code-skills/skills/coder \\
         --include     php,wordpress,typescript,wordpress-block
 
-Order on the command line does not matter; the canonical order is
-imposed internally so override relationships stay correct.
+Order on the command line does not matter; the canonical order is imposed
+internally so override relationships stay correct.
 
 Exit codes:
 
     0   Scaffolding completed successfully.
     1   Bad arguments, missing module file, or sanity-check failed.
-    2   ``docs/coding-standards.md`` already exists in the project and
-        was not overwritten. Stderr contains its first 20 lines so the
-        caller can decide what to do.
+    2   One or more target ``agents.d/coding-<module>.md`` files already
+        exist and were not overwritten. Stderr names them so the caller
+        can decide what to do.
 """
 
 from __future__ import annotations
@@ -40,9 +50,10 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
-# Canonical order in which modules appear in the assembled
-# coding-standards.md. Later entries override earlier ones on points
-# where they differ — see SKILL.md, step 4 of the flow.
+# Canonical order. Later entries override earlier ones on points where they
+# differ — see SKILL.md, step 4 of the flow. The order is also the
+# precedence order written into AGENTS.md's References list, so the
+# "last listed wins" tie-break in the generated headers stays correct.
 CANONICAL_ORDER: list[str] = [
     "general",
     "php",
@@ -54,9 +65,66 @@ CANONICAL_ORDER: list[str] = [
     "bash",
 ]
 
-# Markers we accept as evidence that a directory is a real project,
-# before we start writing files into it. The list is intentionally
-# generous — if any one of these exists, the script proceeds.
+# Per-module wiring for the generated agents.d/ files. Keyed by module:
+#   label     — human title in the generated H1.
+#   read_when  — completes "Read before writing or changing <read_when>." in
+#                both the file header and the AGENTS.md References line.
+#   requires   — modules that must be read first because this one overrides
+#                or builds on them; drives the prerequisite header and the
+#                References co-load note. Empty for standalone modules.
+MODULE_META: dict[str, dict[str, object]] = {
+    "general": {"label": "General", "read_when": "any code", "requires": []},
+    "php": {"label": "PHP", "read_when": "PHP", "requires": []},
+    "wordpress": {
+        "label": "WordPress",
+        "read_when": "a WordPress plugin or theme",
+        "requires": ["php"],
+    },
+    "typescript": {"label": "TypeScript", "read_when": "TypeScript", "requires": []},
+    "wordpress-block": {
+        "label": "WordPress Blocks",
+        "read_when": "Gutenberg blocks",
+        "requires": ["wordpress", "typescript"],
+    },
+    "javascript-vanilla": {
+        "label": "Vanilla JavaScript",
+        "read_when": "build-less browser JavaScript",
+        "requires": [],
+    },
+    "python": {"label": "Python", "read_when": "Python", "requires": []},
+    "bash": {"label": "Bash", "read_when": "Bash", "requires": []},
+}
+
+# Override modules get a verbatim prerequisite sentence in their header — the
+# wording reads naturally per module, so it is stored rather than generated
+# from `requires`. Every module with a non-empty `requires` has an entry.
+OVERRIDE_HEADER: dict[str, str] = {
+    "wordpress": "Read `coding-php.md` first; the rules below override parts of it.",
+    "wordpress-block": (
+        "Read `coding-wordpress.md` and `coding-typescript.md` first; the rules "
+        "below override parts of TypeScript."
+    ),
+}
+
+# Appended after the prerequisite line in every override module's header.
+PRECEDENCE_LINE: str = (
+    "On any conflict between this file and another, the file listed last in the "
+    "References section of AGENTS.md wins."
+)
+
+# Fail loudly if the maps drift from CANONICAL_ORDER — a new module added to
+# CANONICAL_ORDER without MODULE_META (or vice versa) is a bug, not a silent
+# half-configuration. OVERRIDE_HEADER must cover exactly the modules that
+# declare a `requires` list.
+assert set(MODULE_META) == set(CANONICAL_ORDER), (
+    "MODULE_META and CANONICAL_ORDER are out of sync"
+)
+assert set(OVERRIDE_HEADER) == {
+    name for name, meta in MODULE_META.items() if meta["requires"]
+}, "OVERRIDE_HEADER must cover exactly the modules with a non-empty `requires`"
+
+# Markers we accept as evidence that a directory is a real project, before we
+# start writing files into it. Generous — any one is enough.
 PROJECT_MARKERS: list[str] = [
     ".git",
     "composer.json",
@@ -68,9 +136,8 @@ class ScaffoldArgumentParser(argparse.ArgumentParser):
     """ArgumentParser that exits with code 1 on a usage error.
 
     argparse's default is exit code 2, but this script reserves 2 for
-    "docs/coding-standards.md already exists". Mapping usage errors to 1
-    keeps the bad-arguments case distinct so a caller can tell the two
-    apart from the exit code alone.
+    "a target coding-standard file already exists". Mapping usage errors to 1
+    keeps the bad-arguments case distinct from the exit code alone.
     """
 
     def error(self, message: str) -> NoReturn:
@@ -78,123 +145,156 @@ class ScaffoldArgumentParser(argparse.ArgumentParser):
         self.exit(1, f"{self.prog}: error: {message}\n")
 
 
-def insert_import(content: str) -> str:
-    """Insert ``@docs/coding-standards.md`` into a CLAUDE.md / AGENTS.md.
+def references_line(module: str) -> str:
+    """Build the AGENTS.md References bullet for a module."""
 
-    Strategy, in order:
+    read_when = MODULE_META[module]["read_when"]
+    requires = MODULE_META[module]["requires"]
 
-    1. If a ``## Coding standards`` heading already exists, append the
-       import on the first non-blank line beneath it.
-    2. Otherwise, insert both the heading and the import after the first
-       H1 (and any introductory paragraph that follows it).
-    3. If there is no H1 at all, append the heading and the import at the
-       end.
+    # Override/co-load modules carry a note so the reader pulls their
+    # prerequisites too — the override cannot resolve without them.
+    note = ""
+    if requires:
+        coload = " + ".join(f"`coding-{name}.md`" for name in requires)
+        note = f" (also load {coload})"
 
-    Existing content is otherwise preserved.
+    return (
+        f"- `agents.d/coding-{module}.md` — read before writing or changing "
+        f"{read_when}{note}"
+    )
+
+
+def build_module_file(module: str, body: str) -> str:
+    """Assemble the on-demand file for one module.
+
+    The generated H1 + read-when line (and, for override modules, the
+    prerequisite + precedence lines) sit above the module body. The module's
+    own leading heading is dropped so the generated H1 is the sole title.
     """
 
-    lines = content.splitlines()
+    label = MODULE_META[module]["label"]
+    read_when = MODULE_META[module]["read_when"]
 
-    # Strategy 1: an explicit "## Coding standards" heading already
-    # exists — drop the import on the first non-blank line beneath it.
-    for i, line in enumerate(lines):
-        if line.strip().lower() == "## coding standards":
-            insert_at = i + 1
-            if insert_at < len(lines) and lines[insert_at].strip() == "":
-                insert_at += 1
+    # Drop the module's own first heading and any surrounding blank lines; the
+    # generated H1 replaces it.
+    lines = body.splitlines()
+    while lines and lines[0].strip() == "":
+        lines.pop(0)
+    if lines and lines[0].lstrip().startswith("#"):
+        lines.pop(0)
+    while lines and lines[0].strip() == "":
+        lines.pop(0)
+    stripped_body = "\n".join(lines).rstrip() + "\n"
 
-            # Append a trailing blank only when the next existing line
-            # isn't already blank — avoids an ugly double blank.
-            to_insert = ["@docs/coding-standards.md"]
-            next_line = lines[insert_at] if insert_at < len(lines) else None
-            if next_line is None or next_line.strip() != "":
-                to_insert.append("")
+    # Build the generated header: title, read-when, then the override block
+    # for modules that have prerequisites.
+    header = [
+        f"# Coding standard — {label}",
+        "",
+        f"Read before writing or changing {read_when}.",
+    ]
+    if module in OVERRIDE_HEADER:
+        header += ["", OVERRIDE_HEADER[module], "", PRECEDENCE_LINE]
+    header += ["", ""]
 
-            lines[insert_at:insert_at] = to_insert
-            return "\n".join(lines).rstrip() + "\n"
-
-    # Strategy 2: no heading — find the first H1 so a fresh section can be
-    # inserted after it and its intro paragraph.
-    h1_index = next((i for i, line in enumerate(lines) if line.startswith("# ")), -1)
-    if h1_index == -1:
-        # Strategy 3: no H1 either — append the section at the end.
-        return (
-            content.rstrip() + "\n\n## Coding standards\n\n@docs/coding-standards.md\n"
-        )
-
-    # Skip blank lines after the H1, then skip the intro paragraph if
-    # there is one (a contiguous run of non-blank, non-heading lines).
-    insert_at = h1_index + 1
-    while insert_at < len(lines) and lines[insert_at].strip() == "":
-        insert_at += 1
-    while (
-        insert_at < len(lines)
-        and lines[insert_at].strip() != ""
-        and not lines[insert_at].startswith("#")
-    ):
-        insert_at += 1
-
-    # Drop the trailing blank from the new section when the next existing
-    # line is already blank, so we don't end up with two blank lines.
-    new_section = ["", "## Coding standards", "", "@docs/coding-standards.md", ""]
-    next_existing = lines[insert_at] if insert_at < len(lines) else None
-    if next_existing is not None and next_existing.strip() == "":
-        new_section.pop()
-
-    lines[insert_at:insert_at] = new_section
-    return "\n".join(lines).rstrip() + "\n"
+    return "\n".join(header) + stripped_body
 
 
-def touch_agent_file(
-    *,
-    project_dir: Path,
-    filename: str,
-    h1: str,
-    template_text: str,
-    dry_run: bool,
+def ensure_references(
+    *, project_dir: Path, modules: list[str], dry_run: bool
 ) -> str:
-    """Create the agent file from the template, or surgically insert the
-    coding-standards import into an existing one.
+    """Ensure AGENTS.md carries a References entry for each module.
 
-    Returns a one-line description of what it did (or would do, on a dry
-    run) so the caller can report it verbatim.
+    Creates a minimal AGENTS.md (title + References) when missing; otherwise
+    inserts only the lines not already present, leaving the rest untouched.
     """
 
-    agent_file = project_dir / filename
+    agents_md = project_dir / "AGENTS.md"
+    wanted = {module: references_line(module) for module in modules}
 
-    # Case A: the file doesn't exist yet — copy the template, rewriting
-    # the H1 for anything other than CLAUDE.md.
-    if not agent_file.exists():
-        content = (
-            template_text
-            if filename == "CLAUDE.md"
-            else template_text.replace("# CLAUDE.md", h1, 1)
-        )
+    # Case A: no AGENTS.md — write a minimal one. We deliberately do not build
+    # out the rest of the file; that is /agents-md's job.
+    if not agents_md.exists():
+        title = project_dir.name or "Project"
+        body = "\n".join(wanted[module] for module in modules)
+        content = f"# {title}\n\n## References\n\n{body}\n"
         if dry_run:
-            return f"[dry-run] would create {filename}"
-        agent_file.write_text(content, encoding="utf-8")
-        return f"created {filename}"
+            return (
+                "[dry-run] would create AGENTS.md with References "
+                "(run /agents-md to flesh it out)"
+            )
+        agents_md.write_text(content, encoding="utf-8")
+        return "created minimal AGENTS.md with References — run /agents-md to flesh it out"
 
-    existing = agent_file.read_text(encoding="utf-8")
+    existing = agents_md.read_text(encoding="utf-8")
 
-    # Case B: the file exists and already imports the standard — leave it
-    # alone.
-    if "@docs/coding-standards.md" in existing:
-        return f"{filename} already imports coding-standards.md (skipped)"
+    # Only add lines whose target file isn't already referenced.
+    missing = [
+        wanted[module]
+        for module in modules
+        if f"agents.d/coding-{module}.md" not in existing
+    ]
+    if not missing:
+        return "AGENTS.md already references the coding standard (skipped)"
 
-    # Case C: the file exists but doesn't import the standard — insert the
-    # import surgically.
+    text_lines = existing.splitlines()
+    ref_index = next(
+        (i for i, line in enumerate(text_lines) if line.strip().lower() == "## references"),
+        -1,
+    )
+
+    # Case B: no References section — append one.
+    if ref_index == -1:
+        new = existing.rstrip() + "\n\n## References\n\n" + "\n".join(missing) + "\n"
+        if dry_run:
+            return "[dry-run] would add a References section to AGENTS.md"
+        agents_md.write_text(new, encoding="utf-8")
+        return "added a References section to AGENTS.md"
+
+    # Case C: a References section exists — insert after its last bullet.
+    insert_at = ref_index + 1
+    cursor = ref_index + 1
+    while cursor < len(text_lines) and not text_lines[cursor].startswith("## "):
+        if text_lines[cursor].strip():
+            insert_at = cursor + 1
+        cursor += 1
+    text_lines[insert_at:insert_at] = missing
     if dry_run:
-        return f"[dry-run] would update {filename}"
-    agent_file.write_text(insert_import(existing), encoding="utf-8")
-    return f"updated {filename}"
+        return "[dry-run] would add coding lines to AGENTS.md References"
+    agents_md.write_text("\n".join(text_lines).rstrip() + "\n", encoding="utf-8")
+    return "added coding lines to AGENTS.md References"
+
+
+def ensure_bridge(*, project_dir: Path, dry_run: bool) -> str:
+    """Ensure CLAUDE.md imports AGENTS.md with ``@AGENTS.md``.
+
+    Claude Code reads CLAUDE.md, not AGENTS.md; the bridge is what makes the
+    References (and everything they point to) reachable.
+    """
+
+    claude_md = project_dir / "CLAUDE.md"
+
+    if not claude_md.exists():
+        if dry_run:
+            return "[dry-run] would create CLAUDE.md (@AGENTS.md bridge)"
+        claude_md.write_text("@AGENTS.md\n", encoding="utf-8")
+        return "created CLAUDE.md (@AGENTS.md bridge)"
+
+    existing = claude_md.read_text(encoding="utf-8")
+    if "@AGENTS.md" in existing:
+        return "CLAUDE.md already bridges to AGENTS.md (skipped)"
+
+    if dry_run:
+        return "[dry-run] would add @AGENTS.md bridge to CLAUDE.md"
+    claude_md.write_text("@AGENTS.md\n\n" + existing.lstrip(), encoding="utf-8")
+    return "added @AGENTS.md bridge to CLAUDE.md"
 
 
 def main() -> int:
     """Run the scaffolder end to end. Returns the process exit code."""
 
-    # Parse the command line. ScaffoldArgumentParser maps any usage error
-    # to exit code 1 (see the class docstring).
+    # Parse the command line. ScaffoldArgumentParser maps any usage error to
+    # exit code 1 (see the class docstring).
     parser = ScaffoldArgumentParser(
         description="Scaffold Kntnt's coding standard into a project.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -223,7 +323,10 @@ def main() -> int:
     parser.add_argument(
         "--touch-agents-md",
         action="store_true",
-        help="Also create or update AGENTS.md alongside CLAUDE.md.",
+        help=(
+            "Deprecated no-op: AGENTS.md is now always written (it holds the "
+            "References). Accepted for backward compatibility."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -242,7 +345,7 @@ def main() -> int:
     requested = [part.strip() for part in args.include.split(",") if part.strip()]
 
     # Sanity-check the project directory unless --force is set. Refusing to
-    # write into a random directory protects Thomas from typos.
+    # write into a random directory protects against typos.
     if not args.force:
         has_marker = any((project_dir / marker).exists() for marker in PROJECT_MARKERS)
         if not has_marker:
@@ -267,71 +370,45 @@ def main() -> int:
     requested_set.add("general")
     ordered = [module for module in CANONICAL_ORDER if module in requested_set]
 
-    # Read each module from the skill folder. A missing file means the
-    # skill itself is broken — fail loudly rather than silently producing a
-    # half-baked standard.
-    parts: list[str] = []
-    for name in ordered:
-        path = skill_dir / f"{name}.md"
+    # Read each module body. A missing file means the skill itself is broken —
+    # fail loudly rather than silently producing a half-baked standard.
+    bodies: dict[str, str] = {}
+    for module in ordered:
+        path = skill_dir / f"{module}.md"
         if not path.exists():
             print(f"error: module file missing: {path}", file=sys.stderr)
             return 1
-        parts.append(path.read_text(encoding="utf-8"))
+        bodies[module] = path.read_text(encoding="utf-8")
 
-    coding_standards_text = "\n".join(parts).rstrip() + "\n"
-
-    # Refuse to overwrite an existing docs/coding-standards.md; print its
-    # head to stderr so the caller can decide what to do.
-    target = project_dir / "docs" / "coding-standards.md"
-    if target.exists():
-        head = "\n".join(target.read_text(encoding="utf-8").splitlines()[:20])
+    # Refuse to overwrite existing coding-standard files; the project's
+    # snapshot is intentional and only re-scaffolded on purpose.
+    agents_d = project_dir / "agents.d"
+    clashes = [module for module in ordered if (agents_d / f"coding-{module}.md").exists()]
+    if clashes:
+        names = ", ".join(f"agents.d/coding-{module}.md" for module in clashes)
         print(
-            f"existing docs/coding-standards.md found at {target}.\n"
-            f"first 20 lines:\n---\n{head}\n---\n"
-            "refusing to overwrite. Move it aside or pick a different directory.",
+            f"existing coding-standard file(s) found: {names}\n"
+            "refusing to overwrite. Move them aside or re-scaffold intentionally.",
             file=sys.stderr,
         )
         return 2
 
-    # Write (or, on a dry run, describe) docs/coding-standards.md.
+    # Write (or, on a dry run, describe) each module file.
     actions: list[str] = []
-    if args.dry_run:
-        actions.append(
-            f"[dry-run] would write docs/coding-standards.md "
-            f"({len(coding_standards_text)} bytes, modules: {', '.join(ordered)})"
-        )
-    else:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(coding_standards_text, encoding="utf-8")
-        actions.append(
-            f"wrote docs/coding-standards.md "
-            f"({len(ordered)} modules: {', '.join(ordered)})"
-        )
+    for module in ordered:
+        dest = agents_d / f"coding-{module}.md"
+        if args.dry_run:
+            actions.append(f"[dry-run] would write agents.d/coding-{module}.md")
+            continue
+        agents_d.mkdir(parents=True, exist_ok=True)
+        dest.write_text(build_module_file(module, bodies[module]), encoding="utf-8")
+        actions.append(f"wrote agents.d/coding-{module}.md")
 
-    # Load the CLAUDE.md template once; both CLAUDE.md and AGENTS.md are
-    # derived from it.
-    template_path = skill_dir / "templates" / "claude-md-template.md"
-    if not template_path.exists():
-        print(f"error: CLAUDE.md template missing: {template_path}", file=sys.stderr)
-        return 1
-    template_text = template_path.read_text(encoding="utf-8")
-
-    # Touch CLAUDE.md always, and AGENTS.md only when asked. One action
-    # line per file so the calling agent can quote the result verbatim.
-    agent_files: list[tuple[str, str]] = [("CLAUDE.md", "# CLAUDE.md")]
-    if args.touch_agents_md:
-        agent_files.append(("AGENTS.md", "# AGENTS.md"))
-
-    for filename, h1 in agent_files:
-        actions.append(
-            touch_agent_file(
-                project_dir=project_dir,
-                filename=filename,
-                h1=h1,
-                template_text=template_text,
-                dry_run=args.dry_run,
-            )
-        )
+    # Wire the References into AGENTS.md and the bridge into CLAUDE.md.
+    actions.append(
+        ensure_references(project_dir=project_dir, modules=ordered, dry_run=args.dry_run)
+    )
+    actions.append(ensure_bridge(project_dir=project_dir, dry_run=args.dry_run))
 
     # Report. One line per action.
     print("scaffold complete:")

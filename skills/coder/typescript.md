@@ -1,6 +1,6 @@
 ## TypeScript
 
-This module covers TypeScript rules. It applies whenever the project contains TypeScript code.
+Applies whenever the project contains TypeScript code.
 
 ### Baseline
 
@@ -8,12 +8,6 @@ This module covers TypeScript rules. It applies whenever the project contains Ty
 - Target ES2022 (revisit per the universal *Versions and targets* rule).
 - Module system: ESM. `verbatimModuleSyntax` on. Include the `.js` extension in import specifiers (TS rewrites correctly, ESM at runtime needs it).
 - `noUncheckedIndexedAccess`, `forceConsistentCasingInFileNames`, `isolatedModules` all on.
-
-### Tooling overview
-
-- **Biome** for both linting and formatting (replaces ESLint + Prettier).
-- **Bun** as package manager, bundler, and test runner where the project is browser-side and standalone.
-- For WordPress plugins, prefer the WordPress build pipeline (`@wordpress/scripts`) only when the plugin actually needs Gutenberg block integration; otherwise plain Bun + Biome is lighter.
 
 ### Formatter settings (Biome)
 
@@ -46,7 +40,7 @@ This module covers TypeScript rules. It applies whenever the project contains Ty
 
 ### Type-checking
 
-Bun strips types at runtime — it does not type-check. The TypeScript type system is enforced by a separate `tsc --noEmit` pass, run in CI and in the lefthook pre-commit / pre-push hooks. Treat `tsc --noEmit` as a build step, not an editor convenience.
+Bun strips types at runtime — it does not type-check. Enforce the type system via a separate `tsc --noEmit` pass, run in CI and in the lefthook pre-commit / pre-push hooks. Treat `tsc --noEmit` as a build step, not an editor convenience.
 
 ### Module rules
 
@@ -57,10 +51,10 @@ Bun strips types at runtime — it does not type-check. The TypeScript type syst
 
 ### Class rules
 
-- Private members use the `#` syntax, not the `private` keyword. The `#` form is enforced by the runtime; `private` is only enforced by the type checker.
+- Private members use the `#` syntax, not the `private` keyword. `#` is enforced by the runtime; `private` only by the type checker.
 - Constructor parameters typed and `readonly` where applicable.
 - Getters for derived state; setters only when the class genuinely owns mutable state.
-- Side effects in constructors are limited to what's required to satisfy invariants. Long-running setup goes in a separate `start()` / `init()` method.
+- Side effects in constructors limited to what's required to satisfy invariants. Long-running setup goes in a separate `start()` / `init()` method.
 
 ### Function rules
 
@@ -72,7 +66,7 @@ Bun strips types at runtime — it does not type-check. The TypeScript type syst
 
 ### Doc comments
 
-Every public symbol carries a JSDoc/TSDoc block. The type system already shows the shape — the comment explains the contract, the why, and the non-obvious cases.
+Every public symbol carries a JSDoc/TSDoc block. The type system shows the shape — the comment explains the contract, the why, and the non-obvious cases.
 
 ```ts
 /**
@@ -103,8 +97,9 @@ project/
 │       └── …
 ├── docs/                     ← Architecture, algorithm, conventions, …
 ├── tests/                    ← Cross-package and e2e (Playwright)
-├── CLAUDE.md
-├── AGENTS.md
+├── agents.d/                 ← Kntnt coding standard (coding-<module>.md)
+├── AGENTS.md                 ← References point to agents.d/
+├── CLAUDE.md                 ← @AGENTS.md bridge
 ├── README.md
 ├── biome.json
 ├── lefthook.yml
@@ -116,7 +111,7 @@ Tests are **co-located** with source (`timer.ts` + `timer.test.ts` in the same f
 
 ### TypeScript and JavaScript tooling
 
-- **Bun** as package manager, bundler, test runner, and runtime.
+- **Bun** as package manager, bundler, test runner, and runtime where the project is browser-side and standalone. WordPress plugins use the WordPress build pipeline (`@wordpress/scripts`) only when the plugin needs Gutenberg block integration; otherwise plain Bun + Biome.
 - **TypeScript** for any non-trivial JavaScript code. Plain JavaScript is acceptable only where TypeScript adds friction without value (e.g. small WordPress admin scripts loaded via `wp_enqueue_script` — see the *JavaScript (browser, no TypeScript)* rules).
 - **Biome** as the single linter and formatter (replaces ESLint and Prettier).
 - **happy-dom** for DOM mocking in unit tests where Bun's runner does not cover the surface natively. Faster than jsdom.
@@ -125,4 +120,4 @@ Tests are **co-located** with source (`timer.ts` + `timer.test.ts` in the same f
 
 ### Tools deliberately not used
 
-The default toolchain above replaces ESLint, Prettier, Jest, Husky, npm, pnpm, yarn, Webpack, and Rollup. These tools are not forbidden, but a specific project need is required to bring any of them in.
+The default toolchain above replaces ESLint, Prettier, Jest, Husky, npm, pnpm, yarn, Webpack, and Rollup. Not forbidden, but a specific project need is required to bring any of them in.

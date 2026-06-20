@@ -64,15 +64,15 @@ Three buckets:
 **Offer to scaffold** (one short question, then proceed on the answer) when *all* of the following hold:
 
 - The task creates or initialises a real project — "create a WordPress plugin", "start a Laravel app", "scaffold a new SvelteKit application", or work that will produce a multi-file codebase rather than a single snippet.
-- The working directory is either empty (perhaps with `.git`) or does not yet contain `docs/coding-standards.md`.
+- The working directory is either empty (perhaps with `.git`) or does not yet contain `agents.d/coding-general.md`.
 - The profile from step 1 is non-trivial — more than a single language axis, or any framework axis (WordPress, WordPress-block, Laravel, SvelteKit, …).
 
-The question is roughly: *"This looks like a real project — want me to scaffold the coding standard into `docs/coding-standards.md` and wire it into `CLAUDE.md` before I write code?"* If yes, go to step 3. If no, go to step 4.
+The question is roughly: *"This looks like a real project — want me to scaffold the coding standard into `agents.d/` and wire it into `AGENTS.md` / `CLAUDE.md` before I write code?"* If yes, go to step 3. If no, go to step 4.
 
 **Skip scaffolding** otherwise — go straight to step 4. This covers:
 
 - Isolated code tasks ("write a function that …", "fix this bug", "review this snippet").
-- Existing projects that already have `docs/coding-standards.md` — the project's file wins. Reconcile silently and proceed.
+- Existing projects that already have `agents.d/coding-general.md` — the project's files win. Reconcile silently and proceed.
 - Quick experiments, throwaway scripts, snippets with no project context.
 
 ### 3. Scaffold (when requested or accepted)
@@ -93,11 +93,11 @@ Pass the same module names you'd load for the project's profile (omit `general` 
 The script:
 
 1. Sanity-checks the project directory. Refuses to write into a directory with no `.git`, `composer.json`, or `package.json` unless `--force` is set.
-2. Concatenates the requested modules in the canonical order (the same order as step 4 of the flow and `bin/scaffold`'s `CANONICAL_ORDER`) into `docs/coding-standards.md`.
-3. Refuses to overwrite an existing `docs/coding-standards.md` and prints its first 20 lines instead, so the calling agent (or Thomas) can decide what to do.
-4. Creates `CLAUDE.md` from `templates/claude-md-template.md` if missing. If it exists, inserts `@docs/coding-standards.md` under a `## Coding standards` heading without disturbing other content. If the import is already there, leaves the file alone.
-5. With `--touch-agents-md`, mirrors the same operation on `AGENTS.md`. Run it that way whenever Thomas asks for `AGENTS.md` too, or whenever the project will be edited by non-Claude agents (Copilot, Cursor, Codex).
-6. Prints a one-line summary of what it did per file.
+2. Writes each requested module (plus `general`) as its own on-demand file `agents.d/coding-<module>.md`, with a generated header: a read-when line and, for an override module, a prerequisite + precedence line so the override resolves however the file is reached. The source modules stay generic; the concrete wiring lives in `bin/scaffold`'s `MODULE_META`.
+3. Refuses to overwrite an existing `agents.d/coding-<module>.md` (exit code 2, names the clashing files). The project's snapshot is intentional; re-scaffold deliberately.
+4. Ensures `AGENTS.md` carries a `## References` entry pointing at each module file (with a co-load note on override modules). When `AGENTS.md` is missing, writes a *minimal* one — title + References only — and tells you to run `/agents-md` to flesh it out. It does not build out the rest of the file; that is `/agents-md`'s job.
+5. Ensures `CLAUDE.md` bridges to `AGENTS.md` with `@AGENTS.md` (Claude Code reads `CLAUDE.md`, not `AGENTS.md`). Creates the one-line bridge when missing; prepends it to an existing `CLAUDE.md` that lacks it.
+6. Prints a one-line summary of what it did per file. (`--touch-agents-md` is a deprecated no-op — `AGENTS.md` is always written now.)
 
 If the script returns a non-zero exit code, read its stderr, explain the situation to Thomas, and don't attempt to redo the work by hand — the script is the source of truth for what scaffolding looks like.
 
@@ -193,14 +193,15 @@ When adding a new framework or language to the standard:
 1. **Create `<topic>.md`** in this skill folder. Match the existing modules' shape — a one-paragraph "When this applies" intro, then sections for baseline / required modern features / surface style / file layout / tooling. State any override relationships explicitly inside the module so a reader who loads the module alone still understands the bigger picture.
 2. **Add a row to the modules table** at the top of this file, including the detection signal.
 3. **Add a detection clause to step 1** of the flow above. Match the shape of the existing axes.
-4. **Add the module to the canonical order** in step 4 and to `bin/scaffold`'s `CANONICAL_ORDER` — always; the scaffold validates every `--include` against that list and rejects unknown modules. Its *position* only matters when it has override relationships with an existing module (later wins on differences).
-5. **Update the `description` frontmatter** to name the new framework among the covered languages and frameworks, so the description stays accurate. The trigger is already broad and language-agnostic, so this keeps the list current rather than enabling triggering.
+4. **Add the module to the canonical order** in step 4 and to `bin/scaffold`'s `CANONICAL_ORDER` — always; the scaffold validates every `--include` against that list and rejects unknown modules. Its *position* only matters when it has override relationships with an existing module (later wins on differences), and the canonical order is also the precedence order the generated headers refer to.
+5. **Add a `bin/scaffold` `MODULE_META` entry** (`label`, `read_when`, `requires`). If the module overrides another, list it in `requires` and add an `OVERRIDE_HEADER` sentence; the script asserts these maps stay in sync with `CANONICAL_ORDER` and fails loudly otherwise.
+6. **Update the `description` frontmatter** to name the new framework among the covered languages and frameworks, so the description stays accurate. The trigger is already broad and language-agnostic, so this keeps the list current rather than enabling triggering.
 
-The modules are self-contained on purpose. Cross-references between them use generic phrasing (e.g. "WordPress projects override the PSR-12 surface style") so each module reads correctly whether loaded alone in step 4 or concatenated into a single `docs/coding-standards.md` by the scaffold script.
+The modules are self-contained on purpose. Cross-references between them use generic phrasing (e.g. "WordPress projects override the PSR-12 surface style") so each module reads correctly whether the router loads it alone or the scaffold writes it to its own `agents.d/coding-<module>.md` file. The concrete prerequisite wiring an override module needs (read X first) is generated by the scaffold from `MODULE_META`, never written into the module prose.
 
 ## Notes
 
-- Updating the standard means editing one or more module files in this skill. Projects that have already scaffolded their own `docs/coding-standards.md` keep their snapshot until they explicitly re-scaffold; this is intentional, so updates to the skill don't silently change project behaviour.
+- Updating the standard means editing one or more module files in this skill. Projects that have already scaffolded their own `agents.d/coding-<module>.md` files keep their snapshot until they explicitly re-scaffold; this is intentional, so updates to the skill don't silently change project behaviour.
 - Scaffolding requires file-system access to the project directory (Claude Code or Cowork). If access is not available — chat-only, no working directory — say so, skip step 3, and apply the standard from context instead.
 
 ## Files in this skill
@@ -214,5 +215,4 @@ The modules are self-contained on purpose. Cross-references between them use gen
 - `javascript-vanilla.md` — plain browser JavaScript rules.
 - `python.md` — Python rules.
 - `bash.md` — Bash rules.
-- `bin/scaffold` — command-style Python script (run via uv) that assembles `docs/coding-standards.md` and wires it into `CLAUDE.md` / `AGENTS.md`.
-- `templates/claude-md-template.md` — starter for a fresh `CLAUDE.md` (or `AGENTS.md`).
+- `bin/scaffold` — command-style Python script (run via uv) that writes the modules to `agents.d/coding-<module>.md` and wires the References into `AGENTS.md` / `CLAUDE.md`.

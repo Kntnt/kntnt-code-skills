@@ -1,10 +1,10 @@
 ## WordPress
 
-This section extends the PHP rules with rules specific to WordPress plugins and themes. It applies in addition to (and in places overrides) the PHP rules.
+Extends the PHP rules with rules specific to WordPress plugins and themes; applies in addition to, and in places overrides, the PHP rules.
 
 ### Surface style — WordPress flavour (overrides PSR-12)
 
-WordPress code follows the WordPress Coding Standards rather than PSR-12:
+WordPress code follows the WordPress Coding Standards, not PSR-12:
 
 | Question | Convention |
 |---|---|
@@ -16,11 +16,11 @@ WordPress code follows the WordPress Coding Standards rather than PSR-12:
 | Class constants | `SCREAMING_SNAKE_CASE` |
 | Namespace segments | `Pascal_Snake_Case` |
 
-The `Pascal_Snake_Case` class form (`User_Repository`) is the WordPress flavour: the underscore-flavoured readability of WordPress identifiers combined with a valid PSR-4 class name. The corresponding file is `classes/User_Repository.php` — exact match, case-sensitive.
+`Pascal_Snake_Case` (`User_Repository`) is the WordPress flavour: WordPress underscore readability plus a valid PSR-4 class name. File: `classes/User_Repository.php` — exact match, case-sensitive.
 
 ### Deliberate deviations from WP-CS — do not "fix" these
 
-WordPress conventions otherwise apply, but the following four points deliberately depart from WP-CS because the alternative is clearly superior. They are not oversights. Do not "correct" them toward upstream WP-CS in code reviews, refactors, or new files:
+These four points deliberately depart from WP-CS; they are not oversights. Do not "correct" them toward upstream WP-CS in reviews, refactors, or new files:
 
 - **`[ ... ]` over `array(...)`** — modern PHP.
 - **PSR-4 filenames over `class-classname.php`** — the autoloader maps `User_Repository` to `User_Repository.php`, not `class-user-repository.php`.
@@ -29,7 +29,7 @@ WordPress conventions otherwise apply, but the following four points deliberatel
 
 ### File layout in WordPress projects
 
-WordPress plugins use `classes/` rather than `src/` as the PSR-4 source directory:
+WordPress plugins use `classes/`, not `src/`, as the PSR-4 source directory:
 
 ```
 \Kntnt\<Project>\Click_Handler              →  classes/Click_Handler.php
@@ -60,9 +60,11 @@ kntnt-<name>/
 ├── uninstall.php             ← Complete data removal. Runs without
 │                                autoloader; uses fully qualified calls.
 ├── README.md                 ← Human-facing documentation
-├── CLAUDE.md                 ← AI agent guidance (imports AGENTS.md,
-│                                docs/*.md as needed)
-├── AGENTS.md                 ← Universal AI agent instructions
+├── CLAUDE.md                 ← `@AGENTS.md` bridge for Claude Code
+├── AGENTS.md                 ← AI agent instructions; References point
+│                                to agents.d/
+├── agents.d/                 ← Kntnt coding standard, on demand:
+│                                coding-<module>.md (scaffolded)
 ├── classes/                  ← PSR-4: <Class_Name>.php
 │   ├── Plugin.php            ← Singleton, component wiring, hooks
 │   ├── Migrator.php
@@ -76,7 +78,6 @@ kntnt-<name>/
 ├── languages/                ← .pot, .po, generated .mo
 ├── docs/                     ← Specs the AI and humans both read
 │   ├── architecture.md
-│   ├── coding-standards.md   ← Project-specific overrides (rare)
 │   ├── file-structure.md
 │   ├── security.md
 │   ├── testing-strategy.md
@@ -87,14 +88,14 @@ kntnt-<name>/
     └── Integration/          ← Bash + WordPress Playground / DDEV
 ```
 
-The bootstrap path is fixed: `kntnt-<name>.php` → guard PHP version → require `autoloader.php` → register activation/deactivation hooks → call `Plugin::get_instance()`. The `Plugin` constructor instantiates all components in dependency order and registers their WordPress hooks.
+Bootstrap path is fixed: `kntnt-<name>.php` → guard PHP version → require `autoloader.php` → register activation/deactivation hooks → call `Plugin::get_instance()`. The `Plugin` constructor instantiates all components in dependency order and registers their WordPress hooks.
 
 ### WordPress-specific tooling
 
-These tools complement the general PHP tooling.
+Complement the general PHP tooling.
 
 - **Brain Monkey** + **Mockery** for mocking WordPress functions and collaborator dependencies in unit tests.
-- **`szepeviktor/phpstan-wordpress`** as the PHPStan extension that teaches static analysis about WordPress core.
-- **WordPress Playground** (WASM PHP + SQLite) for end-to-end integration tests. The whole stack spins up in 1–2 seconds without a server, which keeps CI fast and the local feedback loop tight. Playground is the default. Use it whenever it suffices — which is the great majority of cases.
+- **`szepeviktor/phpstan-wordpress`** as the PHPStan extension teaching static analysis about WordPress core.
+- **WordPress Playground** (WASM PHP + SQLite) for end-to-end integration tests. Spins up in 1–2 seconds without a server. Default; use it whenever it suffices, the great majority of cases.
 
-  Only fall back to **DDEV-based** integration tests when Playground genuinely cannot exercise the behaviour under test: MySQL-specific SQL, database-level concurrency, transaction or locking semantics, missing PHP extensions, or multi-process scenarios such as cron jobs and queue workers. DDEV-based tests are the exception, are scoped narrowly to the case that requires them, and stay out of the fast PR-time test suite. Run Playground from the command line via `@wp-playground/cli`.
+  Fall back to **DDEV-based** integration tests only when Playground cannot exercise the behaviour under test: MySQL-specific SQL, database-level concurrency, transaction or locking semantics, missing PHP extensions, or multi-process scenarios such as cron jobs and queue workers. DDEV-based tests are the exception, scoped narrowly to the case that requires them, and stay out of the fast PR-time test suite. Run Playground via `@wp-playground/cli`.

@@ -184,7 +184,7 @@ def check_module_canonical_order_sync() -> CheckResult:
     """(b) — the topic-module files in skills/coder/ and bin/scaffold's
     `CANONICAL_ORDER` list the same modules. A module file with no entry would
     be invisible to the scaffolder; an entry with no file would make the
-    scaffolder concatenate a missing file. Both directions are flagged."""
+    scaffolder read a missing file. Both directions are flagged."""
 
     result = CheckResult(name="(b) modules <-> CANONICAL_ORDER symmetry")
     order = canonical_order()

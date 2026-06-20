@@ -1,28 +1,26 @@
 ## WordPress blocks
 
-This section extends the WordPress and TypeScript rules with rules specific to the Gutenberg block editor — registering custom blocks, building their UI in React, and shipping them as part of a plugin or theme. It applies in addition to (and in places overrides) the WordPress and TypeScript rules.
+Rules specific to the Gutenberg block editor — registering custom blocks, building their UI in React, shipping them in a plugin or theme. Applies in addition to (and in places overrides) the WordPress and TypeScript rules.
 
 ### When this applies
 
-These rules apply when the project registers Gutenberg blocks. A project is treated as a "block project" if any of the following are true:
+A project is a "block project" if any of:
 
 - `package.json` declares a dependency on `@wordpress/scripts`.
-- The codebase contains one or more `block.json` files.
-- The codebase uses `register_block_type()` server-side.
+- Codebase contains one or more `block.json` files.
+- Codebase uses `register_block_type()` server-side.
 
-A project may be a hybrid: a classic plugin (covered by the WordPress rules) that also registers blocks. In that case, both sets of rules apply.
+A project may be a hybrid: a classic plugin (WordPress rules) that also registers blocks. Then both sets apply.
 
 ### Guiding principle: stay on `@wordpress/scripts`' happy path
 
-Block development uses **`@wordpress/scripts` and its bundled defaults for everything it covers** — building, linting, formatting, style linting, type-checking, and testing. The package ships a Webpack config, ESLint config, Prettier config, Stylelint config, Babel/TS preset, and Jest config that are all tuned for the block editor's React runtime, the `@wordpress/*` packages, and `block.json`-driven registration. Replacing any of them with a project-wide alternative (Biome, Vitest, Bun's bundler, etc.) costs more time than it saves and breaks compatibility with the WordPress ecosystem's expectations.
+Block development uses **`@wordpress/scripts` and its bundled defaults for everything it covers** — building, linting, formatting, style linting, type-checking, testing. Its Webpack, ESLint, Prettier, Stylelint, Babel/TS, and Jest configs are tuned for the block editor's React runtime, the `@wordpress/*` packages, and `block.json`-driven registration. Do not replace any with a project-wide alternative (Biome, Vitest, Bun's bundler, etc.).
 
-The project's other tooling — Bun, Biome, Vitest, Lefthook, Playwright for non-block e2e — still applies to code **outside** `src/blocks/`. The principle is scope-local: blocks are an `@wordpress/scripts` island in an otherwise modern toolchain.
-
-When in doubt, prefer the `@wordpress/scripts` default over a custom configuration.
+The project's other tooling — Bun, Biome, Vitest, Lefthook, Playwright for non-block e2e — still applies to code **outside** `src/blocks/`. Scope-local: blocks are an `@wordpress/scripts` island in an otherwise modern toolchain. When in doubt, prefer the `@wordpress/scripts` default over a custom configuration.
 
 ### File layout for blocks
 
-Block source files live under a single root directory and are compiled by `@wordpress/scripts` into a build directory:
+Block source lives under one root directory, compiled by `@wordpress/scripts` into a build directory:
 
 ```
 <plugin-root>/
@@ -44,7 +42,7 @@ Block source files live under a single root directory and are compiled by `@word
                                      Committed but never hand-edited.
 ```
 
-One folder per block. Each block has its own `block.json`. Static blocks have `save.tsx`; server-rendered blocks have `render.php` (referenced from `block.json` via `"render": "file:./render.php"`).
+One folder per block, each with its own `block.json`. Static blocks have `save.tsx`; server-rendered blocks have `render.php` (referenced from `block.json` via `"render": "file:./render.php"`).
 
 ### `block.json` conventions
 
@@ -52,7 +50,7 @@ One folder per block. Each block has its own `block.json`. Static blocks have `s
 - **`apiVersion`** is the latest supported version (currently 3).
 - **`textdomain`** matches the plugin's text domain.
 - **`category`** is one of WordPress's built-in categories or a custom category registered by the plugin.
-- Prefer **static** rendering (a `save.tsx`) when the block's output is determined at edit time. Use **dynamic** rendering (`render`) only when the output depends on the request, the user, or live data.
+- Prefer **static** rendering (a `save.tsx`) when output is determined at edit time. Use **dynamic** rendering (`render`) only when output depends on the request, the user, or live data.
 
 ### React conventions for blocks
 
@@ -60,7 +58,7 @@ One folder per block. Each block has its own `block.json`. Static blocks have `s
 - **Hooks** for state and side effects (`useState`, `useEffect`, `useSelect`, `useDispatch`, etc.).
 - **Edit and save components named after the block** in `PascalCase`: `<BlockNameEdit>`, `<BlockNameSave>`.
 - **TSX, not JSX** — every block file is TypeScript.
-- **Block attributes are typed.** Define an interface for each block's attributes and reuse it in both `edit.tsx` and `save.tsx`.
+- **Block attributes are typed.** Define an interface per block's attributes; reuse it in both `edit.tsx` and `save.tsx`.
 
 ### TypeScript rules for blocks
 
@@ -90,12 +88,12 @@ The PHP that registers blocks follows the WordPress rules. In particular:
 ### Block testing
 
 - **Block PHP** is unit-tested with Pest and integration-tested with WordPress Playground, the same as any other WordPress PHP.
-- **Block JS/TS unit tests** use `wp-scripts test-unit-js`, which runs the Jest setup that `@wordpress/scripts` ships. Do not introduce Vitest or any other test runner for block code, even when the rest of the project's TypeScript uses Vitest. Per the *Guiding principle*, blocks live on the `@wordpress/scripts` happy path.
+- **Block JS/TS unit tests** use `wp-scripts test-unit-js` (the Jest setup `@wordpress/scripts` ships). Do not introduce Vitest or any other test runner for block code, even when the rest of the project's TypeScript uses Vitest. Per the *Guiding principle*, blocks live on the `@wordpress/scripts` happy path.
 - **End-to-end tests** for the editor experience use Playwright with `@wordpress/e2e-test-utils-playwright`, run against a Playground instance.
 
 ### Block tooling — at a glance
 
-For block JS/TS work inside `src/blocks/`, use only what `@wordpress/scripts` provides:
+Block JS/TS work inside `src/blocks/` uses only what `@wordpress/scripts` provides:
 
 | Concern | Command |
 |---|---|
@@ -107,8 +105,4 @@ For block JS/TS work inside `src/blocks/`, use only what `@wordpress/scripts` pr
 | Format | `wp-scripts format` |
 | Unit-test JS/TS | `wp-scripts test-unit-js` |
 
-For block PHP, use the same tools as the WordPress rules: Pest, PHPStan + `szepeviktor/phpstan-wordpress`, Brain Monkey, Mockery, WordPress Playground.
-
-For editor end-to-end tests, use Playwright with `@wordpress/e2e-test-utils-playwright` against a Playground instance.
-
-For everything else in the project (non-block code), the project's default tooling applies as documented in the TypeScript and PHP rules.
+Block PHP uses the WordPress-rules tools (Pest, PHPStan + `szepeviktor/phpstan-wordpress`, Brain Monkey, Mockery, WordPress Playground); editor e2e uses Playwright with `@wordpress/e2e-test-utils-playwright` against a Playground instance; non-block code uses the project default tooling.

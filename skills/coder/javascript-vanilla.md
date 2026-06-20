@@ -1,6 +1,6 @@
 ## JavaScript (browser, no TypeScript)
 
-This section covers plain browser-side JavaScript — typically scripts inside PHP or WordPress plugins (admin scripts, public-facing scripts) where introducing TypeScript and a build step is not justified. For any non-trivial JavaScript, use TypeScript instead.
+Plain browser-side JavaScript — scripts inside PHP or WordPress plugins (admin, public-facing) where TypeScript and a build step are not justified. For any non-trivial JavaScript, use TypeScript instead.
 
 ### Baseline
 
@@ -22,4 +22,4 @@ This section covers plain browser-side JavaScript — typically scripts inside P
 
 ### Doc comments
 
-JSDoc on every exported function and any non-trivial helper. Use it to document parameter and return types where TypeScript isn't doing it for you.
+JSDoc on every exported function and any non-trivial helper. Document parameter and return types, since TypeScript isn't.

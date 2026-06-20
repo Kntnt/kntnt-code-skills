@@ -1,11 +1,11 @@
 ## PHP
 
-This section covers PHP rules. It applies whenever the project contains PHP code. WordPress projects additionally use the WordPress rules, which extend and override parts of this section.
+Applies whenever the project contains PHP code. WordPress projects additionally use the WordPress rules, which extend and override parts of this section.
 
 ### Baseline (all PHP)
 
 - `declare( strict_types = 1 );` at the top of every PHP file.
-- Use the language's modern features fully; no back-compatibility shims for older language versions.
+- Use modern language features fully; no back-compatibility shims for older versions.
 
 ### Required modern features
 
@@ -24,17 +24,17 @@ This section covers PHP rules. It applies whenever the project contains PHP code
 
 ### Universal style rules (all PHP)
 
-These apply regardless of project. They are language-level preferences, not surface-style choices.
+Language-level preferences, regardless of project.
 
 - `[ ... ]` for arrays. Never `array(...)`.
-- Trailing commas in multi-line arrays, multi-line parameter lists, and multi-line argument lists.
+- Trailing commas in multi-line arrays, parameter lists, and argument lists.
 - `?:` and `??` as appropriate; do not chain them into puzzles.
-- **Conditions: natural order by default.** Yoda conditions are acceptable when they make the intent clearer for an experienced reader than the alternative — for example in idiomatic null-checks (`if ( null === $value )`) or where the test is fundamentally a boolean assertion rather than a comparison. Strict types remove the original safety motivation for Yoda, so the choice is purely about readability.
-- Code may go up to the project's max line width (120 cols is a sensible default). Comments wrap at column 80.
+- **Conditions: natural order by default.** Yoda conditions are acceptable when they make intent clearer for an experienced reader — e.g. idiomatic null-checks (`if ( null === $value )`) or where the test is fundamentally a boolean assertion rather than a comparison. The choice is purely about readability.
+- Code may go up to the project's max line width (default 120 cols). Comments wrap at column 80.
 
 ### Surface style — PSR-12
 
-PHP code follows PSR-12 for indentation, spacing, and identifier casing. WordPress projects override this with the WordPress Coding Standards — see the WordPress rules.
+PHP follows PSR-12 for indentation, spacing, and identifier casing. WordPress projects override this with the WordPress Coding Standards — see the WordPress rules.
 
 | Question | Convention |
 |---|---|
@@ -57,7 +57,7 @@ PSR-4 autoloading. The autoloader maps the namespace prefix to a source director
 
 One class, interface, enum, or trait per file. Filename equals the symbol name, case-sensitive.
 
-The conventional source directory is `src/`. WordPress plugins use `classes/` instead — see the WordPress rules.
+Conventional source directory is `src/`. WordPress plugins use `classes/` instead — see the WordPress rules.
 
 ### Doc comments
 
@@ -82,9 +82,9 @@ public function resolveUser( string $token ): ?User { … }
 ### PHP tooling
 
 - **Composer** for dependency management and PSR-4 autoloading.
-- **Pest** for unit and feature tests — expressive, modern, fast.
-- **PHPStan** for static analysis. Aim for `--level max` on new code; raise legacy code incrementally. PHPStan catches a class of bugs that tests alone do not — typos in property names, wrong argument types, dead branches.
+- **Pest** for unit and feature tests.
+- **PHPStan** for static analysis. Aim for `--level max` on new code; raise legacy code incrementally. PHPStan catches bugs tests alone do not — typos in property names, wrong argument types, dead branches.
 - **pcov** for PHP code coverage.
-- **DDEV** for any PHP project that needs a local server (PHP, database, web server). DDEV's project-local configuration is checked in so the environment is reproducible.
+- **DDEV** for any PHP project needing a local server (PHP, database, web server). DDEV's project-local configuration is checked in for a reproducible environment.
 
 WordPress-specific PHP tooling — Brain Monkey, Mockery, the `szepeviktor/phpstan-wordpress` extension, WordPress Playground for integration tests — is described under the WordPress rules.
