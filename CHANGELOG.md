@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.9.0] – 2026-06-26
+
 ### Added
 
 - **`/init` skill** — bootstraps a new project to the Kntnt baseline in one pass: `git init`, the `AGENTS.md`/`CLAUDE.md` skeleton (via `kntnt-skills:agents-md --force`), the coding standard scaffolded into `agents.d/coding-standard/`, a licence fetched by SPDX id, the README/CHANGELOG/CONTRIBUTING (and NOTICE under Apache) rendered from generic templates, and a stack-aware `.gitignore`, then optionally the first commit and the GitHub repository. The deterministic file work lives in `scripts/init.py` (`gitignore`, `templates`, and `license` commands), covered by `tests/test_init.py`.
@@ -167,7 +169,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.9.0
 [0.8.3]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.3
 [0.8.2]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.2
 [0.8.1]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.1
