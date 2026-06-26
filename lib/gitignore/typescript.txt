@@ -1,0 +1,4 @@
+# Node / TypeScript build output
+node_modules/
+dist/
+*.tsbuildinfo

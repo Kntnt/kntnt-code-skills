@@ -31,9 +31,15 @@ REPO_ROOT: Path = Path(__file__).resolve().parent.parent
 
 # Directory and file shortcuts.
 MODULES_DIR: Path = REPO_ROOT / "lib" / "coding-standard"
+GITIGNORE_DIR: Path = REPO_ROOT / "lib" / "gitignore"
+TEMPLATES_DIR: Path = REPO_ROOT / "lib" / "templates"
+SKILLS_DIR: Path = REPO_ROOT / "skills"
 SCAFFOLD: Path = REPO_ROOT / "scripts" / "scaffold.py"
 PLUGIN_JSON: Path = REPO_ROOT / ".claude-plugin" / "plugin.json"
 CHANGELOG: Path = REPO_ROOT / "CHANGELOG.md"
+
+# The generic project templates that lib/templates/ must carry.
+REQUIRED_TEMPLATES: tuple[str, ...] = ("README.md", "CHANGELOG.md", "CONTRIBUTING.md", "NOTICE")
 
 
 @dataclass
@@ -87,6 +93,21 @@ def module_files() -> set[str]:
         for p in MODULES_DIR.iterdir()
         if p.is_file() and p.suffix == ".md" and not p.name.startswith("_")
     }
+
+
+def frontmatter_name(skill_md: Path) -> str | None:
+    """Extract the `name:` field from a SKILL.md's YAML frontmatter, or None."""
+
+    lines = read_text(skill_md).splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        match = re.match(r"\s*name:\s*(.+?)\s*$", line)
+        if match:
+            return match.group(1).strip().strip("\"'")
+    return None
 
 
 def canonical_order() -> list[str] | None:
@@ -190,7 +211,7 @@ def check_module_canonical_order_sync() -> CheckResult:
         result.findings.append(
             Finding(
                 result.name,
-                relpath(SKILL_DIR / f"{stem}.md"),
+                relpath(MODULES_DIR / f"{stem}.md"),
                 None,
                 f"module '{stem}' has no entry in CANONICAL_ORDER",
             )
@@ -207,9 +228,86 @@ def check_module_canonical_order_sync() -> CheckResult:
     return result
 
 
+def check_skill_frontmatter() -> CheckResult:
+    """(c) — every directory under skills/ carries a SKILL.md whose frontmatter
+    `name` matches the directory name, so /help and invocation stay coherent.
+    This is what brings new skills (init, doctor) under the audit."""
+
+    result = CheckResult(name="(c) skills/ directories and SKILL.md names")
+    if not SKILLS_DIR.exists():
+        result.findings.append(
+            Finding(result.name, relpath(SKILLS_DIR), None, "skills/ directory missing")
+        )
+        return result
+    for skill_dir in sorted(d for d in SKILLS_DIR.iterdir() if d.is_dir()):
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.is_file():
+            result.findings.append(
+                Finding(result.name, relpath(skill_md), None, "missing SKILL.md")
+            )
+            continue
+        name = frontmatter_name(skill_md)
+        if name is None:
+            result.findings.append(
+                Finding(result.name, relpath(skill_md), None, "no `name:` in frontmatter")
+            )
+        elif name != skill_dir.name:
+            result.findings.append(
+                Finding(
+                    result.name,
+                    relpath(skill_md),
+                    None,
+                    f"frontmatter name '{name}' does not match directory '{skill_dir.name}'",
+                )
+            )
+    return result
+
+
+def check_gitignore_fragments() -> CheckResult:
+    """(d) — lib/gitignore/ carries base.txt and every other `<module>.txt`
+    fragment names a module in CANONICAL_ORDER. A fragment for an unknown module
+    would never be composed; a missing base.txt would break every compose."""
+
+    result = CheckResult(name="(d) lib/gitignore/ fragments are sane")
+    if not (GITIGNORE_DIR / "base.txt").is_file():
+        result.findings.append(
+            Finding(result.name, relpath(GITIGNORE_DIR / "base.txt"), None, "missing base.txt")
+        )
+    order = canonical_order()
+    known = set(order) if order is not None else set()
+    for fragment in sorted(GITIGNORE_DIR.glob("*.txt")) if GITIGNORE_DIR.exists() else []:
+        if fragment.stem == "base":
+            continue
+        if known and fragment.stem not in known:
+            result.findings.append(
+                Finding(
+                    result.name,
+                    relpath(fragment),
+                    None,
+                    f"gitignore fragment '{fragment.stem}' is not a module in CANONICAL_ORDER",
+                )
+            )
+    return result
+
+
+def check_templates_present() -> CheckResult:
+    """(e) — lib/templates/ carries the generic project templates init renders."""
+
+    result = CheckResult(name="(e) lib/templates/ generic templates present")
+    for name in REQUIRED_TEMPLATES:
+        if not (TEMPLATES_DIR / name).is_file():
+            result.findings.append(
+                Finding(result.name, relpath(TEMPLATES_DIR / name), None, "missing template")
+            )
+    return result
+
+
 CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_plugin_json_and_version,
     check_module_canonical_order_sync,
+    check_skill_frontmatter,
+    check_gitignore_fragments,
+    check_templates_present,
 )
 
 

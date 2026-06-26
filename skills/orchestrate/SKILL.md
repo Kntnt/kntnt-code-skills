@@ -64,7 +64,7 @@ If the project defines its own autonomous-agent and reporting model, follow it. 
 
 Read the project's `CLAUDE.md` / `AGENTS.md` and the `docs/` they point at — the coding standard, the definition of done, the test strategy, and the ADRs or design docs the issues reference. Resolve the scope (default: `ready-for-agent`, excluding `ready-for-human`), then read every in-scope issue **and its agent brief** with `gh issue view <n> --comments`.
 
-Sub-agents cannot invoke skills, so the standard and the test discipline must reach them **as files they can read** (the `skill-by-reference` pattern). If the project has no `docs/coding-standards.md`, invoke the `coder` skill once to scaffold it before dispatching.
+Sub-agents cannot invoke skills, so the standard and the test discipline must reach them **as files they can read** (the `skill-by-reference` pattern). If the project has no `agents.d/coding-standard/` directory, run `/coding-standard` once to scaffold it before dispatching; the sub-agents then read `general.md` plus the module(s) for the language or framework they touch.
 
 ### 2. Plan (deterministic)
 
@@ -140,7 +140,7 @@ Two cautions. Run `/goal` **interactively** — `claude -p "/goal …"` is headl
 
 ## Relationship to the other skills
 
-- **`coder`** is the standard the sub-agents code to. They cannot invoke it, so they read the project's checked-in `docs/coding-standards.md` (coder's scaffold); when it is absent, the orchestrator runs `coder` once to produce it before dispatching.
+- **`coder`** is the standard the sub-agents code to. They cannot invoke it, so they read the project's checked-in `agents.d/coding-standard/` modules (scaffolded by `/coding-standard`); when that directory is absent, the orchestrator runs `/coding-standard` once to produce it before dispatching.
 - **`tdd`** is the implementer's discipline — its test-first, vertical-slice, behavior-over-implementation rules. Reach it the same way: as a file the sub-agent reads, since it cannot invoke the skill. Its planning step is human-gated, so the **agent brief** stands in for the maintainer's approval.
 - **`to-issues` / `triage`** are upstream: they produce the `ready-for-agent` issues, the `Blocked by` graph, and the agent briefs this skill consumes.
 - **`push` / `release`** take over at the end. `orchestrate` stops at integrated, verified, green code; `push` saves in-progress work, and `release` ships a version.
@@ -149,4 +149,4 @@ Two cautions. Run `/goal` **interactively** — `claude -p "/goal …"` is headl
 
 - `scripts/orchestrate.py` — deterministic helper: `plan` (issues JSON → dependency graph + waves), `redgreen` (git-log → red-before-green verdict), and `report` (verdicts JSON → consolidated report). Never calls `claude`; covered by `tests/test_orchestrate.py`.
 - `skills/orchestrate/orchestrate.workflow.js` — the Workflow-tool engine: implement → verify → integrate over the planned waves, agents in the subscription pool.
-- Reads (per project): `docs/coding-standards.md`, the issues' agent briefs, the definition of done, the test strategy, and the cited ADRs / design docs.
+- Reads (per project): `agents.d/coding-standard/` (the scaffolded standard), the issues' agent briefs, the definition of done, the test strategy, and the cited ADRs / design docs.

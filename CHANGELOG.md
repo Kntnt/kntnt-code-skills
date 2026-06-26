@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **`/init` skill** — bootstraps a new project to the Kntnt baseline in one pass: `git init`, the `AGENTS.md`/`CLAUDE.md` skeleton (via `kntnt-skills:agents-md --force`), the coding standard scaffolded into `agents.d/coding-standard/`, a licence fetched by SPDX id, the README/CHANGELOG/CONTRIBUTING (and NOTICE under Apache) rendered from generic templates, and a stack-aware `.gitignore`, then optionally the first commit and the GitHub repository. The deterministic file work lives in `scripts/init.py` (`gitignore`, `templates`, and `license` commands), covered by `tests/test_init.py`.
+- **`/doctor` skill** — init's idempotent reconciler. Deterministic checks in `scripts/doctor.py` (git state, `.gitignore` coverage, the coding standard's home and sync, the licence/NOTICE pairing) emit JSON findings; a read-only Workflow (`skills/doctor/doctor.workflow.js`) checks whether `AGENTS.md`, the `agents.d/` files, and the README still match the real code. It applies only the fixes you select (`--yes` applies all) and never commits. Covered by `tests/test_doctor.py`.
+- **`lib/templates/`** — generic, tokenised `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, and `NOTICE` that `/init` renders. The README embodies the audience-layered structure (Users → Extenders → Contributors) with the fixed boilerplate blocks; `CONTRIBUTING` carries a licence-adaptive inbound-licensing paragraph and a behavioural-expectations line.
+- **`lib/gitignore/` per-module fragments** — `php.txt`, `typescript.txt`, `python.txt`, and `wordpress-block.txt`, composed onto `base.txt` and deduplicated when `/init` or `/doctor` build a `.gitignore`.
+- **`scaffold.py` prerequisite closure** — requesting an override module now pulls in what it builds on automatically (`wordpress` adds `php`; `wordpress-block` adds `wordpress` and `typescript`).
+- **`audit.py` structural checks** — skills carry valid frontmatter (`name` matches directory), the `lib/gitignore/` fragments name real modules, and `lib/templates/` is present.
+
+### Changed
+
+- **The coding standard's scaffolded files are now plugin-owned, verbatim.** `scaffold.py` no longer writes a private `manifest.json`; a project is "scaffolded" exactly when `agents.d/coding-standard/` holds module files. Drift is the plain content diff between a file and a fresh regeneration — there is no "locally edited" state and no edit protection, and `/coding-standard --update` reconciles every difference to the canonical content. `--force` now only overrides the project-root sanity check. `AGENTS.md` References are backticked. `coder` and the `coding-standard`/`README` prose are updated to match.
+- **`/orchestrate` reads the coding standard from `agents.d/coding-standard/`** instead of the stale monolithic `docs/coding-standards.md`; sub-agents read `general.md` plus the module(s) for the language or framework they touch, and absence is detected as a missing `agents.d/coding-standard/` directory (remedied by `/coding-standard`, not `coder`).
+- **`lib/gitignore-base.txt` moved to `lib/gitignore/base.txt`** (the `release`, `push`, and README references follow).
+
+### Removed
+
+- **The coding-standard `manifest.json` and its machinery** — the stored/on-disk/fresh three-way hashing, the `generatedWith` version label, and the create-only "refuse to clobber" exit code 2. The plugin owns the files, so the bookkeeping is unnecessary.
+
 ## [0.8.3] – 2026-06-20
 
 ### Changed

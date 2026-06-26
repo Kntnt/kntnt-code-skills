@@ -6,9 +6,9 @@
 """Materialise and maintain Kntnt's coding standard in a project.
 
 Writes each requested module as its own on-demand file under
-``agents.d/coding-standard/<module>.md``, records a ``manifest.json`` beside
-them, ensures ``AGENTS.md`` carries a ``## References`` pointer to each one,
-and ensures ``CLAUDE.md`` bridges to ``AGENTS.md`` with ``@AGENTS.md``.
+``agents.d/coding-standard/<module>.md``, ensures ``AGENTS.md`` carries a
+``## References`` pointer to each one, and ensures ``CLAUDE.md`` bridges to
+``AGENTS.md`` with ``@AGENTS.md``.
 
 The standard is reached on demand: an agent follows a References pointer and
 reads only the modules a task needs, rather than paying for the whole standard
@@ -17,24 +17,29 @@ TypeScript) carry a generated prerequisite + precedence header so the override
 resolves however the file is reached. That wiring lives in MODULE_META here, so
 the source modules stay generic and portable.
 
+The plugin OWNS these scaffolded files: they are canonical and verbatim, never
+hand-edited. Project-specific deviations belong in ``AGENTS.md`` prose, not in
+edits to a module file. There is therefore no private bookkeeping and no
+"locally edited" state — drift is simply the content diff between the file on
+disk and a fresh regeneration from the current ``lib/`` sources.
+
 This script owns the deterministic, error-prone file work; the judgement —
 which modules a project needs — stays with the calling skill, which always
 passes the current profile via ``--include``. It runs in one of three modes,
-chosen by the project's state and the ``--update`` flag:
+chosen by whether the project is already scaffolded and the ``--update`` flag:
 
-  * **create** — no manifest yet: write the modules, manifest, and wiring.
-  * **investigate** — a manifest exists, no ``--update``: print a read-only
-    drift report (what changed in the standard, what changed in the project
-    profile, which files were locally edited) and write nothing.
-  * **update** — a manifest exists, ``--update`` given: reconcile to the
-    current ``--include`` — rewrite changed modules, add new ones, remove
-    dropped ones, and prune their References — while leaving locally edited
-    files untouched unless ``--force`` is set.
+  * **create** — ``agents.d/coding-standard/`` holds no module file yet: write
+    the modules and the wiring.
+  * **investigate** — already scaffolded, no ``--update``: print a read-only
+    drift report (which modules differ from a fresh regeneration, which would
+    be added, which would be removed) and write nothing.
+  * **update** — already scaffolded, ``--update`` given: reconcile to the
+    current ``--include`` — rewrite every module whose content differs, add new
+    ones, remove dropped ones, and prune their References.
 
-Drift is detected from a single stored hash per module — the hash of the file
-as this script generated it. Comparing it to the file on disk reveals local
-edits; comparing it to a fresh in-memory regeneration reveals changes to the
-standard or to this generator.
+A project is "scaffolded" exactly when ``agents.d/coding-standard/`` contains at
+least one ``<module>.md`` for a known module; the directory's presence is the
+mode marker.
 
 Typical use:
 
@@ -45,21 +50,19 @@ Typical use:
         [--update] [--dry-run] [--force]
 
 Order on the command line does not matter; the canonical order is imposed
-internally so override relationships stay correct.
+internally so override relationships stay correct, and prerequisites are added
+automatically (``wordpress`` pulls in ``php``; ``wordpress-block`` pulls in
+``wordpress`` and ``typescript``; ``general`` is always present).
 
 Exit codes:
 
     0   Completed successfully (create, investigate, or update).
     1   Bad arguments, missing module source file, or sanity-check failed.
-    2   create only: a target file already exists and was not overwritten.
-        Stderr names the clashing files.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import re
 import sys
 from pathlib import Path
@@ -85,8 +88,8 @@ CANONICAL_ORDER: list[str] = [
 #   read_when  — completes "Read before writing or changing <read_when>." in
 #                both the file header and the AGENTS.md References line.
 #   requires   — modules that must be read first because this one overrides or
-#                builds on them; drives the prerequisite header. Empty for
-#                standalone modules.
+#                builds on them; drives the prerequisite header and the
+#                prerequisite closure. Empty for standalone modules.
 MODULE_META: dict[str, dict[str, object]] = {
     "general": {"label": "General", "read_when": "any code", "requires": []},
     "php": {"label": "PHP", "read_when": "PHP", "requires": []},
@@ -108,6 +111,13 @@ MODULE_META: dict[str, dict[str, object]] = {
     },
     "python": {"label": "Python", "read_when": "Python", "requires": []},
     "bash": {"label": "Bash", "read_when": "Bash", "requires": []},
+}
+
+# Direct prerequisites per module, derived from MODULE_META so the two never
+# drift. order_modules() closes over this transitively, so requesting
+# `wordpress-block` materialises `wordpress`, `typescript`, and `php` too.
+PREREQUISITES: dict[str, list[str]] = {
+    name: list(meta["requires"]) for name, meta in MODULE_META.items()
 }
 
 # Override modules get a verbatim prerequisite sentence in their header — the
@@ -137,13 +147,11 @@ PRECEDENCE_LINE: str = (
 # writing into it. Generous — any one is enough.
 PROJECT_MARKERS: list[str] = [".git", "composer.json", "package.json"]
 
-# Where the standard is materialised inside a project, and the bookkeeping file
-# beside it. The directory is the namespace, so the module files drop the
-# `coding-` prefix; the manifest is private state, never referenced from
-# AGENTS.md, so no agent ever loads it.
+# Where the standard is materialised inside a project. The directory is the
+# namespace, so the module files drop the `coding-` prefix. Its presence (with
+# at least one module file) is also how the script tells a scaffolded project
+# from a fresh one.
 OUTPUT_SUBDIR: str = "agents.d/coding-standard"
-MANIFEST_NAME: str = "manifest.json"
-MANIFEST_VERSION: int = 1
 
 # Fail loudly if the maps drift from CANONICAL_ORDER — a new module added to
 # CANONICAL_ORDER without MODULE_META (or vice versa) is a bug, not a silent
@@ -164,9 +172,8 @@ REFERENCE_RE = re.compile(r"agents\.d/coding-standard/([a-z0-9-]+)\.md")
 class ScaffoldArgumentParser(argparse.ArgumentParser):
     """ArgumentParser that exits with code 1 on a usage error.
 
-    argparse's default is exit code 2, but this script reserves 2 for "a target
-    file already exists". Mapping usage errors to 1 keeps the bad-arguments case
-    distinct from the exit code alone.
+    argparse's default is exit code 2; mapping usage errors to 1 keeps the
+    bad-arguments case aligned with the script's other error path.
     """
 
     def error(self, message: str) -> NoReturn:
@@ -174,34 +181,18 @@ class ScaffoldArgumentParser(argparse.ArgumentParser):
         self.exit(1, f"{self.prog}: error: {message}\n")
 
 
-def plugin_version() -> str:
-    """Read the plugin's version from its manifest, for the `generatedWith`
-    label. This script lives at ``scripts/``; the plugin root is its parent."""
-
-    path = Path(__file__).resolve().parent.parent / ".claude-plugin" / "plugin.json"
-    try:
-        return str(json.loads(path.read_text(encoding="utf-8")).get("version", "unknown"))
-    except (OSError, json.JSONDecodeError):
-        return "unknown"
-
-
-def sha256_text(text: str) -> str:
-    """Self-describing content hash for the manifest."""
-
-    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
 def references_line(module: str) -> str:
     """Build the AGENTS.md References bullet for a module — a pure pointer.
 
-    Prerequisite and precedence information lives in the module file's own
-    generated header, so the References line carries no co-load note: one home
-    for that knowledge, nothing here to go stale.
+    The module path is backticked so it renders as code and the pointer is
+    unambiguous. Prerequisite and precedence information lives in the module
+    file's own generated header, so the References line carries no co-load
+    note: one home for that knowledge, nothing here to go stale.
     """
 
     read_when = MODULE_META[module]["read_when"]
     return (
-        f"- {OUTPUT_SUBDIR}/{module}.md — read before writing or changing {read_when}"
+        f"- `{OUTPUT_SUBDIR}/{module}.md` — read before writing or changing {read_when}"
     )
 
 
@@ -211,8 +202,8 @@ def build_module_file(module: str, body: str) -> str:
     The generated H1 + read-when line (and, for override modules, the
     prerequisite + precedence lines) sit above the module body. The module's own
     leading heading is dropped so the generated H1 is the sole title. The output
-    is deterministic in (module, body), so its hash is a stable fingerprint of
-    what this generator produces.
+    is deterministic in (module, body), so comparing it to the file on disk is
+    the whole of drift detection.
     """
 
     label = MODULE_META[module]["label"]
@@ -244,8 +235,13 @@ def build_module_file(module: str, body: str) -> str:
 
 
 def order_modules(requested: list[str]) -> list[str]:
-    """Validate requested modules and return them in canonical order, always
-    including `general`. Raises ValueError naming any unknown module."""
+    """Validate requested modules, close over their prerequisites, and return
+    them in canonical order — always including `general`.
+
+    Requesting an override module pulls in everything it builds on: `wordpress`
+    adds `php`; `wordpress-block` adds `wordpress`, `typescript`, and
+    transitively `php`. Raises ValueError naming any unknown module.
+    """
 
     unknown = [m for m in requested if m not in CANONICAL_ORDER]
     if unknown:
@@ -253,8 +249,19 @@ def order_modules(requested: list[str]) -> list[str]:
             f"unknown module(s): {', '.join(unknown)}. "
             f"Known modules: {', '.join(CANONICAL_ORDER)}."
         )
+
+    # Seed with the request plus the always-present general module, then pull in
+    # each module's prerequisites transitively until the set stops growing.
     wanted = set(requested)
     wanted.add("general")
+    queue = list(wanted)
+    while queue:
+        module = queue.pop()
+        for prereq in PREREQUISITES.get(module, []):
+            if prereq not in wanted:
+                wanted.add(prereq)
+                queue.append(prereq)
+
     return [m for m in CANONICAL_ORDER if m in wanted]
 
 
@@ -272,65 +279,15 @@ def read_source_bodies(modules_dir: Path, modules: list[str]) -> dict[str, str]:
     return bodies
 
 
-def manifest_path(project_dir: Path) -> Path:
-    """Path to the project's coding-standard manifest."""
+def scaffolded_modules(project_dir: Path) -> list[str]:
+    """Known module stems already materialised under OUTPUT_SUBDIR, in canonical
+    order. A non-empty result means the project is scaffolded, which selects
+    investigate/update over create."""
 
-    return project_dir / OUTPUT_SUBDIR / MANIFEST_NAME
-
-
-def load_manifest(project_dir: Path) -> dict | None:
-    """Load the manifest, or None when the project has not been scaffolded.
-
-    A present-but-unreadable manifest is treated as absent: the safest fallback
-    is to behave as if nothing was scaffolded rather than act on garbage.
-    """
-
-    path = manifest_path(project_dir)
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def write_manifest(project_dir: Path, modules: dict[str, str]) -> None:
-    """Write the manifest with the current plugin version and module hashes."""
-
-    data = {
-        "manifestVersion": MANIFEST_VERSION,
-        "generatedWith": plugin_version(),
-        "modules": modules,
-    }
-    path = manifest_path(project_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-
-
-def disk_hash(path: Path) -> str | None:
-    """Hash of a materialised module file as it sits on disk, or None when the
-    file is absent."""
-
-    if not path.exists():
-        return None
-    return sha256_text(path.read_text(encoding="utf-8"))
-
-
-def module_status(stored: str, on_disk: str | None, fresh: str) -> str:
-    """Classify a kept module from its three hashes into one of the drift
-    states shown in the investigate report."""
-
-    if on_disk is None:
-        return "missing — would be recreated"
-    edited = on_disk != stored
-    changed = fresh != stored
-    if not edited and not changed:
-        return "up to date"
-    if not edited and changed:
-        return "update available"
-    if edited and not changed:
-        return "locally edited"
-    return "locally edited + update available"
+    out_dir = project_dir / OUTPUT_SUBDIR
+    if not out_dir.exists():
+        return []
+    return [m for m in CANONICAL_ORDER if (out_dir / f"{m}.md").exists()]
 
 
 def sync_references(
@@ -438,44 +395,25 @@ def do_create(
     project_dir: Path,
     modules: list[str],
     bodies: dict[str, str],
-    force: bool,
     dry_run: bool,
 ) -> int:
-    """Create mode: nothing scaffolded yet. Write the modules, manifest, and
-    wiring. Refuse to clobber pre-existing files unless --force."""
+    """Create mode: nothing scaffolded yet. Write the modules and the wiring.
+
+    There is nothing to clobber — a present module file would have selected
+    investigate/update instead — so create simply writes the canonical set.
+    """
 
     out_dir = project_dir / OUTPUT_SUBDIR
-
-    # Refuse to overwrite files we did not record (no manifest means we cannot
-    # tell what is safe to touch). --force overrides.
-    if not force:
-        clashes = [m for m in modules if (out_dir / f"{m}.md").exists()]
-        if clashes:
-            names = ", ".join(f"{OUTPUT_SUBDIR}/{m}.md" for m in clashes)
-            print(
-                f"existing file(s) found with no manifest: {names}\n"
-                "refusing to overwrite. Pass --force, or move them aside.",
-                file=sys.stderr,
-            )
-            return 2
-
     actions: list[str] = []
-    manifest_modules: dict[str, str] = {}
+
     for module in modules:
         content = build_module_file(module, bodies[module])
-        manifest_modules[module] = sha256_text(content)
         if dry_run:
             actions.append(f"[dry-run] would write {OUTPUT_SUBDIR}/{module}.md")
             continue
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / f"{module}.md").write_text(content, encoding="utf-8")
         actions.append(f"wrote {OUTPUT_SUBDIR}/{module}.md")
-
-    if dry_run:
-        actions.append(f"[dry-run] would write {OUTPUT_SUBDIR}/{MANIFEST_NAME}")
-    else:
-        write_manifest(project_dir, manifest_modules)
-        actions.append(f"wrote {OUTPUT_SUBDIR}/{MANIFEST_NAME}")
 
     actions += sync_references(
         project_dir=project_dir, modules=modules, prune=False, dry_run=dry_run
@@ -493,47 +431,38 @@ def do_investigate(
     project_dir: Path,
     modules: list[str],
     bodies: dict[str, str],
-    manifest: dict,
 ) -> int:
-    """Investigate mode: a manifest exists, no --update. Print a read-only drift
-    report and write nothing."""
+    """Investigate mode: already scaffolded, no --update. Print a read-only drift
+    report and write nothing.
+
+    Drift is a plain content diff: for each expected module present on disk,
+    compare it to a fresh regeneration; report which would be added (expected,
+    absent) and which would be removed (a scaffolded module no longer expected).
+    """
 
     out_dir = project_dir / OUTPUT_SUBDIR
-    stored = manifest.get("modules", {})
-    generated_with = manifest.get("generatedWith", "unknown")
-    current = plugin_version()
+    expected = modules
+    present = scaffolded_modules(project_dir)
 
-    today = set(modules)
-    recorded = set(stored)
-    kept = [m for m in CANONICAL_ORDER if m in today and m in recorded]
-    added = [m for m in CANONICAL_ORDER if m in today and m not in recorded]
-    removed = [m for m in CANONICAL_ORDER if m in recorded and m not in today]
+    kept = [m for m in CANONICAL_ORDER if m in expected and m in present]
+    added = [m for m in expected if m not in present]
+    removed = [m for m in present if m not in set(expected)]
 
-    # Classify each kept module from its three hashes.
+    # Compare each kept module's on-disk content to a fresh regeneration.
     statuses: dict[str, str] = {}
     for module in kept:
-        fresh = sha256_text(build_module_file(module, bodies[module]))
-        statuses[module] = module_status(
-            stored[module], disk_hash(out_dir / f"{module}.md"), fresh
-        )
+        fresh = build_module_file(module, bodies[module])
+        on_disk = (out_dir / f"{module}.md").read_text(encoding="utf-8")
+        statuses[module] = "up to date" if on_disk == fresh else "differs (would be updated)"
 
-    edited = [m for m in kept if statuses[m].startswith("locally edited")]
     actionable = added or removed or any(s != "up to date" for s in statuses.values())
 
     # All clear — short and unambiguous.
     if not actionable:
-        print(
-            f"Coding standard — up to date (plugin {current}). "
-            "Project profile unchanged.\n"
-            "Nothing to do."
-        )
+        print("Coding standard — up to date. Nothing to do.")
         return 0
 
-    lines = [
-        f"Coding standard — generated with plugin {generated_with} (current: {current})",
-        "",
-        "Modules:",
-    ]
+    lines = ["Coding standard — investigate (read-only)", "", "Modules:"]
     width = max((len(m) for m in kept), default=0)
     for module in kept:
         lines.append(f"  {module.ljust(width)}  {statuses[module]}")
@@ -541,24 +470,14 @@ def do_investigate(
     if added or removed:
         lines += ["", "Project profile drift:"]
         lines += [
-            f"  + {m}   detected in project, not yet scaffolded (would be added)"
-            for m in added
+            f"  + {m}   expected, not yet scaffolded (would be added)" for m in added
         ]
         lines += [
-            f"  - {m}   scaffolded, no longer detected (would be removed)"
+            f"  − {m}   scaffolded, no longer expected (would be removed)"
             for m in removed
         ]
 
-    lines += ["", "→ Updates available. Run /coding-standard --update to apply."]
-    if edited:
-        verb = "has" if len(edited) == 1 else "have"
-        lines.append(
-            f"  Note: {', '.join(edited)} {verb} local edits — left untouched by --update."
-        )
-        lines.append(
-            "  To replace with the current standard, back up your edits and pass --force."
-        )
-
+    lines += ["", "→ Run /coding-standard --update to reconcile."]
     print("\n".join(lines))
     return 0
 
@@ -568,56 +487,39 @@ def do_update(
     project_dir: Path,
     modules: list[str],
     bodies: dict[str, str],
-    manifest: dict,
-    force: bool,
     dry_run: bool,
 ) -> int:
-    """Update mode: reconcile the project to the current --include. Rewrite
-    changed modules, add new ones, remove dropped ones and prune their
-    References, and leave locally edited files untouched unless --force."""
+    """Update mode: reconcile the project to the current --include. Rewrite every
+    module whose content differs, add new ones, remove dropped ones and prune
+    their References. The plugin owns these files, so there is no local-edit
+    protection — any on-disk difference is reconciled to the canonical content."""
 
     out_dir = project_dir / OUTPUT_SUBDIR
-    stored = manifest.get("modules", {})
+    present = scaffolded_modules(project_dir)
     actions: list[str] = []
-    skipped: list[str] = []
-    new_modules: dict[str, str] = {}
 
     # Reconcile every module the project should have today.
     for module in modules:
         content = build_module_file(module, bodies[module])
-        fresh = sha256_text(content)
         dest = out_dir / f"{module}.md"
+        on_disk = dest.read_text(encoding="utf-8") if dest.exists() else None
 
-        # New module — write it.
-        if module not in stored:
-            new_modules[module] = fresh
-            if dry_run:
-                actions.append(f"[dry-run] would add {OUTPUT_SUBDIR}/{module}.md")
-            else:
-                out_dir.mkdir(parents=True, exist_ok=True)
-                dest.write_text(content, encoding="utf-8")
-                actions.append(f"added {OUTPUT_SUBDIR}/{module}.md")
+        # Unchanged — nothing to do.
+        if on_disk == content:
             continue
 
-        # Kept module — protect local edits, then rewrite only if needed.
-        on_disk = disk_hash(dest)
-        if on_disk is not None and on_disk != stored[module] and not force:
-            new_modules[module] = stored[module]
-            skipped.append(module)
-            continue
-        new_modules[module] = fresh
-        if on_disk == fresh:
-            continue
         if dry_run:
-            actions.append(f"[dry-run] would update {OUTPUT_SUBDIR}/{module}.md")
-        else:
-            out_dir.mkdir(parents=True, exist_ok=True)
-            dest.write_text(content, encoding="utf-8")
-            verb = "recreated" if on_disk is None else "updated"
-            actions.append(f"{verb} {OUTPUT_SUBDIR}/{module}.md")
+            verb = "add" if on_disk is None else "update"
+            actions.append(f"[dry-run] would {verb} {OUTPUT_SUBDIR}/{module}.md")
+            continue
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+        actions.append(
+            f"{'added' if on_disk is None else 'updated'} {OUTPUT_SUBDIR}/{module}.md"
+        )
 
     # Remove modules dropped from the profile.
-    for module in [m for m in stored if m not in set(modules)]:
+    for module in [m for m in present if m not in set(modules)]:
         dest = out_dir / f"{module}.md"
         if dry_run:
             actions.append(f"[dry-run] would remove {OUTPUT_SUBDIR}/{module}.md")
@@ -626,31 +528,18 @@ def do_update(
             dest.unlink()
         actions.append(f"removed {OUTPUT_SUBDIR}/{module}.md")
 
-    # Rewrite the manifest unless nothing about the module set or its hashes
-    # changed (skipped files keep their old hash, so an all-skip run is a no-op).
-    if dry_run:
-        actions.append(f"[dry-run] would update {OUTPUT_SUBDIR}/{MANIFEST_NAME}")
-    elif new_modules != stored:
-        write_manifest(project_dir, new_modules)
-        actions.append(f"updated {OUTPUT_SUBDIR}/{MANIFEST_NAME}")
-
     actions += sync_references(
         project_dir=project_dir, modules=modules, prune=True, dry_run=dry_run
     )
     actions += ensure_bridge(project_dir=project_dir, dry_run=dry_run)
 
-    if not actions and not skipped:
+    if not actions:
         print("coding standard already up to date — nothing to do.")
         return 0
 
     print("updated coding standard:")
     for action in actions:
         print(f"  - {action}")
-    if skipped:
-        print(
-            f"  - left untouched (local edits): {', '.join(skipped)} "
-            "— pass --force to overwrite"
-        )
     return 0
 
 
@@ -674,7 +563,7 @@ def main() -> int:
         required=True,
         help=(
             "Comma-separated module names (e.g. 'php,wordpress,typescript'). "
-            "'general' is always included."
+            "'general' and any prerequisites are always included."
         ),
     )
     parser.add_argument(
@@ -690,7 +579,7 @@ def main() -> int:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Override safety refusals (sanity check; overwrite locally edited files).",
+        help="Override the project-root sanity check (write into a directory with no project marker).",
     )
     args = parser.parse_args()
 
@@ -717,14 +606,12 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    # Mode selection: the manifest is the marker of a scaffolded project.
-    manifest = load_manifest(project_dir)
-    if manifest is None:
+    # Mode selection: a scaffolded agents.d/coding-standard/ is the marker.
+    if not scaffolded_modules(project_dir):
         return do_create(
             project_dir=project_dir,
             modules=modules,
             bodies=bodies,
-            force=args.force,
             dry_run=args.dry_run,
         )
     if not args.update:
@@ -732,14 +619,11 @@ def main() -> int:
             project_dir=project_dir,
             modules=modules,
             bodies=bodies,
-            manifest=manifest,
         )
     return do_update(
         project_dir=project_dir,
         modules=modules,
         bodies=bodies,
-        manifest=manifest,
-        force=args.force,
         dry_run=args.dry_run,
     )
 

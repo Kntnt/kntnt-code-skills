@@ -21,7 +21,7 @@
  *   {
  *     waves:   number[][],                       // dispatch order; one wave runs concurrently
  *     issues:  { number, title, blocked_by }[],  // from orchestrate.py plan
- *     standardsPath?: string,                    // coding standard the agents read as a file
+ *     standardsPath?: string,                    // coding-standard directory the agents read
  *     maxFixRounds?: number,                     // fix<->verify cap per issue (default 2)
  *     merge?:  boolean,                          // integrate to the default branch, else open PRs
  *     budgetFloor?: number,                      // stop opening waves below this many tokens left
@@ -140,7 +140,13 @@ export const planIsEmpty = (config) => !Array.isArray(config.waves) || config.wa
 const config = normalizeArgs(args)
 const issuesByNumber = new Map((config.issues || []).map((issue) => [issue.number, issue]))
 const maxFixRounds = config.maxFixRounds ?? 2
-const standardsPath = config.standardsPath || 'docs/coding-standards.md'
+const standardsPath = config.standardsPath || 'agents.d/coding-standard/'
+
+// How every sub-agent is told to reach the coding standard: a directory of
+// on-demand modules, not a single file. Each agent reads general.md plus the
+// module(s) for the language or framework it actually touches.
+const standardInstruction =
+  `the coding standard in \`${standardsPath}\` — read \`general.md\` plus the module(s) for the language or framework you touch`
 const merge = config.merge === true
 const budgetFloor = config.budgetFloor ?? 60000
 
@@ -184,7 +190,7 @@ const implement = (number) =>
   agent(
     `Implement GitHub issue #${number} ("${titleOf(number)}") test-first.\n` +
       `Read its contract first: run \`gh issue view ${number} --comments\` and treat the "Agent Brief" comment as authoritative; the issue body and acceptance criteria are context.\n` +
-      `Read and obey the coding standard at ${standardsPath}.\n` +
+      `Read and obey ${standardInstruction}.\n` +
       `Work on a fresh branch off the current integration base. Demonstrate the red — a failing-test commit — before the green, because a test never seen to fail is of unknown value. Refactor only once green.\n` +
       `Automate everything meaningfully automatable, then run the project's full gate suite (discover it from the project) and report the REAL result.\n` +
       `Resolve genuine ambiguity by the most reasonable assumption and record it; never pause to ask. The one exception is work that cannot proceed without contradicting a settled decision (an ADR or design doc): set status "blocked", record the blocker, and stop only this issue.`,
@@ -195,7 +201,7 @@ const implement = (number) =>
 // re-runs the gates and returns a fresh implement record.
 const fix = (number, impl, findings) =>
   agent(
-    `Fix issue #${number} ("${titleOf(number)}") on branch ${impl.branch}. Address ONLY these verified findings, keep the tests green, and obey ${standardsPath}:\n` +
+    `Fix issue #${number} ("${titleOf(number)}") on branch ${impl.branch}. Address ONLY these verified findings, keep the tests green, and obey ${standardInstruction}:\n` +
       findings.map((finding) => `- ${finding.title}: ${finding.detail}`).join('\n') +
       `\nThen re-run the full gate suite and report the real result.`,
     { label: `fix:#${number}`, phase: 'Implement', schema: IMPLEMENT_SCHEMA },
@@ -214,7 +220,7 @@ const verify = async (number, impl) => {
 
       return agent(
         `Adversarially review branch ${impl.branch} for issue #${number} ("${titleOf(number)}") through ONE lens: ${brief}.\n` +
-          `You did NOT write this code. Read the issue's Agent Brief (\`gh issue view ${number} --comments\`) and the standard at ${standardsPath}.\n` +
+          `You did NOT write this code. Read the issue's Agent Brief (\`gh issue view ${number} --comments\`) and ${standardInstruction}.\n` +
           `Check ONLY what the gates cannot — do not re-check lint, build, or tests that already passed. Default to clear=false if you find anything real, and be specific.`,
         opts,
       )

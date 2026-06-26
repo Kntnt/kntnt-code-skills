@@ -30,7 +30,7 @@ machine, so even a bare-word trigger only ever reaches a plan and waits.
 The plugin root holds the shared pieces this skill uses. This skill lives
 at `skills/release/`; the plugin root is two levels up (also available as
 `${CLAUDE_PLUGIN_ROOT}`). Reach them there: the shared procedure
-`lib/changelog.md`, the baseline `lib/gitignore-base.txt`, and the helper
+`lib/changelog.md`, the baseline `lib/gitignore/base.txt`, and the helper
 `scripts/release.py` (run with `uv run`).
 
 ## Arguments
@@ -154,7 +154,7 @@ branch's HEAD.
   `<repo>.zip` (rename if the build emits another name — this keeps a README
   link to the latest release's archive stable).
 - **`.gitignore`**: if the project has none, plan to add one (baseline from
-  `lib/gitignore-base.txt` + stack-specific entries) — `git add -A` in
+  `lib/gitignore/base.txt` + stack-specific entries) — `git add -A` in
   step 8 stages everything. Never touch an existing `.gitignore`.
 
 ### 7. Confirmation gate (single)
@@ -213,5 +213,5 @@ rather than redoing finished work:
 
 - `lib/changelog.md` — shared changelog-reconciliation procedure (also used
   by `push`).
-- `lib/gitignore-base.txt` — universal `.gitignore` baseline.
+- `lib/gitignore/base.txt` — universal `.gitignore` baseline.
 - `scripts/release.py` — `promote` (CHANGELOG surgery + body) and `extract`.

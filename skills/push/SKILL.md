@@ -19,7 +19,7 @@ Save the current project's work: bring the changelog up to date with what has ac
 
 This is an outward-facing operation (it pushes). It is `release`'s sibling and shares the same triggering rule: trigger on `/push` or an obviously-push request in any language; **when in doubt, ask** whether the push workflow is intended before doing anything. If the invocation was a bare "push" and it might just mean a raw `git push` with no changelog work, confirm intent first.
 
-The plugin root holds the shared pieces this skill uses. This skill lives at `skills/push/`; the plugin root is two levels up (also available as `${CLAUDE_PLUGIN_ROOT}`). Reach them there: `lib/changelog.md`, `lib/gitignore-base.txt`.
+The plugin root holds the shared pieces this skill uses. This skill lives at `skills/push/`; the plugin root is two levels up (also available as `${CLAUDE_PLUGIN_ROOT}`). Reach them there: `lib/changelog.md`, `lib/gitignore/base.txt`.
 
 ## Arguments
 
@@ -34,7 +34,7 @@ Load `lib/changelog.md` from the plugin root and follow it exactly. It reconcile
 
 ### 2. Ensure a `.gitignore` exists
 
-Because step 4 stages everything, a missing `.gitignore` risks committing junk. If the project has **no** `.gitignore`, propose one before staging: start from `lib/gitignore-base.txt` (the universal baseline — OS, editor, env, Claude-local) and add entries appropriate to the detected stack (e.g. `node_modules/` for Node/Bun, `/vendor/` for Composer, `__pycache__/` for Python, `/build/` and `/dist/` for build output). Show it, and write it only on confirmation. Never modify an existing `.gitignore`.
+Because step 4 stages everything, a missing `.gitignore` risks committing junk. If the project has **no** `.gitignore`, propose one before staging: start from `lib/gitignore/base.txt` (the universal baseline — OS, editor, env, Claude-local) and add entries appropriate to the detected stack (e.g. `node_modules/` for Node/Bun, `/vendor/` for Composer, `__pycache__/` for Python, `/build/` and `/dist/` for build output). Show it, and write it only on confirmation. Never modify an existing `.gitignore`.
 
 ### 3. Confirm (single gate)
 
@@ -64,4 +64,4 @@ No version bump, no tag, no platform release, no merge/rebase to main. The momen
 ## Files this skill uses
 
 - `lib/changelog.md` — shared changelog-reconciliation procedure (also used by `release`).
-- `lib/gitignore-base.txt` — universal `.gitignore` baseline.
+- `lib/gitignore/base.txt` — universal `.gitignore` baseline.

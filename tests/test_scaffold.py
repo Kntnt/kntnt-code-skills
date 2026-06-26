@@ -2,9 +2,11 @@
 
 The engine is a single-file `uv run` script under scripts/, not an installed
 package, so it is loaded by path. The tests cover the three modes (create,
-investigate, update), the four drift states, the hand-edit guard, the
-conservative References reconcile, and the sanity/error paths — the logic the
-script exists to make reliable.
+investigate, update) chosen by directory presence, the content-diff drift
+report, the reconcile update (overwrite / add / remove + prune), prerequisite
+closure, backticked References, and the sanity/error paths — the logic the
+script exists to make reliable. The plugin owns the scaffolded files, so there
+is no manifest and no local-edit protection to test.
 
 Run with: `uv run --with pytest pytest -q`
 """
@@ -12,7 +14,6 @@ Run with: `uv run --with pytest pytest -q`
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 from pathlib import Path
 
@@ -69,38 +70,59 @@ def run(monkeypatch, project_dir: Path, modules_dir: Path, include: str, *flags:
     return scaffold.main()
 
 
-def read_manifest(project_dir: Path) -> dict:
-    return json.loads(scaffold.manifest_path(project_dir).read_text(encoding="utf-8"))
-
-
 def out_file(project_dir: Path, module: str) -> Path:
     return project_dir / scaffold.OUTPUT_SUBDIR / f"{module}.md"
+
+
+# --- order_modules / prerequisite closure -------------------------------------
+
+
+def test_order_modules_always_includes_general():
+    assert scaffold.order_modules(["php"]) == ["general", "php"]
+
+
+def test_order_modules_closes_wordpress_over_php():
+    assert scaffold.order_modules(["wordpress"]) == ["general", "php", "wordpress"]
+
+
+def test_order_modules_closes_block_transitively():
+    # wordpress-block pulls in wordpress + typescript, and wordpress pulls in php.
+    assert scaffold.order_modules(["wordpress-block"]) == [
+        "general",
+        "php",
+        "wordpress",
+        "typescript",
+        "wordpress-block",
+    ]
+
+
+def test_order_modules_is_canonical_regardless_of_request_order():
+    assert scaffold.order_modules(["bash", "php"]) == ["general", "php", "bash"]
+
+
+def test_order_modules_rejects_unknown():
+    with pytest.raises(ValueError):
+        scaffold.order_modules(["bogus"])
 
 
 # --- create -------------------------------------------------------------------
 
 
-def test_create_writes_modules_manifest_and_wiring(monkeypatch, project_dir, modules_dir):
+def test_create_writes_modules_and_wiring_without_manifest(monkeypatch, project_dir, modules_dir):
     assert run(monkeypatch, project_dir, modules_dir, "php,wordpress") == 0
 
-    # general is always included; the requested modules are present.
+    # general is always included; the closure adds php under wordpress.
     for module in ("general", "php", "wordpress"):
         assert out_file(project_dir, module).exists()
-    # typescript was not requested.
+    # typescript was not requested or pulled in.
     assert not out_file(project_dir, "typescript").exists()
 
-    # Manifest records each module's output hash.
-    manifest = read_manifest(project_dir)
-    assert manifest["manifestVersion"] == scaffold.MANIFEST_VERSION
-    assert set(manifest["modules"]) == {"general", "php", "wordpress"}
-    expected = scaffold.sha256_text(
-        scaffold.build_module_file("php", (modules_dir / "php.md").read_text())
-    )
-    assert manifest["modules"]["php"] == expected
+    # No private bookkeeping is written — the plugin owns the files verbatim.
+    assert not (project_dir / scaffold.OUTPUT_SUBDIR / "manifest.json").exists()
 
-    # AGENTS.md points at each module; CLAUDE.md bridges.
+    # AGENTS.md points at each module with a backticked path; CLAUDE.md bridges.
     agents = (project_dir / "AGENTS.md").read_text()
-    assert "agents.d/coding-standard/php.md" in agents
+    assert "`agents.d/coding-standard/php.md`" in agents
     assert (project_dir / "CLAUDE.md").read_text().startswith("@AGENTS.md")
 
 
@@ -111,21 +133,33 @@ def test_create_emits_override_header_for_wordpress(monkeypatch, project_dir, mo
     assert scaffold.PRECEDENCE_LINE in body
 
 
-def test_create_references_are_in_canonical_order(monkeypatch, project_dir, modules_dir):
+def test_create_references_are_backticked_and_in_canonical_order(monkeypatch, project_dir, modules_dir):
     run(monkeypatch, project_dir, modules_dir, "wordpress,php")
     agents = (project_dir / "AGENTS.md").read_text()
+    for module in ("general", "php", "wordpress"):
+        assert f"`agents.d/coding-standard/{module}.md`" in agents
     order = [agents.index(f"agents.d/coding-standard/{m}.md") for m in ("general", "php", "wordpress")]
     assert order == sorted(order)
 
 
-def test_create_refuses_to_clobber_without_force(monkeypatch, project_dir, modules_dir):
-    target = out_file(project_dir, "php")
-    target.parent.mkdir(parents=True)
-    target.write_text("hand-made\n", encoding="utf-8")
-    assert run(monkeypatch, project_dir, modules_dir, "php") == 2
-    assert target.read_text() == "hand-made\n"
-    assert run(monkeypatch, project_dir, modules_dir, "php", "--force") == 0
-    assert target.read_text() != "hand-made\n"
+def test_create_content_matches_build_module_file(monkeypatch, project_dir, modules_dir):
+    run(monkeypatch, project_dir, modules_dir, "php")
+    expected = scaffold.build_module_file("php", (modules_dir / "php.md").read_text())
+    assert out_file(project_dir, "php").read_text() == expected
+
+
+# --- mode detection -----------------------------------------------------------
+
+
+def test_presence_of_a_module_file_selects_investigate(monkeypatch, project_dir, modules_dir, capsys):
+    # First run creates; a module file now exists, so a bare re-run investigates.
+    run(monkeypatch, project_dir, modules_dir, "php")
+    capsys.readouterr()
+    assert run(monkeypatch, project_dir, modules_dir, "php") == 0
+    out = capsys.readouterr().out
+    assert "investigate" in out.lower() or "up to date" in out.lower()
+    # Investigate must not be a create — no "created" banner.
+    assert "created coding standard" not in out
 
 
 # --- investigate --------------------------------------------------------------
@@ -136,44 +170,35 @@ def test_investigate_reports_up_to_date_and_writes_nothing(
 ):
     run(monkeypatch, project_dir, modules_dir, "php")
     capsys.readouterr()
-    before = scaffold.manifest_path(project_dir).read_text()
+    before = out_file(project_dir, "php").read_text()
 
     assert run(monkeypatch, project_dir, modules_dir, "php") == 0
     out = capsys.readouterr().out
+    assert "up to date" in out
     assert "Nothing to do" in out
-    assert scaffold.manifest_path(project_dir).read_text() == before
+    assert out_file(project_dir, "php").read_text() == before
 
 
-def test_investigate_flags_update_available(monkeypatch, project_dir, modules_dir, capsys):
+def test_investigate_flags_content_diff(monkeypatch, project_dir, modules_dir, capsys):
     run(monkeypatch, project_dir, modules_dir, "php")
     capsys.readouterr()
+    # Editing the source so a fresh regeneration differs from the on-disk file.
     (modules_dir / "php.md").write_text("# php\n\nNew rules.\n", encoding="utf-8")
 
     run(monkeypatch, project_dir, modules_dir, "php")
     out = capsys.readouterr().out
-    assert "update available" in out
+    assert "differs (would be updated)" in out
 
 
-def test_investigate_flags_local_edit(monkeypatch, project_dir, modules_dir, capsys):
+def test_investigate_flags_on_disk_edit_as_differs(monkeypatch, project_dir, modules_dir, capsys):
     run(monkeypatch, project_dir, modules_dir, "php")
     capsys.readouterr()
-    out_file(project_dir, "php").write_text("edited by hand\n", encoding="utf-8")
+    # Editing the scaffolded file also shows as a difference from the canonical.
+    out_file(project_dir, "php").write_text("hand-edited\n", encoding="utf-8")
 
     run(monkeypatch, project_dir, modules_dir, "php")
     out = capsys.readouterr().out
-    assert "locally edited" in out
-    assert "--force" in out
-
-
-def test_investigate_flags_local_edit_and_update(monkeypatch, project_dir, modules_dir, capsys):
-    run(monkeypatch, project_dir, modules_dir, "php")
-    capsys.readouterr()
-    out_file(project_dir, "php").write_text("edited by hand\n", encoding="utf-8")
-    (modules_dir / "php.md").write_text("# php\n\nNew rules.\n", encoding="utf-8")
-
-    run(monkeypatch, project_dir, modules_dir, "php")
-    out = capsys.readouterr().out
-    assert "locally edited + update available" in out
+    assert "differs (would be updated)" in out
 
 
 def test_investigate_reports_project_drift(monkeypatch, project_dir, modules_dir, capsys):
@@ -184,7 +209,17 @@ def test_investigate_reports_project_drift(monkeypatch, project_dir, modules_dir
     run(monkeypatch, project_dir, modules_dir, "php,bash")
     out = capsys.readouterr().out
     assert "+ bash" in out
-    assert "- python" in out
+    assert "− python" in out
+
+
+def test_investigate_writes_nothing(monkeypatch, project_dir, modules_dir, capsys):
+    run(monkeypatch, project_dir, modules_dir, "php")
+    (modules_dir / "php.md").write_text("# php\n\nNew rules.\n", encoding="utf-8")
+    capsys.readouterr()
+    before = out_file(project_dir, "php").read_text()
+
+    run(monkeypatch, project_dir, modules_dir, "php")
+    assert out_file(project_dir, "php").read_text() == before
 
 
 # --- update -------------------------------------------------------------------
@@ -195,8 +230,7 @@ def test_update_adds_new_module(monkeypatch, project_dir, modules_dir):
     assert run(monkeypatch, project_dir, modules_dir, "php,python", "--update") == 0
 
     assert out_file(project_dir, "python").exists()
-    assert "python" in read_manifest(project_dir)["modules"]
-    assert "agents.d/coding-standard/python.md" in (project_dir / "AGENTS.md").read_text()
+    assert "`agents.d/coding-standard/python.md`" in (project_dir / "AGENTS.md").read_text()
 
 
 def test_update_removes_dropped_module_and_prunes_reference(monkeypatch, project_dir, modules_dir):
@@ -204,36 +238,25 @@ def test_update_removes_dropped_module_and_prunes_reference(monkeypatch, project
     assert run(monkeypatch, project_dir, modules_dir, "php", "--update") == 0
 
     assert not out_file(project_dir, "python").exists()
-    assert "python" not in read_manifest(project_dir)["modules"]
     assert "agents.d/coding-standard/python.md" not in (project_dir / "AGENTS.md").read_text()
 
 
 def test_update_rewrites_changed_module(monkeypatch, project_dir, modules_dir):
     run(monkeypatch, project_dir, modules_dir, "php")
-    before = read_manifest(project_dir)["modules"]["php"]
     (modules_dir / "php.md").write_text("# php\n\nNew rules.\n", encoding="utf-8")
 
     run(monkeypatch, project_dir, modules_dir, "php", "--update")
     assert "New rules." in out_file(project_dir, "php").read_text()
-    assert read_manifest(project_dir)["modules"]["php"] != before
 
 
-def test_update_protects_local_edits_then_force_overwrites(
-    monkeypatch, project_dir, modules_dir, capsys
-):
+def test_update_overwrites_on_disk_edit_no_protection(monkeypatch, project_dir, modules_dir):
     run(monkeypatch, project_dir, modules_dir, "php")
     out_file(project_dir, "php").write_text("my edits\n", encoding="utf-8")
-    (modules_dir / "php.md").write_text("# php\n\nNew rules.\n", encoding="utf-8")
-    capsys.readouterr()
 
-    # Without --force: the edited file is left untouched and reported.
+    # The plugin owns the file: an edit is simply reconciled, no --force needed.
     run(monkeypatch, project_dir, modules_dir, "php", "--update")
-    assert out_file(project_dir, "php").read_text() == "my edits\n"
-    assert "left untouched" in capsys.readouterr().out
-
-    # With --force: it is overwritten with the current standard.
-    run(monkeypatch, project_dir, modules_dir, "php", "--update", "--force")
-    assert "New rules." in out_file(project_dir, "php").read_text()
+    expected = scaffold.build_module_file("php", (modules_dir / "php.md").read_text())
+    assert out_file(project_dir, "php").read_text() == expected
 
 
 def test_update_preserves_user_prose_in_agents_md(monkeypatch, project_dir, modules_dir):
@@ -244,17 +267,17 @@ def test_update_preserves_user_prose_in_agents_md(monkeypatch, project_dir, modu
     run(monkeypatch, project_dir, modules_dir, "php,python", "--update")
     text = agents_md.read_text()
     assert "Hand-written prose." in text
-    assert "agents.d/coding-standard/python.md" in text
+    assert "`agents.d/coding-standard/python.md`" in text
 
 
 def test_update_with_no_changes_is_a_noop(monkeypatch, project_dir, modules_dir, capsys):
     run(monkeypatch, project_dir, modules_dir, "php")
-    before = scaffold.manifest_path(project_dir).read_text()
+    before = out_file(project_dir, "php").read_text()
     capsys.readouterr()
 
     assert run(monkeypatch, project_dir, modules_dir, "php", "--update") == 0
     assert "nothing to do" in capsys.readouterr().out.lower()
-    assert scaffold.manifest_path(project_dir).read_text() == before
+    assert out_file(project_dir, "php").read_text() == before
 
 
 # --- sanity and errors --------------------------------------------------------

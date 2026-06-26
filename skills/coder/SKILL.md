@@ -30,15 +30,15 @@ A skill trigger loads only this file. Before reaching for anything in the plugin
 
 ### 1. First: is the standard already in the project?
 
-Check for `agents.d/coding-standard/manifest.json` in the project root. When it exists, the project has scaffolded its own copy of the standard — one on-demand `<module>.md` per axis, each wired into `AGENTS.md` as a `## References` pointer the agent already follows on its own the moment it sets out to write or change that kind of code. That snapshot is authoritative by design: the project keeps it until someone explicitly runs `/coding-standard --update`, precisely so the standard cannot shift under the project silently.
+Check for `agents.d/coding-standard/` carrying module files in the project root — one or more `<module>.md` (or, equivalently, an `AGENTS.md` whose `## References` point into that directory). When it is there, the project has scaffolded its own copy of the standard — one on-demand `<module>.md` per axis, each wired into `AGENTS.md` as a `## References` pointer the agent already follows on its own the moment it sets out to write or change that kind of code. That snapshot is authoritative by design: the project keeps it until someone explicitly runs `/coding-standard --update`, precisely so the standard cannot shift under the project silently.
 
-So when the manifest is present:
+So when the project carries its own scaffolded standard:
 
 - **Load nothing from the plugin** — not the router, not a single module. The project's own References pull in exactly the modules a task needs, on demand, through the normal `AGENTS.md` mechanism. Loading the plugin's `lib/` copies on top would both double the context and risk applying newer rules than the project's deliberate snapshot. Skip straight to step 4.
-- **Do not gate on freshness.** The snapshot is intentional even when the plugin has moved on, so apply it as-is. As a one-line courtesy you may compare the manifest's `generatedWith` field to the current plugin version and mention `/coding-standard --update` if they differ — but never act on that, and never let it change which rules you apply.
-- **One exception — an axis the snapshot does not cover.** If a language or framework surfaces that the manifest's `modules` does not list (added to the project since it was scaffolded), there is no snapshot to honour for it: fall back to the lazy path below for that one axis — load just its `lib/` module — and note that `/coding-standard --update` would fold it into the project's own files.
+- **Do not gate on freshness.** The snapshot is intentional even when the plugin has moved on, so apply it as-is. The project's files are the contract; never reach back into the plugin's `lib/` to "check" or "refresh" them, and never let the plugin's version change which rules you apply.
+- **One exception — an axis the scaffold does not cover.** If a language or framework surfaces that the project's `agents.d/coding-standard/` does not have a module for (added to the project since it was scaffolded), there is no snapshot to honour for it: fall back to the lazy path below for that one axis — load just its `lib/` module — and note that `/coding-standard --update` would fold it into the project's own files.
 
-When the manifest is absent, the project has no scaffolded standard; fall through to the lazy bootstrap.
+When `agents.d/coding-standard/` is absent (or empty of module files), the project has no scaffolded standard; fall through to the lazy bootstrap.
 
 ### 2. Load the router
 

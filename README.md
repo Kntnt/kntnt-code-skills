@@ -1,13 +1,15 @@
 # kntnt-code-skills
 
-`kntnt-code-skills` is a plugin for Claude Code and Cowork – a growing toolbox of generally useful tools for working with code, meant to take the routine and friction out of a developer's day. Today it holds three things: **Kntnt's coding standard**, a set of rules across PHP, JavaScript, TypeScript, Python, Bash, WordPress, Gutenberg blocks, Laravel, Svelte, SvelteKit and any framework added later – applied automatically to any code task by the `coder` skill, and materialised into a project as files by the `/coding-standard` skill; a **release workflow** – `/release` and `/push` – that automates the bump-commit-tag-push-release cycle for any project; and an **issue-to-code orchestrator** – `/orchestrate` – that turns a project's open issues into implemented, independently verified, integrated code through a fleet of sub-agents. More tools will join them as common developer chores prove worth packaging.
+`kntnt-code-skills` is a plugin for Claude Code and Cowork – a growing toolbox of generally useful tools for working with code, meant to take the routine and friction out of a developer's day. Today it holds: **Kntnt's coding standard**, a set of rules across PHP, JavaScript, TypeScript, Python, Bash, WordPress, Gutenberg blocks, Laravel, Svelte, SvelteKit and any framework added later – applied automatically to any code task by the `coder` skill, and materialised into a project as files by the `/coding-standard` skill; a **project initialiser and reconciler** – `/init` brings a new project up to the Kntnt baseline (git, AGENTS.md skeleton, coding standard, licence, README/CHANGELOG/CONTRIBUTING, `.gitignore`), and `/doctor` re-checks an existing project against that baseline and proposes the fixes; a **release workflow** – `/release` and `/push` – that automates the bump-commit-tag-push-release cycle for any project; and an **issue-to-code orchestrator** – `/orchestrate` – that turns a project's open issues into implemented, independently verified, integrated code through a fleet of sub-agents. More tools will join them as common developer chores prove worth packaging.
 
 ## What you get
 
-The plugin exposes two coding-standard skills, two release-workflow skills, an orchestration skill and one command:
+The plugin exposes two coding-standard skills, two project-lifecycle skills, two release-workflow skills, an orchestration skill and one command:
 
 - **`coder`** – applies the coding standard. It auto-triggers on code-related prompts (in any language) and loads as a lazy bootstrap: at trigger it reads only the standard's router, then pulls in each topic module the moment the working context proves a language or framework axis applies – never the whole standard up front – and keeps pulling more as new axes surface through the session. When a project has already scaffolded the standard into `agents.d/coding-standard/` (via `/coding-standard`), it loads nothing from the plugin at all and defers to the project's own on-demand `AGENTS.md` References – the deliberate snapshot – which the harness already follows on its own. It writes code to those rules and is read-only on the project: it never writes the standard into the project as files.
 - **`/coding-standard`** – materialises the standard into a project as files under `agents.d/coding-standard/` and keeps them in sync. Explicitly invoked only: it creates the files on a fresh project, reports how they have drifted on an already-scaffolded one and reconciles them on `--update` (see *The coding standard* below).
+- **`/init`** – bootstraps a new project to the Kntnt baseline in one pass: `git init`, the `AGENTS.md`/`CLAUDE.md` skeleton, the coding standard scaffolded into `agents.d/coding-standard/`, a licence fetched by SPDX id, the README/CHANGELOG/CONTRIBUTING (and NOTICE under Apache) from generic templates, and a stack-aware `.gitignore` – then, optionally, the first commit and the GitHub repository. Explicitly invoked only.
+- **`/doctor`** – init's idempotent reconciler: it re-checks an existing project against that same baseline and proposes the fixes. Cheap deterministic checks (git state, `.gitignore` coverage, the coding standard's home and sync, the licence/NOTICE pairing) run in `scripts/doctor.py`; a read-only Workflow checks whether `AGENTS.md`, the `agents.d/` files and the README still match the real code. It applies only the fixes you pick (`--yes` applies all) and never commits.
 - **`/release`** – the full release workflow on whatever project you invoke it in: reconcile the changelog with the real changes since the last release, bump the version per Semantic Versioning across every place it lives, integrate a feature branch into the main branch, commit, tag `vX.Y.Z`, push and publish the platform release. Every irreversible step waits behind a single confirmation.
 - **`/push`** – the routine companion: reconcile the changelog, commit and push the current branch – no bump, tag or release. Run it often so the changelog never falls behind.
 - **`/orchestrate`** – an away-from-keyboard build that turns a project's open issues into finished code: it plans from the issues' dependency graph, dispatches one implementer sub-agent per issue (test-first), runs fresh independent sub-agents that adversarially verify what the gates cannot, integrates in dependency order and ends with one consolidated report. It stops short of releasing.
@@ -43,9 +45,9 @@ It covers:
 
 A project can sit on several axes at once – a WordPress block plugin is PHP + WordPress + TypeScript + Gutenberg – and the skill pulls each module in as its axis surfaces rather than all at once: PHP code that turns out to be WordPress draws in the WordPress module then; a block draws in the Gutenberg and TypeScript modules when the block's UI appears. How the precedence and override relationships work, and how to extend the standard with a new language or framework, is in *How the coding standard is organised* below.
 
-**Materialising into a project (`/coding-standard`).** `coder` itself writes no files into a project. To put the standard into a project as files, invoke the `/coding-standard` skill explicitly. It writes the relevant rules into `agents.d/coding-standard/<module>.md` (one on-demand file per module), records a private `manifest.json` beside them, wires a `## References` pointer to each into `AGENTS.md` and bridges `CLAUDE.md` to it via `@AGENTS.md`. The standard is then loaded on demand – an agent reads only the modules a task needs, the moment it sets out to write or change code – rather than paid for on every session.
+**Materialising into a project (`/coding-standard`).** `coder` itself writes no files into a project. To put the standard into a project as files, invoke the `/coding-standard` skill explicitly. It writes the relevant rules into `agents.d/coding-standard/<module>.md` (one on-demand file per module, with prerequisites pulled in automatically), wires a backticked `## References` pointer to each into `AGENTS.md` and bridges `CLAUDE.md` to it via `@AGENTS.md`. The standard is then loaded on demand – an agent reads only the modules a task needs, the moment it sets out to write or change code – rather than paid for on every session.
 
-Run `/coding-standard` again later and it does not blindly overwrite: on an already-scaffolded project it **investigates** instead, printing a read-only drift report – which modules the standard has updates for, which you have edited locally and which languages have been added to or dropped from the project since. Run `/coding-standard --update` to apply: it reconciles the files to the project's current profile and leaves any locally edited file untouched unless you pass `--force`. The `manifest.json` is what makes that drift detection possible; it is never referenced from `AGENTS.md`, so no agent ever loads it. To run the engine by hand, see *Advanced usage*.
+The plugin **owns** these scaffolded files: they are canonical and verbatim, regenerated from the standard's source whenever you update – not a starting point to hand-edit. A project's own deviations from the standard belong in `AGENTS.md` prose, not in edits to a module file. So there is no private bookkeeping file and no "locally edited" state. Run `/coding-standard` again later and it does not blindly overwrite: on an already-scaffolded project it **investigates** instead, printing a read-only drift report – which modules differ from a fresh regeneration, and which languages have been added to or dropped from the project since. Run `/coding-standard --update` to apply: it reconciles every difference to the canonical content, adds new modules, removes dropped ones and prunes their References. The presence of the module files is itself the marker of a scaffolded project. To run the engine by hand, see *Advanced usage*.
 
 ## Releasing (`/release` and `/push`)
 
@@ -69,8 +71,8 @@ The control flow runs through the **Workflow tool** (engine: `skills/orchestrate
 ## Requirements
 
 - **Claude Code or Cowork** with support for skills and YAML frontmatter.
-- **[uv](https://docs.astral.sh/uv/)** – runs the bundled Python scripts (`scripts/scaffold.py`, `scripts/audit.py`, `scripts/help.py`, `scripts/orchestrate.py`, `scripts/release.py`); it provisions Python 3.12+ from each script's PEP 723 metadata, and all of them use the standard library only. The test suite runs via `uv run --with pytest pytest`.
-- **git**, and for `/release`'s platform publishing, the relevant forge CLI – **`gh`** for GitHub today.
+- **[uv](https://docs.astral.sh/uv/)** – runs the bundled Python scripts (`scripts/scaffold.py`, `scripts/init.py`, `scripts/doctor.py`, `scripts/audit.py`, `scripts/help.py`, `scripts/orchestrate.py`, `scripts/release.py`); it provisions Python 3.12+ from each script's PEP 723 metadata, and all of them use the standard library only. The test suite runs via `uv run --with pytest pytest`.
+- **git**, and for `/release`'s platform publishing and `/init`'s repo creation, the relevant forge CLI – **`gh`** for GitHub today. `/init` also uses **`curl`** to fetch licence texts by SPDX id.
 - The `coder` skill applies the standard from context with no external dependencies and writes no files into the project. `/coding-standard` needs file-system access to the project directory; without it (chat-only, no working directory) there is nothing to materialise, and `coder` still applies the standard from context.
 
 ## Advanced usage
@@ -87,7 +89,7 @@ uv run scripts/scaffold.py \
     [--update] [--dry-run] [--force]
 ```
 
-Pass the modules that match the project's profile; `general` is always included automatically. The script picks its mode from the project's state: with no `manifest.json` it **creates** the files (one `agents.d/coding-standard/<module>.md` per module, the manifest, the `AGENTS.md` References and the `CLAUDE.md` bridge); with a manifest and no `--update` it **investigates** and prints a read-only drift report; with `--update` it **reconciles** the files to the given `--include`, adding new modules, removing dropped ones (and pruning their References) and leaving locally edited files untouched unless `--force`. `--dry-run` previews any path. Exit codes: `0` success; `1` bad arguments, missing module source or failed sanity check; `2` (create only) a target file exists with no manifest and was not overwritten. Run `uv run scripts/scaffold.py --help` for the full set of options.
+Pass the modules that match the project's profile; `general` and any prerequisites are always included automatically. The script picks its mode from the project's state: when `agents.d/coding-standard/` holds no module file it **creates** the files (one `agents.d/coding-standard/<module>.md` per module, the `AGENTS.md` References and the `CLAUDE.md` bridge); when it is already scaffolded and no `--update` is given it **investigates** and prints a read-only drift report (each module `up to date` or `differs (would be updated)`, plus modules that would be added or removed); with `--update` it **reconciles** the files to the given `--include`, rewriting every module whose content differs, adding new modules and removing dropped ones (and pruning their References). `--dry-run` previews any path; `--force` only overrides the project-root sanity check. Exit codes: `0` success; `1` bad arguments, missing module source or failed sanity check. Run `uv run scripts/scaffold.py --help` for the full set of options.
 
 **Release-skill arguments.** `/release` and `/push` take optional arguments:
 
@@ -125,6 +127,11 @@ kntnt-code-skills/
 │   │   └── SKILL.md
 │   ├── coding-standard/
 │   │   └── SKILL.md
+│   ├── init/
+│   │   └── SKILL.md
+│   ├── doctor/
+│   │   ├── SKILL.md
+│   │   └── doctor.workflow.js
 │   ├── orchestrate/
 │   │   ├── SKILL.md
 │   │   └── orchestrate.workflow.js
@@ -143,15 +150,29 @@ kntnt-code-skills/
 │   │   ├── javascript-vanilla.md
 │   │   ├── python.md
 │   │   └── bash.md
-│   ├── changelog.md
-│   └── gitignore-base.txt
+│   ├── gitignore/
+│   │   ├── base.txt
+│   │   ├── php.txt
+│   │   ├── typescript.txt
+│   │   ├── python.txt
+│   │   └── wordpress-block.txt
+│   ├── templates/
+│   │   ├── README.md
+│   │   ├── CHANGELOG.md
+│   │   ├── CONTRIBUTING.md
+│   │   └── NOTICE
+│   └── changelog.md
 ├── scripts/
 │   ├── audit.py
+│   ├── doctor.py
 │   ├── help.py
+│   ├── init.py
 │   ├── orchestrate.py
 │   ├── release.py
 │   └── scaffold.py
 ├── tests/
+│   ├── test_doctor.py
+│   ├── test_init.py
 │   ├── test_orchestrate.py
 │   └── test_scaffold.py
 ├── .pre-commit-config.yaml
@@ -163,7 +184,7 @@ kntnt-code-skills/
 └── README.md
 ```
 
-`commands/` holds the typed-only `/help` command. `skills/` holds the five skills: `coder` (applies the coding standard), `coding-standard` (materialises it into a project), the `release`/`push` workflow skills and `orchestrate` (the away-from-keyboard issue-to-code build). `lib/` holds text resources that skills include – `coding-standard/` (the standard's topic modules and their shared `_index.md`, loaded by both `coder` and `coding-standard`), `changelog.md` (the reconciliation procedure shared by `release` and `push`) and `gitignore-base.txt` (the universal `.gitignore` baseline). `scripts/` holds the standalone `uv`-run tools: the audit, the `/help` renderer, `scaffold.py` (the coding-standard engine behind `/coding-standard`), `release.py`'s deterministic CHANGELOG mechanics and `orchestrate.py`'s dependency-graph, red/green and report mechanics for `/orchestrate` (whose Workflow engine, `orchestrate.workflow.js`, lives beside its skill). `tests/` holds the pytest suites for `orchestrate.py` and `scaffold.py`, run by both the audit workflow and the pre-commit hook.
+`commands/` holds the typed-only `/help` command. `skills/` holds the seven skills: `coder` (applies the coding standard), `coding-standard` (materialises it into a project), `init` (bootstraps a new project to the baseline), `doctor` (reconciles an existing one against it), the `release`/`push` workflow skills and `orchestrate` (the away-from-keyboard issue-to-code build). `lib/` holds text resources that skills include – `coding-standard/` (the standard's topic modules and their shared `_index.md`, loaded by both `coder` and `coding-standard`), `gitignore/` (the `.gitignore` baseline and per-module fragments), `templates/` (the generic, tokenised README/CHANGELOG/CONTRIBUTING/NOTICE that `init` renders) and `changelog.md` (the reconciliation procedure shared by `release` and `push`). `scripts/` holds the standalone `uv`-run tools: the audit, the `/help` renderer, `scaffold.py` (the coding-standard engine behind `/coding-standard`), `init.py` (the deterministic file work behind `/init`), `doctor.py` (the deterministic checks behind `/doctor`), `release.py`'s deterministic CHANGELOG mechanics and `orchestrate.py`'s dependency-graph, red/green and report mechanics for `/orchestrate` (whose Workflow engine, `orchestrate.workflow.js`, lives beside its skill, as `doctor.workflow.js` lives beside `doctor`). `tests/` holds the pytest suites for `scaffold.py`, `init.py`, `doctor.py` and `orchestrate.py`, run by both the audit workflow and the pre-commit hook.
 
 ## How the coding standard is organised
 
