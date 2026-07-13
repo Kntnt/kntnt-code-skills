@@ -331,6 +331,120 @@ def test_agent_block_spans_an_internal_blank_line() -> None:
     )
 
 
+# --- linear, incremental integration (issue #16) -----------------------------
+
+# Two invariants reach the default branch differently now. (1) Integration keeps
+# feature branches LINEAR: it rebases the branch onto the up-to-date default
+# branch and fast-forwards — it must NEVER merge the default branch INTO the
+# feature branch or create a merge commit there. (2) Each verified-green issue is
+# integrated the MOMENT it goes green — inside the per-issue processing loop,
+# before the next issue's build begins — so a mid-run stop leaves every prior
+# issue durably landed, not batched to the end and lost. These are structural.
+
+
+def test_integrate_rebases_and_forbids_merging_default_into_feature() -> None:
+    # AC-1: the merge path must rebase the feature branch onto the up-to-date
+    # default branch and fast-forward ONLY, and must explicitly forbid the inverse
+    # — merging the default branch INTO the feature branch, which would create a
+    # merge commit and break linear history. The explicit forbid clause is what
+    # was missing.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrate")
+    lowered = block.lower()
+
+    # Rebase-then-fast-forward is the only landing path.
+    assert "rebase" in lowered, "integrate must rebase the feature branch"
+    assert "fast-forward" in lowered, (
+        "integrate must fast-forward, not create a merge commit"
+    )
+
+    # The inverse is explicitly, unmistakably forbidden.
+    assert "never merge the default branch into" in lowered, (
+        "integrate must explicitly forbid merging the default branch INTO the "
+        "feature branch"
+    )
+    assert "merge commit" in lowered, (
+        "integrate must explicitly forbid creating a merge commit on the feature branch"
+    )
+    assert "linear" in lowered, "integrate must state the history stays linear"
+
+
+def test_each_green_issue_integrates_immediately_not_batched() -> None:
+    # AC-2/AC-3: integration is per-issue and inline, not a post-build batch. The
+    # old engine built an ENTIRE wave concurrently (`parallel(wave.map(...))`) and
+    # only then integrated the green ones in a second loop — so a green issue did
+    # not land until the whole wave finished, and a mid-wave stop lost every
+    # already-green-but-not-yet-integrated issue. The rewrite processes issues
+    # serially: each issue is built, and if green integrated, before the next
+    # issue's build begins.
+    source = WORKFLOW.read_text(encoding="utf-8")
+
+    # The wave-level batch build is gone: no whole-wave concurrent build precedes
+    # integration.
+    assert "parallel(wave.map(" not in source, (
+        "the wave-level batch build `parallel(wave.map(...))` must be gone — "
+        "building a whole wave before integrating defers each green issue's land"
+    )
+
+    # Issues are processed one at a time in a per-issue loop that both builds and
+    # integrates.
+    assert "for (const number of" in source, (
+        "expected a per-issue processing loop over the wave's issue numbers"
+    )
+    per_issue_idx = source.index("for (const number of")
+    finally_idx = source.index("finally {")
+    region = source[per_issue_idx:finally_idx]
+
+    # Inside that per-issue loop, the issue is built and — when green —
+    # integrated, with no batch parallelism sitting between build and land.
+    assert "buildAndVerify(number)" in region, (
+        "each issue must be built individually inside the per-issue loop"
+    )
+    assert "integrate(" in region, (
+        "each green issue must be integrated inside the per-issue loop, before "
+        "the next issue's build begins"
+    )
+    assert "parallel(" not in region, (
+        "no batch parallelism may sit between per-issue build and integrate — "
+        "integration must be immediate, not deferred to a post-build batch"
+    )
+
+
+def test_empty_plan_guard_precedes_the_try_finally() -> None:
+    # The loud empty-plan guard must still return before the try/finally wave loop
+    # (a misdelivered plan must never masquerade as a clean zero-agent run), and
+    # the serial per-issue rewrite must not disturb that ordering.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    guard_idx = source.index("if (planIsEmpty(config))")
+    # Anchor on the try that pairs with the teardown finally (the nearest `try {`
+    # before it), not the earlier `try {` inside `normalizeArgs`.
+    finally_idx = source.index("finally {")
+    try_idx = source.rindex("try {", 0, finally_idx)
+    assert guard_idx < try_idx, (
+        "the loud empty-plan guard must return before the try/finally wave loop"
+    )
+    assert "status: 'empty-plan'" in source, (
+        "the empty-plan guard must return a non-success status"
+    )
+
+
+def test_budget_floor_parks_without_dispatch_in_per_issue_loop() -> None:
+    # The budget-floor behaviour must survive the serial rewrite: before an
+    # issue's build starts, a nearly-spent budget parks it (and, because the
+    # budget only falls, the rest) without dispatching, so the run ends with a
+    # clean report rather than a hard cut-off.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    per_issue_idx = source.index("for (const number of")
+    finally_idx = source.index("finally {")
+    region = source[per_issue_idx:finally_idx]
+    assert "budget.total && budget.remaining() < budgetFloor" in region, (
+        "the per-issue loop must check the budget floor before dispatching a build"
+    )
+    assert "token budget exhausted before dispatch" in region, (
+        "a budget-parked issue must be recorded as parked, not dispatched"
+    )
+
+
 # --- behavioural: the extracted helpers, exercised through node --------------
 
 # The JS harness imports the extracted module by absolute file:// URL, runs the
