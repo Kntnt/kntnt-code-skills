@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.10.0] – 2026-07-13
+
 ### Added
 
 - **`/orchestrate` confirm gate now sizes the run to its cost and its closing step confirms each issue individually.** A 30-issue run with no up-front estimate and no cap blew the monthly spend limit mid-flight and lost the whole run, and right after closing a batch the issue list read stale, which misled the close confirmation. `skills/orchestrate/SKILL.md` step 3 gains a **Cost and chunking** subsection: an agent/token estimate pinned to the lean defaults (a single broad reviewer, one fix round) with a typical closed form `agents ≈ N × 4 + 3` (N issues × the average per-issue cost, folding the default panel-size-1 × fix-rounds-1 over implement / verify / (fix + re-verify) / integrate), an honest per-issue range of 3–5 sub-agents (3 with no fix, 5 when the one fix round and its re-verify run) and a per-run overhead of ≈ 2 in the default PR mode (integration review + teardown), up to ≈ 5 in merge mode when a hotfix runs, a token order-of-magnitude per sub-agent, a recommendation to run large backlogs in **slices of 8–10 issues** so a stop loses at most a slice, and a **required explicit cap** for any run above ~10 issues — naming only the real engine levers (`budgetFloor`, now documented as a settable `args` knob with default 60000 tokens in step 4; the run's `budget.total`; a lower `maxFixRounds`; and slicing), not a nonexistent max-agents cap — a large run must not be confirmed uncapped. Step 5 gains a **Confirming closures** subsection: the orchestrator verifies each closure by querying that issue's own state with `gh issue view <n>` (its `state` / `closed` field), and explicitly does **not** trust a `gh issue list` re-query, whose endpoint is eventually consistent and reads stale immediately after a close. `tests/test_orchestrate_skill.py` guards the estimate formula, the lean-defaults wording, the slice size, the cap-above-threshold requirement, and the per-issue `gh issue view` closing rule structurally.
@@ -194,7 +196,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.10.0
 [0.9.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.9.0
 [0.8.3]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.3
 [0.8.2]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.2
