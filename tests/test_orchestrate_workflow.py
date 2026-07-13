@@ -348,29 +348,32 @@ def test_agent_block_spans_an_internal_blank_line() -> None:
     )
 
 
-# --- linear, incremental integration (issue #16) -----------------------------
+# --- linear, incremental integration (issue #16, #21) ------------------------
 
 # Two invariants reach the default branch differently now. (1) Integration keeps
-# feature branches LINEAR: it rebases the branch onto the up-to-date default
-# branch and fast-forwards — it must NEVER merge the default branch INTO the
-# feature branch or create a merge commit there. (2) Each verified-green issue is
-# integrated the MOMENT it goes green — inside the per-issue processing loop,
-# before the next issue's build begins — so a mid-run stop leaves every prior
-# issue durably landed, not batched to the end and lost. These are structural.
+# feature branches LINEAR: it fast-forwards the DEFAULT branch to the feature
+# branch's tip (`git merge --ff-only <feature>`, issue #21) — it must NEVER merge
+# the default branch INTO the feature branch or create a merge commit there. A
+# rebase of the feature branch is NOT the landing path; it is only the rare,
+# effectively-unreachable fallback for the moment the default moved under the
+# feature branch. (2) Each verified-green issue is integrated the MOMENT it goes
+# green — inside the per-issue processing loop, before the next issue's build
+# begins — so a mid-run stop leaves every prior issue durably landed, not batched
+# to the end and lost. These are structural.
 
 
-def test_integrate_rebases_and_forbids_merging_default_into_feature() -> None:
-    # AC-1: the merge path must rebase the feature branch onto the up-to-date
-    # default branch and fast-forward ONLY, and must explicitly forbid the inverse
-    # — merging the default branch INTO the feature branch, which would create a
-    # merge commit and break linear history. The explicit forbid clause is what
-    # was missing.
+def test_integrate_fast_forwards_and_forbids_merging_default_into_feature() -> None:
+    # AC-2 (issue #21): the merge path lands by fast-forwarding the DEFAULT branch
+    # to the feature tip ONLY, and must explicitly forbid the inverse — merging the
+    # default branch INTO the feature branch, which would create a merge commit and
+    # break linear history. The explicit forbid clause is what was missing.
     source = WORKFLOW.read_text(encoding="utf-8")
     block = _agent_block(source, "integrate")
     lowered = block.lower()
 
-    # Rebase-then-fast-forward is the only landing path.
-    assert "rebase" in lowered, "integrate must rebase the feature branch"
+    # Fast-forwarding the default branch is the landing path — NOT a rebase of the
+    # feature branch, which #21 demoted to a rare, effectively-unreachable fallback.
+    # (The non-checkout `merge --ff-only` form itself is pinned by the AC-1 test.)
     assert "fast-forward" in lowered, (
         "integrate must fast-forward, not create a merge commit"
     )
@@ -425,6 +428,39 @@ def test_integrate_fast_forwards_default_without_checking_out_the_feature_branch
     # still holds it — so the integrator understands the constraint, not just obeys it.
     assert "worktree" in lowered, (
         "integrate must explain that the feature branch is still held by a worktree"
+    )
+
+
+def test_integrate_conflict_parks_the_issue_with_a_blocker() -> None:
+    # AC-3 (issue #21): a genuine conflict must NEVER be forced into a merge — the
+    # integrator reports it as a blocker, and the engine parks the otherwise-green
+    # issue with that blocker rather than landing it. This pins both halves: the
+    # prompt clause that instructs the report, and the code path that parks on a
+    # non-integration so an unreported failure cannot silently look integrated.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrate")
+    lowered = block.lower()
+
+    # The prompt tells the integrator that a genuine conflict is not to be merged —
+    # it is reported as a blocker.
+    assert "conflict" in lowered, "integrate must address the genuine-conflict case"
+    assert "do not merge" in lowered, (
+        "integrate must forbid forcing a merge when a conflict makes landing unsafe"
+    )
+    assert "report it as a blocker" in lowered, (
+        "integrate must tell the integrator to report a genuine conflict as a blocker"
+    )
+
+    # The engine parks the otherwise-green issue when the integrator does not land
+    # it, folding the reported blocker into the record — never returning it green.
+    assert "if (!result.integrated) return" in block, (
+        "integrate must park the issue when the integrator did not land it"
+    )
+    assert "status: 'parked'" in block, (
+        "a non-integrated issue must be recorded as parked, not left green"
+    )
+    assert "result.blocker" in block, (
+        "the integrator's reported blocker must be folded into the parked record"
     )
 
 
