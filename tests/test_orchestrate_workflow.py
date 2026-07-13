@@ -648,15 +648,18 @@ def test_verifier_agent_count_is_lower_under_lean_defaults() -> None:
 # --- mandatory adversarial integration review + hotfix loop (issue #18) ------
 
 # After the wave loop and inside the teardown try, whenever the run integrated at
-# least one issue (verdicts.length > 0 — the only case a combined diff exists), a
-# MANDATORY adversarial integration review examines the COMBINED diff for
-# cross-issue defects with a verifier's full rigor (never a smoke test). Its clear
-# decision runs through blockingFindings, so a dead / not-clear / empty-findings
-# review cannot pass silently. A real finding drives a BOUNDED hotfix + re-review
-# — a code-touching agent that carries worktree isolation and the shared
-# constraints and reconciles the branch lock like `fix` — not a mere report; a
-# finding still unresolved when the cap is hit is parked, never dropped. These are
-# structural, read off the workflow source.
+# least one issue (verdicts.length > 0 — the only case a combined change set
+# exists), a MANDATORY adversarial integration review examines the real combined
+# change set for cross-issue defects with a verifier's full rigor (never a smoke
+# test): in merge mode the combined diff on the default branch, in PR mode the
+# union of the run's feature branches against the default branch (nothing landed
+# there). Its clear decision runs through blockingFindings, so a dead / not-clear
+# / empty-findings review cannot pass silently. In merge mode a real finding
+# drives a BOUNDED hotfix + re-review — a code-touching agent that carries
+# worktree isolation and the shared constraints and creates its branch fresh off
+# the default — not a mere report; in PR mode the finding is parked for the human
+# (no auto-hotfix). A finding still unresolved at the cap is parked, never
+# dropped. These are structural, read off the workflow source.
 
 
 def test_integration_review_agent_is_adversarial_read_only_reviewer() -> None:
@@ -712,6 +715,25 @@ def test_integration_review_is_gated_on_verdicts_and_uses_blocking_findings() ->
     )
 
 
+def test_integration_review_targets_branch_union_in_pr_mode() -> None:
+    # In the default PR mode the run opens PRs and lands NOTHING on the default
+    # branch, so a review of "the diff on the default branch" would see nothing and
+    # clear — the exact silent-pass this review exists to kill, in the default
+    # mode. The review must be mode-aware: PR mode reviews the UNION of the run's
+    # feature branches against the default branch, so it references the branches.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrationReview")
+    lowered = block.lower()
+    assert ".branch" in block, (
+        "the integration review must reference the run's feature branches so PR "
+        "mode reviews the branch union, not an empty default-branch diff"
+    )
+    assert "union of" in lowered or "feature branch" in lowered, (
+        "the integration review prompt must describe the PR-mode branch union"
+    )
+    assert "merge" in lowered, "the integration review must be mode-aware (merge vs PR)"
+
+
 def test_integration_review_runs_after_wave_loop_and_before_teardown() -> None:
     # The review sits AFTER the wave loop but INSIDE the try that pairs with the
     # teardown finally, so teardown still fires and any hotfix worktree is torn
@@ -741,23 +763,24 @@ def test_integration_hotfix_is_worktree_isolated_and_carries_constraints() -> No
     )
 
 
-def test_integration_hotfix_reconciles_the_branch_lock_like_fix() -> None:
-    # Like `fix`, the worktree-isolated hotfix must free any other worktree that
-    # holds its branch before checking it out, keeping the branch ref.
+def test_integration_hotfix_creates_branch_fresh_off_default() -> None:
+    # Each hotfix round uses a distinct branch name, so the copied-from-`fix`
+    # worktree handoff could never fire within a run and risked building on a
+    # stale ref left by a prior run. The hotfix now creates its branch FRESH off
+    # the up-to-date default branch with `git checkout -B`, which resets any stale
+    # ref to the current default tip. It keeps worktree isolation and the shared
+    # constraints.
     source = WORKFLOW.read_text(encoding="utf-8")
     block = _agent_block(source, "integrationHotfix")
-    lowered = block.lower()
-    assert "git worktree list --porcelain" in block, (
-        "the integrationHotfix prompt must locate the worktree holding its branch"
+    assert "git checkout -B" in block, (
+        "the integrationHotfix prompt must create its branch fresh off the default "
+        "with `git checkout -B` so a stale ref cannot make it build on an old base"
     )
-    assert "git worktree remove --force" in block, (
-        "the integrationHotfix prompt must free the worktree that holds its branch"
+    assert "isolation: 'worktree'" in block, (
+        "the integrationHotfix agent must keep isolation: 'worktree'"
     )
-    assert "branch ref" in lowered, (
-        "freeing the lock must preserve the branch ref (remove keeps it)"
-    )
-    assert "git branch -d" in lowered, (
-        "the integrationHotfix prompt must forbid deleting the branch"
+    assert "${" + CONSTRAINTS_NAME + "}" in block, (
+        "the integrationHotfix agent must keep the shared AGENT_CONSTRAINTS"
     )
 
 
@@ -780,6 +803,24 @@ def test_integration_hotfix_loop_is_bounded_by_a_cap() -> None:
     )
     assert "builtBranches.add" in region, (
         "the hotfix branch must be tracked in builtBranches so teardown removes it"
+    )
+
+
+def test_integration_hotfix_loop_is_gated_on_merge_mode() -> None:
+    # The bounded auto-hotfix + re-review runs ONLY in merge mode, where landing is
+    # authorised and the default branch actually holds the changes a hotfix
+    # branched off it can see. In PR mode the finding is parked for the human, not
+    # auto-hotfixed — matching the conservative leave-the-merge-to-you posture. So
+    # the hotfix loop header must gate on `merge`.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    guard_idx = source.index("if (verdicts.length > 0)")
+    finally_idx = source.index("finally {")
+    region = source[guard_idx:finally_idx]
+    loop_idx = region.index("for (let round = 1;")
+    header = region[loop_idx : region.index("\n", loop_idx)]
+    assert "merge" in header, (
+        "the hotfix loop header must gate on merge mode so PR-mode findings are "
+        "parked for the human, not auto-hotfixed"
     )
 
 

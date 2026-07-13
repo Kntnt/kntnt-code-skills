@@ -680,10 +680,12 @@ def test_build_plan_keeps_existing_top_level_fields() -> None:
 #
 # The plan must flag each in-scope issue that carries no Agent Brief comment, so
 # a run knows which issues are built from their body + acceptance criteria rather
-# than a posted brief. An issue HAS a brief iff any comment body contains the
-# phrase "Agent Brief" (case-insensitive). gh returns `comments` as a list of
-# {"body": ...} objects; bare strings are tolerated, and an absent `comments`
-# field is treated as no detectable brief (the engine's fallback still copes).
+# than a posted brief. An issue HAS a brief iff a comment body carries a Markdown
+# "Agent Brief" HEADING (`^#{1,6}\s*Agent Brief`, case-insensitive) — anchoring
+# to the heading form the real briefs use, so a prose mention ("no Agent Brief
+# was posted") does not falsely suppress the flag. gh returns `comments` as a
+# list of {"body": ...} objects; bare strings are tolerated, and an absent
+# `comments` field is treated as no detectable brief (the fallback still copes).
 
 
 def test_load_issues_flags_issue_with_agent_brief_comment() -> None:
@@ -713,7 +715,7 @@ def test_load_issues_treats_absent_comments_as_no_brief() -> None:
 def test_load_issues_tolerates_bare_string_comments() -> None:
     raw = (
         '[{"number":4,"title":"D","labels":[],"body":"x",'
-        '"comments":["Agent Brief: build it"]}]'
+        '"comments":["## Agent Brief\\n\\nbuild it"]}]'
     )
     issues = orchestrate.load_issues(raw)
     assert issues[0].no_brief is False
@@ -722,7 +724,29 @@ def test_load_issues_tolerates_bare_string_comments() -> None:
 def test_load_issues_brief_detection_is_case_insensitive() -> None:
     raw = (
         '[{"number":5,"title":"E","labels":[],"body":"x",'
-        '"comments":[{"body":"agent brief follows below"}]}]'
+        '"comments":[{"body":"## agent brief\\n\\nfollows below"}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    assert issues[0].no_brief is False
+
+
+def test_load_issues_prose_mention_of_agent_brief_is_still_flagged() -> None:
+    # A comment that merely MENTIONS "agent brief" in prose — with no heading — is
+    # NOT a brief; the issue stays flagged no_brief. This is the false-positive the
+    # heading anchor closes: substring matching would wrongly clear it.
+    raw = (
+        '[{"number":9,"title":"F","labels":[],"body":"x",'
+        '"comments":[{"body":"Note: no Agent Brief was posted for this issue."}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    assert issues[0].no_brief is True
+
+
+def test_load_issues_agent_brief_heading_comment_is_not_flagged() -> None:
+    # A genuine `## Agent Brief` heading comment marks the issue as having a brief.
+    raw = (
+        '[{"number":10,"title":"G","labels":[],"body":"x",'
+        '"comments":[{"body":"## Agent Brief\\n\\nBuild it, test-first."}]}]'
     )
     issues = orchestrate.load_issues(raw)
     assert issues[0].no_brief is False
@@ -731,7 +755,7 @@ def test_load_issues_brief_detection_is_case_insensitive() -> None:
 def test_build_plan_surfaces_no_brief_per_issue_and_top_level() -> None:
     raw = (
         '[{"number":1,"title":"Has brief","labels":[],"body":"x",'
-        '"comments":[{"body":"Agent Brief here"}]},'
+        '"comments":[{"body":"## Agent Brief\\n\\nhere"}]},'
         '{"number":2,"title":"No brief","labels":[],"body":"y",'
         '"comments":[{"body":"just chatter"}]},'
         '{"number":3,"title":"No comments","labels":[],"body":"z"}]'
@@ -752,7 +776,7 @@ def test_build_plan_surfaces_no_brief_per_issue_and_top_level() -> None:
 def test_build_plan_no_brief_list_empty_when_every_issue_has_a_brief() -> None:
     raw = (
         '[{"number":1,"title":"A","labels":[],"body":"x",'
-        '"comments":[{"body":"Agent Brief: do it"}]}]'
+        '"comments":[{"body":"## Agent Brief\\n\\ndo it"}]}]'
     )
     issues = orchestrate.load_issues(raw)
     plan = orchestrate.build_plan(issues, [], "ready-for-agent")
