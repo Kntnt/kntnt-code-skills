@@ -116,6 +116,104 @@ def test_inline_copies_match_engine_helpers() -> None:
         )
 
 
+# --- worktree isolation and teardown (issue #14) -----------------------------
+
+# Every code-touching agent (implement, fix, and any future salvage/hotfix) must
+# run in its own git worktree so no two agents — and no agent and the launcher —
+# ever share a working directory. The verify agents are read-only reviewers and
+# need no worktree; the integrate agent is the SOLE mutator of the default branch
+# and operates on the real repo, so it must NOT be worktree-isolated. These tests
+# are structural: they read the workflow source (the harness makes it
+# un-importable) and assert the required constructs.
+
+
+def _agent_block(source: str, name: str) -> str:
+    """Slice one top-level ``const <name> = …`` block out of the workflow source.
+
+    A whole-file grep for ``isolation: 'worktree'`` is useless here — one agent
+    already carries it, so the grep would pass even with another agent unfixed.
+    This isolates a single ``const`` definition instead: from the ``const
+    <name> = `` line up to the next top-level ``const `` declaration or the first
+    blank line, whichever comes first. Both the multi-line ``agent(…)`` calls and
+    a block-bodied arrow are captured up to (and including) their agent options,
+    which is all these assertions inspect."""
+
+    lines = source.splitlines()
+    start = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if re.match(rf"^const {re.escape(name)} = ", line)
+        ),
+        None,
+    )
+    assert start is not None, f"`const {name} =` not found in the workflow source"
+
+    block = [lines[start]]
+    for line in lines[start + 1 :]:
+        if line.strip() == "" or re.match(r"^const ", line):
+            break
+        block.append(line)
+    return "\n".join(block)
+
+
+def test_fix_agent_is_worktree_isolated() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "fix")
+    assert "isolation: 'worktree'" in block, (
+        "the `fix` agent must carry isolation: 'worktree' — it touches code and "
+        "must never share a working directory with another agent or the launcher"
+    )
+
+
+def test_implement_agent_is_worktree_isolated() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "implement")
+    assert "isolation: 'worktree'" in block, (
+        "the `implement` agent must keep isolation: 'worktree'"
+    )
+
+
+def test_integrate_agent_is_not_worktree_isolated() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrate")
+    assert "isolation" not in block, (
+        "the `integrate` agent is the sole mutator of the default branch and must "
+        "operate on the real repo — it must NOT be worktree-isolated"
+    )
+
+
+def test_teardown_wave_dispatch_is_wrapped_in_try_finally() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+
+    # There is exactly one `finally` (normalizeArgs uses a try/catch, no finally);
+    # the try that pairs with it is the nearest `try {` before it, and the wave
+    # loop must sit between them so teardown always runs — clean or parked.
+    finally_idx = source.index("finally")
+    try_idx = source.rindex("try {", 0, finally_idx)
+    wave_idx = source.index("for (let index = 0; index < waves.length")
+    assert try_idx < wave_idx < finally_idx, (
+        "the wave-dispatch loop must be inside the try that pairs with the "
+        "teardown finally, so teardown runs on both the clean and parked paths"
+    )
+
+
+def test_teardown_agent_prunes_worktrees_and_preserves_branch_refs() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    tail = source[source.index("finally") :]
+
+    # The teardown agent enumerates, removes (keeping the ref), and prunes.
+    assert "git worktree list --porcelain" in tail
+    assert "git worktree remove --force" in tail
+    assert "git worktree prune" in tail
+
+    # It must preserve every branch ref and never touch the main worktree.
+    lowered = tail.lower()
+    assert "branch ref" in lowered, "teardown must be told to preserve branch refs"
+    assert "git branch -d" in lowered, "teardown must be told never to delete a branch"
+    assert "main worktree" in lowered, "teardown must never touch the main worktree"
+
+
 # --- behavioural: the extracted helpers, exercised through node --------------
 
 # The JS harness imports the extracted module by absolute file:// URL, runs the
