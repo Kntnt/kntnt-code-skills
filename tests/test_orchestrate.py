@@ -409,6 +409,116 @@ def test_parse_dependencies_does_not_warn_when_a_number_reference_resolves() -> 
     assert signals.warnings == []
 
 
+# --- parse_dependencies: title resolves a number no #N supplies (AC #2) --------
+#
+# These distinguish "title resolved" from "title ignored": the title maps to a
+# number that is NOT otherwise present as `#N` in the same region, so the edge
+# exists ONLY because title resolution ran. They fail if that resolution is cut.
+
+
+def test_parse_dependencies_title_supplies_a_number_absent_as_a_reference() -> None:
+    index = {"user schema migration": 44}
+    signals = orchestrate.parse_dependencies(
+        "## Blocked by\n\n- User schema migration\n- #46", title_index=index
+    )
+    assert signals.edges == {44: "Blocked by", 46: "Blocked by"}
+
+
+def test_load_issues_title_only_and_number_ref_yield_both_distinct_edges() -> None:
+    raw = (
+        '[{"number":44,"title":"User schema migration","labels":[],"body":""},'
+        '{"number":46,"title":"Widget API","labels":[],"body":""},'
+        '{"number":45,"title":"Eval","labels":[],'
+        '"body":"## Blocked by\\n\\n- User schema migration\\n- #46"}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    by_number = {i.number: i for i in issues}
+    assert by_number[45].blocked_by == {44, 46}
+
+
+# --- parse_dependencies: only a genuine label resolves a prose title -----------
+#
+# A prose title resolves after a genuine label (bold-wrapped or colon-bearing)
+# but NOT after a bare keyword used as an ordinary verb, even at body start.
+# Bare `#N` extraction is unchanged regardless of the label shape.
+
+
+def test_parse_dependencies_colon_label_resolves_a_prose_title() -> None:
+    index = {"user schema migration": 44}
+    signals = orchestrate.parse_dependencies(
+        "Depends on: User schema migration", title_index=index
+    )
+    assert signals.edges == {44: "Depends on"}
+
+
+def test_parse_dependencies_bold_label_resolves_a_prose_title() -> None:
+    index = {"user schema migration": 44}
+    signals = orchestrate.parse_dependencies(
+        "**Depends on** User schema migration", title_index=index
+    )
+    assert signals.edges == {44: "Depends on"}
+
+
+def test_parse_dependencies_body_start_bare_keyword_title_is_not_an_edge() -> None:
+    # A hard keyword at absolute body start, with no bold and no colon, is not a
+    # label; a following clause equal to a title must not mint an edge.
+    assert (
+        orchestrate.parse_dependencies("Requires review", title_index={"review": 44}).edges
+        == {}
+    )
+    assert (
+        orchestrate.parse_dependencies(
+            "Needs\nUser schema migration", title_index={"user schema migration": 44}
+        ).edges
+        == {}
+    )
+
+
+def test_parse_dependencies_bare_line_initial_number_still_resolves() -> None:
+    # Bare `#N` extraction is untouched by the label rule.
+    signals = orchestrate.parse_dependencies("Depends on #44", title_index={})
+    assert signals.edges == {44: "Depends on"}
+
+
+# --- parse_dependencies: an unresolved inline label warns too -----------------
+#
+# The unresolved-region warning is not limited to the `## Blocked by` heading:
+# a genuine inline label (bold/colon) that resolves to nothing warns as well. A
+# resolved label is quiet, and a plain prose keyword (no label) never warns.
+
+
+def test_parse_dependencies_warns_on_an_unresolvable_inline_label() -> None:
+    signals = orchestrate.parse_dependencies(
+        "**Depends on:** unknown prerequisite name", title_index={}
+    )
+    assert signals.edges == {}
+    assert signals.warnings != []
+
+
+def test_parse_dependencies_does_not_warn_when_an_inline_label_resolves() -> None:
+    signals = orchestrate.parse_dependencies("**Depends on:** #44", title_index={})
+    assert signals.edges == {44: "Depends on"}
+    assert signals.warnings == []
+
+
+def test_parse_dependencies_does_not_warn_for_a_plain_prose_keyword() -> None:
+    signals = orchestrate.parse_dependencies(
+        "This work needs careful review.", title_index={}
+    )
+    assert signals.edges == {}
+    assert signals.warnings == []
+
+
+def test_build_plan_warns_on_an_unresolved_inline_label() -> None:
+    raw = (
+        '[{"number":45,"title":"Eval","labels":[],'
+        '"body":"**Depends on:** some prerequisite not tracked here"}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    assert any("45" in warning for warning in plan["warnings"])
+
+
 # --- load_issues: prose-title resolution across the in-scope set ---------------
 
 
