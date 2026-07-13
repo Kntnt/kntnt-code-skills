@@ -445,6 +445,24 @@ def test_budget_floor_parks_without_dispatch_in_per_issue_loop() -> None:
     )
 
 
+def test_null_build_record_parks_rather_than_silently_dropping() -> None:
+    # Anti-silent-failure: a null buildAndVerify result must be parked WITH a
+    # reason, not `continue`d away — a silently dropped issue would not even
+    # appear in the report. `buildAndVerify` never returns null today, but the
+    # defensive branch must fail loud, not vanish the issue.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    per_issue_idx = source.index("for (const number of")
+    finally_idx = source.index("finally {")
+    region = source[per_issue_idx:finally_idx]
+    assert "if (record == null) continue" not in region, (
+        "a null build record must not be silently dropped with a bare continue"
+    )
+    assert "buildAndVerify returned nothing" in region, (
+        "the null-record branch must park the issue with a reason so it still "
+        "appears in the report"
+    )
+
+
 # --- behavioural: the extracted helpers, exercised through node --------------
 
 # The JS harness imports the extracted module by absolute file:// URL, runs the

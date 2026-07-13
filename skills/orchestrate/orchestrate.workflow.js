@@ -208,8 +208,10 @@ const toRecord = (number, impl, status, verify) => ({
 // implement, fix, and verify prompt (and any future salvage/hotfix agent — issue
 // #18 — MUST include it too) rather than copy-pasted, so the rule cannot drift
 // between agents. Deliberately NOT interpolated into `integrate`, whose whole job
-// is to merge and push; `teardown` already carries its own no-delete/no-reset
-// rule and does not merge, so it needs no addition here.
+// is to land each green issue on the default branch (rebase-then-fast-forward);
+// pushing that branch to a remote is the orchestrator's separate authorised step,
+// not integrate's. `teardown` already carries its own no-delete/no-reset rule and
+// does not integrate, so it needs no addition here.
 const AGENT_CONSTRAINTS = `Shared-state rules — these bind you; obey them without exception:\n` +
   `- You must NOT close the GitHub issue, NOT push to any remote, and NOT merge into the default branch. Closing, pushing, and merging are the orchestrator's and the integrate step's job exclusively; the issue is closed only after independent verification, never by you.\n` +
   `- NEVER run \`git reset --hard <ref>\` while HEAD is on a feature branch — it silently discards that branch's commits.\n` +
@@ -321,10 +323,12 @@ const integrate = async (record) => {
 // work begins. This makes partial progress durable: each verified-green issue
 // lands on the default branch immediately (rebase-then-fast-forward), so a
 // mid-run stop — a spend-limit cut-off, a crash — leaves every issue integrated
-// so far on the default branch and nothing already-completed is lost. Ordering
-// (waves in order, issue numbers within a wave in order) still guarantees a
-// dependent issue builds on an already-integrated prerequisite; worktree
-// isolation (#14) keeps concurrent agents apart, so serial dispatch is safe.
+// so far on the default branch and nothing already-completed is lost. Processing
+// the waves IN ORDER is what guarantees a dependent issue builds on an
+// already-integrated prerequisite (a later wave depends on an earlier one); the
+// within-wave issue-number sort is only deterministic ordering, since a wave's
+// issues are independent by construction. Worktree isolation (#14) keeps
+// concurrent agents apart, so serial dispatch is safe.
 const verdicts = []
 const parked = []
 const waves = config.waves || []
@@ -368,7 +372,14 @@ try {
 
       // Build + independently verify this one issue (worktree-isolated).
       const record = await buildAndVerify(number)
-      if (record == null) continue
+
+      // A null record should never happen (buildAndVerify always returns one),
+      // but park it with a reason rather than silently dropping the issue — a
+      // vanished issue would not even appear in the report.
+      if (record == null) {
+        parked.push(toRecord(number, null, 'parked', 'buildAndVerify returned nothing'))
+        continue
+      }
       if (record.status !== 'done') {
         parked.push(record)
         continue
