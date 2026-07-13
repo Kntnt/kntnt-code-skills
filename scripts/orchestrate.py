@@ -57,11 +57,16 @@ from typing import Any, NoReturn, cast
 # scope; this constant only documents the default and labels the plan output.
 DEFAULT_SCOPE_LABEL = "ready-for-agent"
 
-# The phrase a triage-posted agent brief comment carries. An issue HAS a brief
-# iff any of its comment bodies contains this phrase (case-insensitive); an issue
-# without one is flagged so the run knows it is built from its body + acceptance
-# criteria instead. Matched case-insensitively against the lowercased body.
-AGENT_BRIEF_MARKER = "agent brief"
+# A triage-posted agent brief opens with a Markdown "Agent Brief" heading. An
+# issue HAS a brief iff a comment body carries that heading; an issue without one
+# is flagged so the run knows it is built from its body + acceptance criteria
+# instead. The match is anchored to the heading form (`#{1,6}` at a line start),
+# not a bare substring, so a prose mention ("no Agent Brief was posted") does not
+# falsely clear the flag. Case-insensitive and multiline (each comment body may
+# hold several lines); `\b` after "Brief" keeps "Agent Briefing" from matching.
+AGENT_BRIEF_HEADING_RE = re.compile(
+    r"^\s*#{1,6}\s*Agent Brief\b", re.IGNORECASE | re.MULTILINE
+)
 
 # The `Blocked by` section of the to-issues template, and the issue-reference
 # token (`#42`) used inside it. The section body runs to the next heading or
@@ -544,16 +549,18 @@ def _build_title_index(entries: list[Any]) -> dict[str, int]:
 
 
 def _has_agent_brief(comments: Any) -> bool:
-    """Whether any comment names an Agent Brief (case-insensitive). `gh` returns
+    """Whether any comment carries a Markdown "Agent Brief" heading. `gh` returns
     `comments` as a list of {"body": ...} objects; bare strings are tolerated,
     and a missing or non-list value is treated as no brief — the safe default,
-    since the engine's fallback builds the issue from its body either way."""
+    since the engine's fallback builds the issue from its body either way. The
+    heading anchor (not a bare substring) keeps a prose mention of the phrase from
+    falsely marking the issue as briefed."""
 
     if not isinstance(comments, list):
         return False
     for comment in comments:
         body = comment.get("body", "") if isinstance(comment, dict) else comment
-        if AGENT_BRIEF_MARKER in str(body).lower():
+        if AGENT_BRIEF_HEADING_RE.search(str(body)):
             return True
     return False
 

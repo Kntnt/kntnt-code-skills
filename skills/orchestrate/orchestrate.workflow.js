@@ -404,42 +404,51 @@ const integrate = async (record) => {
   return { ...record, verify: `${record.verify} | ${result.summary}` }
 }
 
-// The MANDATORY final integration review: ONE adversarial reviewer over the
-// COMBINED diff of everything this run landed on the default branch. A per-issue
-// verifier sees one issue in isolation and structurally CANNOT catch a cross-
-// issue defect — one issue's change silently weakening another's guarantee, two
-// landed issues contradicting each other, an invariant that holds per issue but
-// breaks across their union. So this reviewer is given the SAME rigor as a per-
-// issue verifier, NOT a token smoke test, and hunts exactly that class of defect.
-// It did NOT write any of the code, is read-only (no worktree), carries the
-// shared ${AGENT_CONSTRAINTS}, and returns the same VERDICT_SCHEMA a verifier
-// does — so its clear decision runs through `blockingFindings` just like a per-
-// issue verdict and a dead / not-clear / empty-findings review can never pass.
-const integrationReview = (verdicts) =>
-  agent(
-    `Adversarially review the COMBINED diff of everything this run integrated onto the default branch — issues ${verdicts.map((verdict) => `#${verdict.number}`).join(', ')} TOGETHER, as one union, NOT any single issue on its own.\n` +
-      `Give this the SAME rigor as a per-issue verifier — this is NOT a smoke test. Hunt for CROSS-issue defects that no per-issue review could see: one issue's change silently weakening another's guarantee, two landed issues contradicting each other, a broken invariant across their union, a gate that passes per issue but not over the combined whole.\n` +
+// The MANDATORY final integration review: ONE adversarial reviewer over the real
+// combined change set of everything this run produced. A per-issue verifier sees
+// one issue in isolation and structurally CANNOT catch a cross-issue defect — one
+// issue's change silently weakening another's guarantee, two issues contradicting
+// each other, an invariant that holds per issue but breaks across their union. So
+// this reviewer is given the SAME rigor as a per-issue verifier, NOT a token
+// smoke test, and hunts exactly that class of defect. It is MODE-AWARE, because
+// where the change set lives depends on the run's mode: in MERGE mode everything
+// landed on the default branch, so it reviews the combined diff there; in the
+// conservative PR mode NOTHING landed on the default branch (each issue is a PR),
+// so it must review the UNION of the run's feature branches against the default
+// branch instead — the engine knows those branches (`verdict.branch`) and passes
+// them in. Reviewing "the default branch" in PR mode would see nothing and clear
+// — the exact silent pass this review exists to kill, in the default mode. It did
+// NOT write any of the code, is read-only (no worktree), carries the shared
+// ${AGENT_CONSTRAINTS}, and returns the same VERDICT_SCHEMA a verifier does — so
+// its clear decision runs through `blockingFindings` just like a per-issue
+// verdict and a dead / not-clear / empty-findings review can never pass.
+const integrationReview = (verdicts) => {
+  const target = merge
+    ? `the COMBINED diff now on the default branch — everything this run landed there`
+    : `the UNION of this run's feature branches against the default branch (this run opened PRs and landed NOTHING on the default branch, so review the branches themselves, together): ${verdicts.map((verdict) => verdict.branch).join(', ')}`
+  return agent(
+    `Adversarially review ${target} — issues ${verdicts.map((verdict) => `#${verdict.number}`).join(', ')} TOGETHER, as one union, NOT any single issue on its own.\n` +
+      `Give this the SAME rigor as a per-issue verifier — this is NOT a smoke test. Hunt for CROSS-issue defects that no per-issue review could see: one issue's change silently weakening another's guarantee, two changes contradicting each other, a broken invariant across their union, a gate that passes per issue but not over the combined whole.\n` +
       `You did NOT write this code. Read each issue's contract (\`gh issue view <n> --comments\`; if an Agent Brief comment exists it is authoritative, OTHERWISE the issue body and its acceptance criteria are the contract) and ${standardInstruction}.\n` +
       `${AGENT_CONSTRAINTS}\n` +
       `Check what a per-issue reviewer structurally cannot: the interaction of the changes. Default to clear=false if you find anything real across the union, name the specific issues that interact, and be concrete.`,
     { label: 'integration-review', phase: 'Verify', schema: VERDICT_SCHEMA },
   )
+}
 
 // Dispatch ONE code-touching hotfix agent to address ONLY the integration
-// review's cross-issue findings, on a fresh hotfix branch off the up-to-date
-// default branch, test-first. This is the salvage/hotfix agent #14's comment
+// review's cross-issue findings, test-first, on a hotfix branch created FRESH off
+// the up-to-date default branch. This is the salvage/hotfix agent #14's comment
 // anticipated: it TOUCHES CODE, so it MUST carry `isolation: 'worktree'` and the
-// shared ${AGENT_CONSTRAINTS} (it must not merge, push, or close), and it
-// reconciles the worktree branch-lock exactly as `fix` does — freeing any other
-// worktree still holding its branch, keeping the ref, before checking it out —
-// so a later round's hotfix branch is never blocked by a stale worktree.
+// shared ${AGENT_CONSTRAINTS} (it must not merge, push, or close). Each round
+// uses a distinct branch name, so no in-run worktree handoff is ever needed; the
+// branch is created with `git checkout -B` off the current default-branch tip,
+// which RESETS any stale ref a prior run's teardown left behind (teardown removes
+// the worktree but keeps the ref), so the hotfix can never build on an old base.
 const integrationHotfix = (branch, findings) =>
   agent(
-    `Fix the cross-issue integration findings below on branch ${branch} (create it off the up-to-date default branch), test-first.\n` +
-      `You are in a FRESH isolated worktree. If ${branch} already exists and is checked out in ANOTHER worktree (a previous hotfix round's), git refuses to check out one branch in two worktrees at once. BEFORE anything else, take the branch over:\n` +
-      `1. Run \`git worktree list --porcelain\` and find any OTHER worktree that currently has ${branch} checked out.\n` +
-      `2. If one exists, run \`git worktree remove --force <that path>\` to free it. \`remove\` KEEPS the branch ref, so its commits survive — NEVER run \`git branch -D\` (or any branch delete) and NEVER \`git reset --hard\`.\n` +
-      `3. Now create or check out ${branch} off the up-to-date default branch in your own worktree and do all the work here.\n` +
+    `Fix the cross-issue integration findings below, test-first, on a hotfix branch created FRESH off the up-to-date default branch.\n` +
+      `You are in a fresh isolated worktree. Create the branch fresh so a stale ref left by an earlier run cannot make you build on an old base: run \`git checkout -B ${branch} <the up-to-date default branch>\` — the \`-B\` form points ${branch} at the current default-branch tip whether or not the ref already exists. Do all the work in this worktree.\n` +
       `${AGENT_CONSTRAINTS}\n` +
       `Address ONLY these integration findings — nothing else — demonstrate the red before the green, keep every test green, and obey ${standardInstruction}:\n` +
       findings.map((finding) => `- ${finding.title}: ${finding.detail}`).join('\n') +
@@ -531,26 +540,33 @@ try {
 
   // MANDATORY final integration review. A per-issue verifier sees one issue in
   // isolation and structurally cannot catch a cross-issue defect across the
-  // combined diff. So whenever the run integrated at least one issue
-  // (verdicts.length > 0 — the only case a combined diff exists), one adversarial
-  // reviewer examines that combined diff with a verifier's full rigor, and its
-  // clear decision runs through blockingFindings exactly like a per-issue verdict:
-  // a dead / not-clear / empty-findings review can never pass silently. A real
-  // finding drives a BOUNDED hotfix + re-review — not a mere report — and a
-  // finding still unresolved when the cap is hit is parked for a human, never
-  // dropped. This sits after the wave loop but INSIDE the teardown try, and
-  // before the finally, so teardown still fires and any hotfix worktree is torn
-  // down too.
+  // combined change set. So whenever the run produced at least one integrated
+  // issue (verdicts.length > 0 — the only case a combined change set exists), one
+  // adversarial reviewer examines it with a verifier's full rigor (the reviewer
+  // is mode-aware: the combined diff on the default branch in merge mode, the
+  // union of the run's feature branches in PR mode), and its clear decision runs
+  // through blockingFindings exactly like a per-issue verdict: a dead / not-clear
+  // / empty-findings review can never pass silently. The bounded hotfix loop runs
+  // ONLY in merge mode — where landing is authorised and the default branch
+  // actually holds the changes, so a hotfix branched off it can see them; a real
+  // finding then drives a BOUNDED hotfix + re-review, not a mere report. In PR
+  // mode auto-hotfixing would contradict the conservative leave-the-merge-to-you
+  // posture (and the changes are not on the default branch), so the finding is
+  // reported (parked) for the human instead. Either way a finding is never
+  // silently cleared or dropped. This sits after the wave loop but INSIDE the
+  // teardown try, and before the finally, so teardown still fires and any hotfix
+  // worktree is torn down too.
   if (verdicts.length > 0) {
     let review = await integrationReview(verdicts)
     let findings = blockingFindings(review ? [review] : [])
 
-    // Bounded hotfix loop: address ONLY the cross-issue findings on a fresh
-    // hotfix branch (tracked in builtBranches so teardown removes its worktree),
-    // land it through the same linear rebase-ff integrate step, then RE-REVIEW —
-    // the hotfix could itself break the union. Stops when the review clears or
-    // the round cap is reached.
-    for (let round = 1; round <= maxIntegrationRounds && findings.length > 0; round += 1) {
+    // Bounded hotfix loop — MERGE MODE ONLY (the `merge &&` guard). Address ONLY
+    // the cross-issue findings on a fresh hotfix branch (tracked in builtBranches
+    // so teardown removes its worktree), land it through the same linear rebase-ff
+    // integrate step, then RE-REVIEW — the hotfix could itself break the union.
+    // Stops when the review clears or the round cap is reached. In PR mode the
+    // guard is false, the loop never runs, and the finding is parked below.
+    for (let round = 1; merge && round <= maxIntegrationRounds && findings.length > 0; round += 1) {
       log(`integration review: hotfix round ${round}/${maxIntegrationRounds} — ${findings.length} finding(s)`)
 
       const hotfixBranch = `orchestrate-integration-hotfix-${round}`
@@ -583,13 +599,14 @@ try {
       findings = blockingFindings(review ? [review] : [])
     }
 
-    // Record the integration outcome for the return, and park an unresolved
-    // cross-issue finding for a human rather than dropping it.
-    integrationOutcome =
-      findings.length === 0
-        ? { cleared: true, summary: review?.summary || 'integration review cleared the combined diff' }
-        : { cleared: false, findings }
-    if (findings.length > 0) {
+    // Record the integration outcome for the return. A clean pass leaves a trace
+    // in the log; an unresolved cross-issue finding is parked for a human — after
+    // the merge-mode hotfix cap, or straightaway in PR mode — never dropped.
+    if (findings.length === 0) {
+      log('integration review: cleared — no cross-issue findings across the combined change set')
+      integrationOutcome = { cleared: true, summary: review?.summary || 'integration review cleared the combined change set' }
+    } else {
+      integrationOutcome = { cleared: false, findings }
       parked.push({
         number: 0,
         title: 'integration review',
