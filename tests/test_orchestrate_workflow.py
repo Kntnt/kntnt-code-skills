@@ -1107,3 +1107,215 @@ def test_to_record_carries_the_feature_branch() -> None:
     # through optional chaining, so it is simply absent (null), never an error.
     assert out["parked_branch"] is None
     assert out["parked_status"] == "parked"
+
+
+# --- skip (park) an issue whose in-scope prerequisite did not land (issue #20) -
+
+# The engine dispatches issues in wave ORDER but must also honour wave OUTCOME:
+# before it builds an issue, it consults that issue's in-scope prerequisites and,
+# if any did not land (parked, blocked, or failed to integrate), it parks this
+# issue with a reason naming the unlanded prerequisite instead of building it on
+# an incomplete base. Because a parked issue never enters the `landed` set, the
+# skip CASCADES to every downstream dependent transitively. Only IN-SCOPE
+# prerequisites count — a `blocked_by` entry outside this run's plan is assumed
+# already on the default branch and never blocks. The decision rests on the pure
+# `unlandedPrerequisites` helper (tested through node, drift-guarded against its
+# inline copy above) plus the engine wiring that feeds it a `landed` set which
+# only integrated issues ever enter.
+
+
+def test_engine_helpers_exports_unlanded_prerequisites() -> None:
+    # The skip decision is a pure predicate, so it lives in the tested source of
+    # truth alongside the other engine helpers — the drift guard then holds its
+    # inline workflow copy byte-identical automatically.
+    helpers = ENGINE_HELPERS.read_text(encoding="utf-8")
+    names = _exported_const_names(helpers)
+    assert "unlandedPrerequisites" in names, (
+        "engine-helpers.mjs must export `unlandedPrerequisites` as the tested "
+        "source of truth for the skip-when-prerequisite-unlanded decision"
+    )
+
+
+def test_prerequisite_skip_is_consulted_before_the_build_and_parks() -> None:
+    # In the per-issue loop the engine must consult unlandedPrerequisites BEFORE
+    # dispatching buildAndVerify, and when a prerequisite is unlanded it must park
+    # the issue (toRecord + parked.push + continue) rather than build it.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    per_issue_idx = source.index("for (const number of")
+    build_idx = source.index("buildAndVerify(number)")
+    prereq_idx = source.index("unlandedPrerequisites(", per_issue_idx)
+    assert per_issue_idx < prereq_idx < build_idx, (
+        "the engine must consult unlandedPrerequisites inside the per-issue loop "
+        "and before buildAndVerify — an unlanded prerequisite must skip the build"
+    )
+    region = source[prereq_idx:build_idx]
+    assert "parked.push(" in region, (
+        "a prerequisite-skipped issue must be parked into the report"
+    )
+    assert "toRecord(" in region, (
+        "a prerequisite-skipped issue must be recorded via toRecord so its report "
+        "shape matches every other parked issue"
+    )
+    assert "continue" in region, (
+        "a prerequisite-skipped issue must NOT fall through to the build"
+    )
+
+
+def test_prerequisite_park_reason_names_the_unlanded_prerequisite() -> None:
+    # The park reason must NAME the unlanded prerequisite(s), not merely say the
+    # issue was skipped, so the report points at the real cause.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    prereq_idx = source.index("unlandedPrerequisites(", source.index("for (const number of"))
+    build_idx = source.index("buildAndVerify(number)")
+    region = source[prereq_idx:build_idx]
+    assert "prerequisite" in region.lower(), (
+        "the park reason must mention the prerequisite"
+    )
+    assert "missing.map(" in region or "${missing" in region, (
+        "the park reason must interpolate the unlanded prerequisite numbers"
+    )
+
+
+def test_only_integrated_issues_enter_the_landed_set() -> None:
+    # A `landed` set tracks the issues that actually integrated; the skip cascade
+    # depends on a parked issue NEVER entering it. So `landed` must be declared and
+    # must gain a member ONLY on the successful-integration path (paired with
+    # verdicts.push), never on any parked path — enforced by there being exactly
+    # one `landed.add(` in the whole engine, on the done branch.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert "const landed = new Set()" in source, (
+        "the engine must declare a `landed` set to track integrated issues"
+    )
+    assert source.count("landed.add(") == 1, (
+        "the engine must add to `landed` in exactly one place — the successful "
+        "integration path — so a parked issue never counts as landed"
+    )
+    push_idx = source.index("verdicts.push(integrated)")
+    assert "landed.add(" in source[push_idx : push_idx + 140], (
+        "an issue must be marked landed on the same path that pushes it to "
+        "verdicts — the successful-integration path"
+    )
+
+
+# The predicate itself, exercised through node over a table: an absent/empty
+# blocked_by yields no unlanded prerequisites; an out-of-scope blocker is ignored;
+# an in-scope blocker counts only while it is not in `landed`.
+_UNLANDED_HARNESS = """
+import { unlandedPrerequisites } from "__MODULE_URL__";
+const inScope = new Set([1, 2, 3, 4]);
+const out = {
+  no_blocked_by: unlandedPrerequisites(undefined, inScope, new Set()),
+  empty_blocked_by: unlandedPrerequisites([], inScope, new Set([1])),
+  all_landed: unlandedPrerequisites([1, 2], inScope, new Set([1, 2])),
+  one_unlanded: unlandedPrerequisites([1, 2], inScope, new Set([1])),
+  out_of_scope_ignored: unlandedPrerequisites([99], inScope, new Set()),
+  mixed_scope: unlandedPrerequisites([1, 99], inScope, new Set()),
+};
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_unlanded_prerequisites_behaviour() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    harness = _UNLANDED_HARNESS.replace(
+        "__MODULE_URL__", ENGINE_HELPERS.resolve().as_uri()
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    out = json.loads(result.stdout)
+
+    # No prerequisite, or none in this run's scope: nothing blocks the build.
+    assert out["no_blocked_by"] == []
+    assert out["empty_blocked_by"] == []
+    assert out["out_of_scope_ignored"] == []
+
+    # Every in-scope prerequisite already landed: nothing blocks the build.
+    assert out["all_landed"] == []
+
+    # An in-scope prerequisite still unlanded is returned (named), so the caller
+    # parks the dependent; an out-of-scope blocker alongside it is ignored.
+    assert out["one_unlanded"] == [2]
+    assert out["mixed_scope"] == [1]
+
+
+# The engine's park/land decision, simulated over a real dependency graph with the
+# REAL helper: an issue builds only when it has no unlanded prerequisite, and only
+# a built-and-integrated issue enters `landed`. This demonstrates the emergent
+# cascade a pure predicate table cannot: a failed prerequisite skips its dependent,
+# and the dependent's own dependents skip transitively.
+_CASCADE_HARNESS = """
+import { unlandedPrerequisites } from "__MODULE_URL__";
+const issues = {
+  1: { blocked_by: [] },     // A: prerequisite that FAILS to integrate
+  2: { blocked_by: [1] },    // B: depends on A -> skipped
+  3: { blocked_by: [2] },    // C: depends on B -> cascade skip
+  4: { blocked_by: [] },     // D: no prerequisite -> unaffected
+  5: { blocked_by: [] },     // E: prerequisite that DOES land
+  6: { blocked_by: [5] },    // F: depends on E (all landed) -> builds
+  7: { blocked_by: [99] },   // G: only an out-of-scope prerequisite -> builds
+};
+const order = [1, 2, 3, 4, 5, 6, 7];
+const inScope = new Set(order);
+const landed = new Set();
+const skipped = [];
+// The issues that would fail to land when built (parked/blocked/failed integrate).
+const failsToLand = new Set([1]);
+for (const number of order) {
+  const missing = unlandedPrerequisites(issues[number].blocked_by, inScope, landed);
+  if (missing.length > 0) {
+    skipped.push({ number, missing });
+    continue;
+  }
+  if (!failsToLand.has(number)) landed.add(number);
+}
+process.stdout.write(JSON.stringify({ skipped, landed: [...landed].sort((a, b) => a - b) }));
+"""
+
+
+def test_prerequisite_skip_cascades_in_a_simulated_run() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    harness = _CASCADE_HARNESS.replace(
+        "__MODULE_URL__", ENGINE_HELPERS.resolve().as_uri()
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    out = json.loads(result.stdout)
+    skipped = {entry["number"]: entry["missing"] for entry in out["skipped"]}
+
+    # B is parked because its prerequisite A did not land, naming A.
+    assert skipped.get(2) == [1], (
+        "an issue whose in-scope prerequisite failed must be skipped, naming it"
+    )
+
+    # C is parked transitively: B was skipped, so B never landed, so C sees B
+    # unlanded and skips in turn — the cascade.
+    assert skipped.get(3) == [2], (
+        "the skip must cascade: a dependent of a skipped issue is itself skipped"
+    )
+
+    # No false skips: D (no prerequisite), F (prerequisite E landed), and G (only
+    # an out-of-scope prerequisite) all build and land.
+    assert 4 not in skipped and 6 not in skipped and 7 not in skipped, (
+        "an issue with no unlanded in-scope prerequisite must not be skipped"
+    )
+    assert out["landed"] == [4, 5, 6, 7], (
+        "exactly the issues with all prerequisites satisfied must land"
+    )
