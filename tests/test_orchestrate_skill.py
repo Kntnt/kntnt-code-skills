@@ -359,6 +359,26 @@ def test_model_effort_shows_the_illustrative_ladder() -> None:
     )
 
 
+def test_illustrative_ladder_efforts_stay_on_the_stated_scale() -> None:
+    # The section states the effort scale is `low < medium < high < xhigh < max`.
+    # The illustrative ladder must not name a phantom effort off that scale without
+    # disambiguating it. Today the cheapest tier is written `Haiku · thinking`, and
+    # `thinking` is NOT a rung on the stated scale — so if it appears it must carry
+    # the ADR-0001 §4 gloss (Thinking = Haiku with light extended thinking), or a
+    # reader deriving efforts against the ladder hits a self-contradiction.
+    section = _model_effort_section().lower()
+    assert "low < medium < high < xhigh < max" in section, (
+        "§Model and effort must state the effort ladder low < medium < high < xhigh < max"
+    )
+    if "thinking" in section:
+        assert "extended thinking" in section, (
+            "the ladder names the effort `thinking`, which is not on the stated "
+            "low < medium < high < xhigh < max scale; it must be glossed (ADR-0001 "
+            "§4: Thinking = Haiku with light extended thinking) so the section does "
+            "not contradict its own effort scale"
+        )
+
+
 def test_model_effort_states_the_two_guardrails() -> None:
     section = _model_effort_section().lower()
     # Guardrail 1: only models the harness can actually dispatch are chosen.
@@ -378,4 +398,37 @@ def test_model_effort_states_the_two_guardrails() -> None:
     ), (
         "guardrail 2 must state judgment roles never drop below the session tier "
         "unless the maintainer dialed down"
+    )
+
+
+def test_build_step_launch_args_include_roles() -> None:
+    # Step 4's launch instruction is the closed enumeration of what the orchestrator
+    # passes to the engine as `args` — the natural procedural checklist a session
+    # builds the payload from. #25 added `roles` (the per-role (model, effort) the
+    # --level dial resolved) as a new engine arg, and §Model and effort says the
+    # orchestrator "hands it to the engine as args.roles". If step 4 omits `roles`,
+    # a session that assembles the payload from this list ships no roles; the engine
+    # then sees config.roles undefined, every roleTuning() returns {}, and every
+    # sub-agent reverts to the session model — the exact 'everything runs on Opus'
+    # cost problem #25 was created to end. So the launch args must list `roles`
+    # alongside the other resolved knobs.
+    build = _build_section()
+    launch_lines = [ln for ln in build.splitlines() if "as `args`" in ln]
+    assert launch_lines, (
+        "the Build step must carry a launch instruction passing the plan `as args`"
+    )
+    launch = " ".join(launch_lines).lower()
+    for knob in (
+        "merge",
+        "maxfixrounds",
+        "maxintegrationrounds",
+        "budgetfloor",
+        "lenses",
+    ):
+        assert knob in launch, f"the launch args enumeration must name `{knob}`"
+    assert "roles" in launch, (
+        "the Build step's launch args enumeration must list `roles` (the per-role "
+        "(model, effort) the --level dial resolved), so the orchestrator actually "
+        "threads it into the engine; without it config.roles is undefined and every "
+        "sub-agent reverts to the session model"
     )
