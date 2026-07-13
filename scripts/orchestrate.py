@@ -109,12 +109,13 @@ MIN_TITLE_MATCH_LEN = 3
 # warning. Anchored at the start of a region line's stripped text.
 NONE_SENTINEL_RE = re.compile(r"none\b", re.IGNORECASE)
 
-# The warning raised when a `## Blocked by` section carries real bullet/prose
-# content yet yields no resolvable reference — the silent-empty-graph failure
-# this issue exists to make loud. Body-scoped; the issue number is prefixed by
-# `build_plan` when the warning reaches the plan's top-level `warnings` array.
-BLOCKED_BY_UNRESOLVED_WARNING = (
-    "Blocked by section has content but resolved to zero issue references "
+# The shared tail of every unresolved-dependency warning — raised when a
+# dependency region (the `## Blocked by` section or a genuine inline label)
+# carries real content yet yields no resolvable reference, the silent-empty-graph
+# failure this issue exists to make loud. `_unresolved_region_warning` prefixes
+# the region that produced it; `build_plan` further prefixes the issue number.
+UNRESOLVED_WARNING_TAIL = (
+    "has content but resolved to zero issue references "
     "(a prerequisite named by prose may not match any known issue title)"
 )
 
@@ -231,9 +232,30 @@ def fail(message: str) -> NoReturn:
     raise SystemExit(1)
 
 
+@dataclass
+class _RegionScan:
+    """The outcome of scanning a hard-edge keyword's governed region: the issue
+    `numbers` it resolved (by `#N` or title), and whether the region carried any
+    real content at all. `had_content` distinguishes an unresolved dependency
+    (content present, nothing resolved — worth a warning) from an empty label
+    (nothing to resolve, no warning)."""
+
+    numbers: list[int]
+    had_content: bool
+
+
+def _is_meaningful(text: str) -> bool:
+    """Whether a region line carries a real dependency claim — non-blank and not
+    an explicit "None ..." statement — used to decide whether an unresolved
+    region should warn and whether a region has content at all."""
+
+    stripped = text.strip()
+    return bool(stripped) and not NONE_SENTINEL_RE.match(stripped)
+
+
 def _scan_reference_region(
     body: str, start: int, title_index: dict[str, int] | None = None
-) -> list[int]:
+) -> _RegionScan:
     """Collect the issue numbers a hard-edge keyword governs, starting just past
     the keyword at `start`. References in the keyword's own clause are taken — the
     same-line remainder up to the next sentence terminator or the next hard/soft
@@ -246,10 +268,12 @@ def _scan_reference_region(
     once any ref is in hand, the prose-continuation reach is not taken), so
     trailing prose and later unrelated lists are left out.
 
-    When `title_index` is supplied (a caller passes it only for a genuine label
+    When `title_index` is supplied (the caller passes it only for a genuine label
     form), a governed piece with no `#N` is also resolved by exact title match,
     so `**Depends on:** User schema migration` and a bullet list of prose titles
-    become edges. Passing None keeps the pure-`#N` behaviour byte-for-byte."""
+    become edges. Passing None keeps the pure-`#N` behaviour byte-for-byte. The
+    returned `had_content` reports whether the region held any real text, so the
+    caller can warn on a label that carried a claim yet resolved to nothing."""
 
     # Take the references in the keyword's own clause: the same-line remainder cut
     # at the first clause boundary, so a trailing soft phrase or a second keyword
@@ -262,30 +286,34 @@ def _scan_reference_region(
         head_title = _title_number(_first_clause(head), title_index)
         if head_title is not None:
             numbers.append(head_title)
+    had_content = _is_meaningful(head)
 
     # Then walk the following lines: skip blanks, absorb bullet references, and
     # stop the moment a line is neither. A `#N` bullet is consumed as before; a
     # prose-title bullet resolves by title and the list continues; when nothing
     # has matched yet, the first non-bullet prose line is the keyword's
     # continuation — its clause supplies the ref (by `#N` or, failing that, by
-    # title) before scanning stops.
+    # title) before scanning stops. Any non-blank piece seen marks the region as
+    # having content, so an unresolved-but-non-empty label can be warned about.
     rest = "" if newline == -1 else body[newline + 1 :]
     for line in rest.splitlines():
         if not line.strip():
             continue
+        bullet_content = BULLET_CONTENT_RE.match(line)
+        piece = bullet_content["content"] if bullet_content is not None else line
+        if _is_meaningful(piece):
+            had_content = True
         bullet = BULLET_REF_RE.match(line)
         if bullet is not None:
             numbers.append(int(bullet[1]))
             continue
-        if title_index:
-            content = BULLET_CONTENT_RE.match(line)
-            if content is not None:
-                bullet_title = _title_number(
-                    _first_clause(content["content"]), title_index
-                )
-                if bullet_title is not None:
-                    numbers.append(bullet_title)
-                    continue
+        if title_index and bullet_content is not None:
+            bullet_title = _title_number(
+                _first_clause(bullet_content["content"]), title_index
+            )
+            if bullet_title is not None:
+                numbers.append(bullet_title)
+                continue
         if not numbers:
             refs = _refs_in_first_clause(line)
             if not refs and title_index:
@@ -295,7 +323,7 @@ def _scan_reference_region(
             numbers.extend(refs)
         break
 
-    return numbers
+    return _RegionScan(numbers=numbers, had_content=had_content)
 
 
 def _first_clause(line: str) -> str:
@@ -337,6 +365,14 @@ def _title_number(text: str, title_index: dict[str, int]) -> int | None:
     return title_index.get(key)
 
 
+def _unresolved_region_warning(region: str) -> str:
+    """Warning text for a dependency region that carries real content yet
+    resolves to zero references. `region` names what produced it (e.g. `Blocked
+    by section`, `'Depends on' label`); `build_plan` prefixes the issue number."""
+
+    return f"{region} {UNRESOLVED_WARNING_TAIL}"
+
+
 def _region_has_content(region: str) -> bool:
     """Whether a dependency region carries real bullet or prose content — a line
     that is neither blank nor an explicit "None ..." statement. This gates the
@@ -345,10 +381,9 @@ def _region_has_content(region: str) -> bool:
 
     for line in region.splitlines():
         bullet = BULLET_CONTENT_RE.match(line)
-        content = bullet["content"] if bullet is not None else line.strip()
-        if not content or NONE_SENTINEL_RE.match(content):
-            continue
-        return True
+        content = bullet["content"] if bullet is not None else line
+        if _is_meaningful(content):
+            return True
     return False
 
 
@@ -390,37 +425,39 @@ def parse_dependencies(
     When `title_index` (a normalised title -> number map of the in-scope issues)
     is supplied, a prerequisite named by its exact prose title — with no `#N` —
     also becomes an edge, but ONLY inside these same dependency regions: the
-    heading section, and inline forms that read as a genuine label (bold, or
-    colon-bearing, or beginning their line). A title mentioned anywhere else in
-    the body produces no edge. When the `## Blocked by` section has real content
-    yet resolves to zero references, a warning is raised so the otherwise-silent
-    empty graph is made loud.
+    heading section, and inline forms that read as a genuine label — bold-wrapped
+    (`**Depends on:**`, `**Depends on**`) or colon-bearing (`Depends on:`). A
+    bare keyword used as an ordinary verb ("this work needs review") is not a
+    label and resolves no title. A title mentioned anywhere else in the body
+    produces no edge. When a dependency region — the `## Blocked by` section or a
+    genuine inline label — has real content yet resolves to zero references, a
+    warning is raised so the otherwise-silent empty graph is made loud.
     """
 
     text = body or ""
     edges: dict[int, str] = {}
     warnings: list[str] = []
 
-    # Inline/labelled forms anywhere in the body. The keyword's canonical
-    # spelling (not the author's casing) is recorded as the edge origin. Title
-    # resolution is offered only to a genuine label form — bold-wrapped,
-    # colon-bearing, or line-initial — so an ordinary prose verb ("needs
-    # review") cannot mint a title edge from a stray following clause.
+    # Inline/labelled forms anywhere in the body. The keyword's canonical spelling
+    # (not the author's casing) is recorded as the edge origin. A match counts as
+    # a genuine label only when bold-wrapped or colon-bearing — an ordinary prose
+    # verb ("this work needs review") is not. Bare `#N` extraction runs for every
+    # match regardless; only title resolution and the unresolved-region warning
+    # are gated on the label test, so a stray title-shaped clause after a prose
+    # verb cannot mint a false edge and prose keywords never warn.
     for match in INLINE_EDGE_RE.finditer(text):
         keyword = next(
             canonical
             for canonical in HARD_EDGE_KEYWORDS
             if canonical.lower() == match["keyword"].lower()
         )
-        is_label = (
-            "*" in match.group()
-            or ":" in match.group()
-            or match.start() == 0
-            or text[match.start() - 1] == "\n"
-        )
+        is_label = "*" in match.group() or ":" in match.group()
         region_titles = title_index if is_label else None
-        for number in _scan_reference_region(text, match.end(), region_titles):
+        scan = _scan_reference_region(text, match.end(), region_titles)
+        for number in scan.numbers:
             edges.setdefault(number, keyword)
+        if is_label and not scan.numbers and scan.had_content:
+            warnings.append(_unresolved_region_warning(f"'{keyword}' label"))
 
     # The heading-form `## Blocked by` section: every `#N` under it is an edge,
     # attributed to "Blocked by" unless an inline keyword already claimed it (so
@@ -443,7 +480,7 @@ def parse_dependencies(
         if _region_has_content(section_body) and not _section_has_any_reference(
             section_body, title_index
         ):
-            warnings.append(BLOCKED_BY_UNRESOLVED_WARNING)
+            warnings.append(_unresolved_region_warning("Blocked by section"))
 
     # Non-directional coupling: visible as a soft note, never an edge. A ref
     # already claimed as a hard edge keeps its edge and is not down-graded.

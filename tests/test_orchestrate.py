@@ -463,7 +463,9 @@ def test_parse_dependencies_body_start_bare_keyword_title_is_not_an_edge() -> No
     # A hard keyword at absolute body start, with no bold and no colon, is not a
     # label; a following clause equal to a title must not mint an edge.
     assert (
-        orchestrate.parse_dependencies("Requires review", title_index={"review": 44}).edges
+        orchestrate.parse_dependencies(
+            "Requires review", title_index={"review": 44}
+        ).edges
         == {}
     )
     assert (
