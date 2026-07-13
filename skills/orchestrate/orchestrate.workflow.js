@@ -565,21 +565,36 @@ try {
 
       // Skip (park) this issue when one of its in-scope prerequisites is not on the
       // base, rather than build it on a base missing that work. The reason NAMES the
-      // unlanded prerequisite and is carried in `blockers` — the field the report
+      // unlanded prerequisite(s) and is carried in `blockers` — the field the report
       // surfaces for a parked issue (it shows `verify` only for a done one) — so the
-      // report points at the real cause. It is MODE-AWARE: in merge mode a missing
-      // prerequisite genuinely failed to land (parked/blocked/failed integrate); in
-      // PR mode NOTHING merges, so a prerequisite is missing because it is only an
-      // open PR — the reason points the human at --merge, the way to build this
-      // issue on a base that contains it. Because a skipped issue is never added to
+      // report points at the real cause. Because a skipped issue is never added to
       // `landed`, this same check parks every downstream dependent in turn — the
       // transitive cascade.
       const missing = unlandedPrerequisites(issuesByNumber.get(number)?.blocked_by, issuesByNumber, landed)
       if (missing.length > 0) {
+
+        // Build a MODE-AWARE park reason. In merge mode a missing prerequisite
+        // genuinely failed to land (parked/blocked/failed integrate). In PR mode
+        // NOTHING merges, so a prerequisite is off the base for one of two reasons an
+        // honest report must not conflate: one that INTEGRATED opened a pull request
+        // and is merely unmerged — re-running with --merge (or waiting for that PR)
+        // lands it; one that did NOT integrate parked or failed with its own real
+        // reason in its own record, which --merge cannot conjure, so point the human
+        // at that record rather than a pull request that was never opened.
         const named = missing.map((prereq) => `#${prereq}`).join(', ')
-        const reason = merge
-          ? `prerequisite did not land: ${named}`
-          : `prerequisite not on the base — PR mode opens a pull request without merging it: ${named}. Re-run with --merge (or after the prerequisite's PR merges) to build this issue on a base that contains it.`
+        let reason
+        if (merge) {
+          reason = `prerequisite did not land: ${named}`
+        } else {
+          const openedPr = new Set(verdicts.map((verdict) => verdict.number))
+          const unmerged = missing.filter((prereq) => openedPr.has(prereq)).map((prereq) => `#${prereq}`)
+          const incomplete = missing.filter((prereq) => !openedPr.has(prereq)).map((prereq) => `#${prereq}`)
+          const clauses = []
+          if (unmerged.length > 0) clauses.push(`prerequisite opened a pull request but is not merged onto the base: ${unmerged.join(', ')} — re-run with --merge (or after that PR merges) to build this issue on a base that contains it`)
+          if (incomplete.length > 0) clauses.push(`prerequisite did not complete — see its own parked record: ${incomplete.join(', ')}`)
+          reason = clauses.join('; ')
+        }
+
         parked.push({ ...toRecord(number, null, 'parked', reason), blockers: [reason] })
         continue
       }

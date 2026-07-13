@@ -1426,21 +1426,50 @@ def test_prerequisite_skip_cascades_in_a_simulated_run() -> None:
 # mode-aware park reason, plus a behavioural run showing the two modes diverge.
 
 
+def _enclosing_if_condition(source: str, needle: str) -> str:
+    """The full condition of the nearest ``if (…)`` that guards ``needle``.
+
+    Walks back from ``needle`` to the closest preceding ``if (`` and returns the
+    balanced text between its parentheses. Reading the WHOLE condition — rather
+    than substring-matching on ``needle``'s physical line — makes the guard robust
+    in both directions: a widened escape hatch such as ``merge || force`` is
+    visible (the condition no longer equals ``merge``), and moving the guarded
+    statement onto its own line inside an ``if (merge) { … }`` block reads the same
+    condition instead of falsely failing."""
+
+    needle_idx = source.index(needle)
+    open_idx = source.rindex("if (", 0, needle_idx) + len("if (") - 1
+    depth = 0
+    for index in range(open_idx, len(source)):
+        char = source[index]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return source[open_idx + 1 : index]
+    raise AssertionError(f"unbalanced parentheses in the `if` guarding {needle!r}")
+
+
 def test_only_merge_mode_marks_a_prerequisite_landed() -> None:
-    # The sole `landed.add(` must be guarded by merge mode: only a merge-mode
+    # The sole `landed.add(` must be guarded by EXACTLY `merge`: only a merge-mode
     # integration puts the issue on the base. In PR mode integrate only opens a PR,
     # so a PR-opened issue must NOT enter `landed`, or its dependents would build on
-    # a base missing it — the #23 bug. (The single-add / on-the-done-branch
-    # invariants stay pinned by test_only_integrated_issues_enter_the_landed_set.)
+    # a base missing it — the #23 bug. Reading the whole guard condition (not a bare
+    # `merge` substring on the same physical line) is what makes this robust: it
+    # rejects a widened `merge || force` escape hatch and does not falsely fail when
+    # the add moves onto its own line inside an `if (merge) { … }` block. (The
+    # single-add / on-the-done-branch invariants stay pinned by
+    # test_only_integrated_issues_enter_the_landed_set.)
     source = WORKFLOW.read_text(encoding="utf-8")
     assert source.count("landed.add(") == 1, (
         "the engine must still add to `landed` in exactly one place"
     )
-    add_idx = source.index("landed.add(")
-    line = source[source.rindex("\n", 0, add_idx) + 1 : source.index("\n", add_idx)]
-    assert "merge" in line, (
-        "the sole `landed.add(` must be guarded by `merge` so a PR-opened issue is "
-        "not treated as landed onto the base — in PR mode nothing merges"
+    condition = _enclosing_if_condition(source, "landed.add(").strip()
+    assert condition == "merge", (
+        "the sole `landed.add(` must be guarded by exactly `merge` (not a widened "
+        "`merge || …` escape hatch) so a PR-opened issue is never treated as landed "
+        f"onto the base — in PR mode nothing merges; found guard `{condition}`"
     )
 
 
