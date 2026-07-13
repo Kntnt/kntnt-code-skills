@@ -232,6 +232,7 @@ const toRecord = (number, impl, status, verify) => ({
   number,
   title: titleOf(number),
   status,
+  branch: impl?.branch,
   gates: impl?.gatesSummary || (impl?.gatesPassed ? 'green' : 'unknown'),
   verify: verify || '',
   remaining_for_human: impl?.remainingForHuman || [],
