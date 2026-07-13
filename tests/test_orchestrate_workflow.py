@@ -106,10 +106,27 @@ def _extract_def(source: str, name: str) -> str:
     return normalised[start : normalised.index("\n", start)]
 
 
+def _exported_const_names(source: str) -> list[str]:
+    """Every ``export const <name> = `` name in a module, in source order.
+
+    Driving the drift guard off this list means a newly extracted helper is
+    compared automatically — the guard never silently narrows to a stale pair."""
+
+    return re.findall(r"^export const (\w+) = ", source, flags=re.MULTILINE)
+
+
 def test_inline_copies_match_engine_helpers() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     helpers = ENGINE_HELPERS.read_text(encoding="utf-8")
-    for name in ("normalizeArgs", "planIsEmpty"):
+
+    # The guard compares every helper the module exports, not a hardcoded pair,
+    # so an added pure helper (like `blockingFindings`) is drift-checked too.
+    names = _exported_const_names(helpers)
+    assert "blockingFindings" in names, (
+        "engine-helpers.mjs must export `blockingFindings` as the tested source "
+        "of truth for the integrate-only-when-cleared logic"
+    )
+    for name in names:
         assert _extract_def(workflow, name) == _extract_def(helpers, name), (
             f"the inline `{name}` in orchestrate.workflow.js has drifted from "
             f"lib/orchestrate/engine-helpers.mjs — keep the two byte-identical"
@@ -681,3 +698,59 @@ def test_engine_helpers_behaviour() -> None:
     assert out["empty_empty"] is True
     assert out["empty_waves_empty"] is True
     assert out["empty_waves_full"] is False
+
+
+# `blockingFindings` decides integration: the change lands ONLY when the panel
+# explicitly cleared. An empty/absent panel (a dead verifier filtered to nothing)
+# and a not-clear verdict carrying no `findings` array both block — the two
+# silent-integration escapes the lean single-lens default would otherwise widen.
+_BLOCKING_HARNESS = """
+import { blockingFindings } from "__MODULE_URL__";
+const out = {
+  empty: blockingFindings([]),
+  not_array: blockingFindings(undefined),
+  one_clear: blockingFindings([{ clear: true, summary: 'ok' }]),
+  not_clear_no_findings: blockingFindings([{ clear: false, summary: 'x' }]),
+  not_clear_with_findings: blockingFindings([{ clear: false, summary: 'x', findings: [{ title: 't', detail: 'd' }] }]),
+  mixed: blockingFindings([{ clear: true }, { clear: false, summary: 'y' }]),
+};
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_blocking_findings_behaviour() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    harness = _BLOCKING_HARNESS.replace(
+        "__MODULE_URL__", ENGINE_HELPERS.resolve().as_uri()
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    out = json.loads(result.stdout)
+
+    # An empty or non-array panel is never "done": one synthetic blocking finding,
+    # so a dead verifier can never integrate unverified.
+    assert len(out["empty"]) == 1
+    assert len(out["not_array"]) == 1
+
+    # A single explicit clear integrates: no blocking findings.
+    assert out["one_clear"] == []
+
+    # A not-clear verdict with no findings still blocks, its detail drawn from the
+    # verdict summary rather than vanishing.
+    assert len(out["not_clear_no_findings"]) == 1
+    assert out["not_clear_no_findings"][0]["detail"] == "x"
+
+    # A not-clear verdict with findings contributes exactly those findings.
+    assert out["not_clear_with_findings"] == [{"title": "t", "detail": "d"}]
+
+    # A mixed panel (one clear, one not) blocks on the not-clear verdict.
+    assert len(out["mixed"]) == 1
