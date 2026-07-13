@@ -94,11 +94,11 @@ const INTEGRATE_SCHEMA = {
   },
 }
 
-// `normalizeArgs` and `planIsEmpty` are kept inline as plain internal `const`s
-// because the Workflow harness rejects any top-level `export` beyond the single
-// leading `export const meta` and forbids a top-level `import` — so this script
-// cannot import them. Their tested source of truth is the byte-for-byte
-// identical `lib/orchestrate/engine-helpers.mjs`; keep the two in sync.
+// `normalizeArgs`, `planIsEmpty`, and `blockingFindings` are kept inline as plain
+// internal `const`s because the Workflow harness rejects any top-level `export`
+// beyond the single leading `export const meta` and forbids a top-level `import`
+// — so this script cannot import them. Their tested source of truth is the
+// byte-for-byte identical `lib/orchestrate/engine-helpers.mjs`; keep the two in sync.
 
 /**
  * Normalize the raw `args` the Workflow harness delivers into the single config
@@ -139,6 +139,40 @@ const normalizeArgs = (raw) => {
  * @returns {boolean} Whether the plan would spawn no agents.
  */
 const planIsEmpty = (config) => !Array.isArray(config.waves) || config.waves.length === 0
+
+/**
+ * The findings that must BLOCK integration, given a verifier panel's verdicts.
+ * Integration proceeds only when this returns an empty array, which requires at
+ * least one verdict AND every verdict explicitly cleared. This closes two silent-
+ * integration escapes the lean single-lens default would otherwise widen: an
+ * empty panel (a dead verifier `.filter(Boolean)`-ed down to nothing) is never
+ * "done", and a not-clear verdict that carries no `findings` array still blocks.
+ *
+ * @param {Array<{clear?: boolean, summary?: string, findings?: object[]}>} verdicts
+ *   The verdicts a verify pass produced (already Boolean-filtered).
+ * @returns {object[]} The blocking findings; empty only when the change is
+ *   explicitly cleared for integration.
+ */
+const blockingFindings = (verdicts) => {
+
+  // An empty or missing panel is never "done": the verifier did not run, so the
+  // change is unverified and must not integrate.
+  if (!Array.isArray(verdicts) || verdicts.length === 0) {
+    return [{ title: 'verification did not run', detail: 'the verifier returned no verdict; the change is unverified' }]
+  }
+
+  // Only an explicit clear=true contributes nothing. Any other verdict blocks:
+  // its own findings when it listed them, else one synthesized from its summary,
+  // so a "not clear" verdict with no findings array cannot slip through as done.
+  return verdicts.flatMap((verdict) => {
+    if (verdict.clear === true) return []
+    const findings = verdict.findings || []
+    return findings.length > 0
+      ? findings
+      : [{ title: 'unresolved', detail: verdict.summary || 'reviewer did not clear the change' }]
+  })
+
+}
 
 // Run options, with the conservative defaults the skill documents. Every field
 // is read off the normalized config, never off the raw `args` the harness
@@ -309,10 +343,12 @@ const buildAndVerify = async (number) => {
   if (impl.status === 'blocked') return toRecord(number, impl, 'blocked', 'design blocker')
 
   // Initial verification: the full verifier panel runs EXACTLY ONCE, after green.
-  // Collect its findings; clear on the first pass integrates without a fix round.
+  // Integration proceeds ONLY when the panel explicitly cleared — blockingFindings
+  // treats an empty panel (a dead verifier) and a not-clear-without-findings verdict
+  // as blocking, so a change never integrates unverified on either escape.
   const verdicts = await verify(number, impl)
-  let findings = verdicts.flatMap((verdict) => (verdict.clear ? [] : verdict.findings || []))
   let summary = verdicts.map((verdict) => verdict.summary).join(' | ')
+  let findings = blockingFindings(verdicts)
   if (findings.length === 0) return toRecord(number, impl, 'done', summary)
 
   // Capped fix loop: fix the concrete findings, then RE-VERIFY ONLY THOSE FIXED
@@ -323,12 +359,14 @@ const buildAndVerify = async (number) => {
     log(`#${number}: fix round ${round}/${maxFixRounds} — ${findings.length} finding(s)`)
     impl = (await fix(number, impl, findings)) ?? impl
 
-    // A dead re-verifier does not silently pass: treat it as unresolved so the
-    // issue re-fixes or, at the cap, parks — it never integrates unconfirmed.
-    const recheck = (await reverifyFindings(number, impl, findings)) ??
-      { clear: false, summary: 're-verify returned nothing', findings }
+    // A dead re-verifier never clears the issue: keep the prior findings
+    // unresolved so the next round re-fixes them, or the cap parks the issue —
+    // it never integrates unconfirmed. A live verdict is judged by blockingFindings,
+    // symmetric with the initial pass, so a not-clear-without-findings still blocks.
+    const recheck = await reverifyFindings(number, impl, findings)
+    if (recheck == null) continue
     summary = recheck.summary || summary
-    findings = recheck.clear ? [] : recheck.findings || []
+    findings = blockingFindings([recheck])
     if (findings.length === 0) return toRecord(number, impl, 'done', summary)
   }
 
