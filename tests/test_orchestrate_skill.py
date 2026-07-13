@@ -181,3 +181,83 @@ def test_closing_warns_against_trusting_the_list_requery() -> None:
     assert any(
         re.search(r"\b(not|never|rather than|instead of)\b", ln) for ln in warn_lines
     ), "the guidance must say not to rely on the list re-query"
+
+
+# --- prune the run's leftover worktree scaffolding branches (issue #24) -------
+
+# The Workflow harness names each per-worktree scaffolding branch
+# ``worktree-<runId>-<n>``. #14's teardown removes the worktrees and preserves
+# every feature-branch ref, but the harness's own scaffolding branches are left
+# behind as orphaned refs that accumulate across runs. The orchestrator — which
+# knows the runId from the Workflow launch — must prune exactly those run-scoped
+# branches at the end of the run, confined to the run's own runId so no feature
+# branch or unrelated branch is ever touched. The engine cannot enumerate the
+# scaffolding names from ``git worktree list`` once the agents check out their
+# feature branches, so the driver/finalize step in SKILL.md is the documented
+# home. These tests are structural over that section.
+
+
+def _prune_lines() -> list[str]:
+    """Finalize-section paragraphs that tie the scaffolding prefix to the runId.
+
+    A repo-markdown paragraph is a single physical line, so the whole prune
+    instruction — its pattern, its confinement clause, and the delete command —
+    sits on the one line these assertions inspect."""
+
+    section = _finalize_section()
+    return [
+        ln
+        for ln in section.splitlines()
+        if "worktree-" in ln.lower() and "runid" in ln.lower()
+    ]
+
+
+def test_finalize_prunes_run_scoped_scaffolding_branches() -> None:
+    section = _finalize_section().lower()
+    # The finalize step prunes the leftover scaffolding branches at end of run.
+    assert "prune" in section, (
+        "finalize must document pruning the leftover worktree scaffolding branches"
+    )
+    # It names the run-scoped prefix the harness creates, so the match is anchored
+    # to this run's runId — `worktree-<runId>-*`, not a bare `worktree-` glob.
+    assert re.search(r"worktree-[<${]*runid", section), (
+        "the prune step must target the run-scoped `worktree-<runId>-*` prefix"
+    )
+
+
+def test_prune_is_confined_to_the_exact_runid() -> None:
+    lines = _prune_lines()
+    assert lines, "no prune guidance tying `worktree-` to the runId was found"
+    joined = " ".join(lines).lower()
+    # The match is confined to this run's own runId ...
+    assert "only" in joined or "exact" in joined or "confine" in joined, (
+        "the prune must be confined to the run's own runId, not a loose match"
+    )
+    # ... so a feature branch or any unrelated branch is never deleted.
+    assert "feature branch" in joined, (
+        "the prune must promise never to delete a feature branch"
+    )
+    assert re.search(r"\bnever\b", joined), (
+        "the prune must state it never touches a branch outside the run's prefix"
+    )
+
+
+def test_prune_uses_a_scoped_branch_delete() -> None:
+    joined = " ".join(_prune_lines()).lower()
+    # The prune is a real, scoped branch delete — the ONE authorised branch delete
+    # (the teardown agent is forbidden any), so the delete command must appear on
+    # the run-scoped line, never as a blanket `git branch -D`.
+    assert "git branch -d" in joined, (
+        "the prune step must give the run-scoped branch-delete command"
+    )
+
+
+def test_prune_preserves_issue_14_teardown() -> None:
+    section = _finalize_section()
+    lowered = section.lower()
+    # The prune is additive: #14's worktree teardown and its preservation of every
+    # feature-branch ref are left unchanged.
+    assert "#14" in section or "feature-branch ref" in lowered, (
+        "the prune step must state it leaves #14's teardown / ref preservation "
+        "unchanged"
+    )
