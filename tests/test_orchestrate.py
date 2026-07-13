@@ -319,6 +319,186 @@ def test_load_issues_collects_soft_notes() -> None:
     assert any("#56" in note for note in issues[0].soft_notes)
 
 
+# --- parse_dependencies: prose-title resolution ------------------------------
+#
+# A prerequisite named by its exact prose title (no `#N`) must resolve to an
+# edge, but only inside a dependency region. Resolution needs the caller to pass
+# a normalised title -> number map, because one body cannot know the other
+# issues' titles on its own.
+
+
+def test_parse_dependencies_resolves_a_prose_title_within_blocked_by() -> None:
+    index = {"user schema migration": 44}
+    signals = orchestrate.parse_dependencies(
+        "## Blocked by\n\n- User schema migration", title_index=index
+    )
+    assert signals.edges == {44: "Blocked by"}
+    assert signals.warnings == []
+
+
+def test_parse_dependencies_resolves_a_prose_title_prose_line_within_blocked_by() -> (
+    None
+):
+    # A title in a plain prose paragraph (no bullet) under the heading resolves.
+    index = {"user schema migration": 44}
+    signals = orchestrate.parse_dependencies(
+        "## Blocked by\n\nUser schema migration.", title_index=index
+    )
+    assert signals.edges == {44: "Blocked by"}
+
+
+def test_parse_dependencies_resolves_a_prose_title_after_an_inline_label() -> None:
+    # A bold inline label followed by a prose title resolves, attributed to the
+    # inline keyword rather than the heading form.
+    index = {"user schema migration": 44}
+    signals = orchestrate.parse_dependencies(
+        "**Depends on:** User schema migration", title_index=index
+    )
+    assert signals.edges == {44: "Depends on"}
+
+
+def test_parse_dependencies_mixes_titles_and_numbers_without_duplicates() -> None:
+    # A section naming one prerequisite by title and another by `#N` resolves
+    # both; naming the SAME prerequisite twice yields exactly one edge.
+    index = {"user schema migration": 44}
+    signals = orchestrate.parse_dependencies(
+        "## Blocked by\n\n- User schema migration\n- #44\n- #46", title_index=index
+    )
+    assert signals.edges == {44: "Blocked by", 46: "Blocked by"}
+
+
+def test_parse_dependencies_does_not_match_a_title_outside_dependency_regions() -> None:
+    # The same title mentioned under an unrelated heading is NOT a dependency.
+    index = {"user schema migration": 44}
+    signals = orchestrate.parse_dependencies(
+        "## Notes\n\nThe User schema migration is elegant.", title_index=index
+    )
+    assert signals.edges == {}
+
+
+def test_parse_dependencies_does_not_match_a_bare_prose_keyword_title() -> None:
+    # A hard keyword used as an ordinary verb ("needs review") is not a label,
+    # so a stray title-shaped clause after it must not mint an edge.
+    index = {"review": 44}
+    signals = orchestrate.parse_dependencies(
+        "This work needs review before shipping.", title_index=index
+    )
+    assert signals.edges == {}
+
+
+# --- parse_dependencies: unresolved-region warning ----------------------------
+
+
+def test_parse_dependencies_warns_when_blocked_by_resolves_to_zero() -> None:
+    signals = orchestrate.parse_dependencies(
+        "## Blocked by\n\n- Some prerequisite that does not exist", title_index={}
+    )
+    assert signals.edges == {}
+    assert signals.warnings != []
+
+
+def test_parse_dependencies_does_not_warn_for_none_can_start_immediately() -> None:
+    signals = orchestrate.parse_dependencies(
+        "## Blocked by\n\nNone - can start immediately.", title_index={}
+    )
+    assert signals.warnings == []
+
+
+def test_parse_dependencies_does_not_warn_when_a_number_reference_resolves() -> None:
+    signals = orchestrate.parse_dependencies(
+        "## Blocked by\n\n- #42", title_index={}
+    )
+    assert signals.warnings == []
+
+
+# --- load_issues: prose-title resolution across the in-scope set ---------------
+
+
+def test_load_issues_resolves_a_prose_title_blocked_by_to_an_edge() -> None:
+    raw = (
+        '[{"number":44,"title":"User schema migration","labels":[],"body":""},'
+        '{"number":45,"title":"Eval","labels":[],'
+        '"body":"## Blocked by\\n\\nUser schema migration."}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    by_number = {i.number: i for i in issues}
+    assert by_number[45].blocked_by == {44}
+    assert by_number[45].blocked_by_origin == {44: "Blocked by"}
+
+
+def test_load_issues_resolves_mixed_title_and_number_without_duplicate_edges() -> None:
+    raw = (
+        '[{"number":44,"title":"User schema migration","labels":[],"body":""},'
+        '{"number":45,"title":"Eval","labels":[],'
+        '"body":"## Blocked by\\n\\n- User schema migration\\n- #44"}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    by_number = {i.number: i for i in issues}
+    assert by_number[45].blocked_by == {44}
+
+
+def test_load_issues_ignores_a_title_mentioned_outside_dependency_regions() -> None:
+    raw = (
+        '[{"number":44,"title":"User schema migration","labels":[],"body":""},'
+        '{"number":45,"title":"Eval","labels":[],'
+        '"body":"## What to build\\n\\nBuild on the User schema migration approach.'
+        '\\n\\n## Blocked by\\n\\nNone - can start immediately."}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    by_number = {i.number: i for i in issues}
+    assert by_number[45].blocked_by == set()
+
+
+# --- build_plan: prose-title edges and warnings -------------------------------
+
+
+def test_build_plan_resolves_a_prose_blocked_by_title_to_an_edge() -> None:
+    raw = (
+        '[{"number":44,"title":"User schema migration","labels":[],"body":"Base."},'
+        '{"number":45,"title":"Eval harness","labels":[],'
+        '"body":"## Blocked by\\n\\n- User schema migration"}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    assert {"from": 45, "to": 44, "origin": "Blocked by"} in plan["dependency_edges"]
+    assert plan["waves"] == [[44], [45]]
+    assert plan["merge_required"] is True
+
+
+def test_build_plan_dedupes_a_prerequisite_named_by_title_and_number() -> None:
+    raw = (
+        '[{"number":44,"title":"User schema migration","labels":[],"body":"Base."},'
+        '{"number":45,"title":"Eval","labels":[],'
+        '"body":"## Blocked by\\n\\n- User schema migration\\n- #44"}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    edges = [e for e in plan["dependency_edges"] if e["from"] == 45 and e["to"] == 44]
+    assert len(edges) == 1
+
+
+def test_build_plan_warns_when_a_blocked_by_section_resolves_to_zero() -> None:
+    raw = (
+        '[{"number":45,"title":"Eval","labels":[],'
+        '"body":"## Blocked by\\n\\n- Some prerequisite that is not an issue"}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    assert "warnings" in plan
+    assert any("45" in warning for warning in plan["warnings"])
+
+
+def test_build_plan_has_no_warnings_when_every_dependency_resolves() -> None:
+    raw = (
+        '[{"number":44,"title":"User schema migration","labels":[],"body":"Base."},'
+        '{"number":45,"title":"Eval","labels":[],'
+        '"body":"## Blocked by\\n\\n- User schema migration"}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    assert plan["warnings"] == []
+
+
 # --- build_plan ---------------------------------------------------------------
 
 
