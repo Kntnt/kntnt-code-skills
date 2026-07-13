@@ -1,0 +1,150 @@
+"""Structural tests for the orchestrate SKILL.md guidance (issue #19).
+
+These read ``skills/orchestrate/SKILL.md`` as text and assert two things the
+skill's prose must carry:
+
+1. The single confirm gate sizes the run to its cost — an agent/token estimate
+   *formula* (issue count folded over the default panel, fix rounds, and the
+   integrator), a chunking recommendation naming a slice size, and a required
+   explicit cap above a stated run size. The estimate is pinned to the engine's
+   LEAN defaults (one broad reviewer, one fix round) so it reflects real cost,
+   not the heavier defaults it replaced.
+
+2. The closing/reporting guidance confirms each closure by querying that issue's
+   own state with ``gh issue view <n>``, and explicitly does NOT trust a
+   ``gh issue list`` re-query — GitHub's list endpoint is eventually consistent
+   and reads stale right after a close.
+
+Run with: `uv run --with pytest pytest -q`
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SKILL_MD = REPO_ROOT / "skills" / "orchestrate" / "SKILL.md"
+
+
+def _skill_text() -> str:
+    return SKILL_MD.read_text(encoding="utf-8")
+
+
+def _section(text: str, start_pattern: str, end_pattern: str) -> str:
+    """Slice from the heading matching ``start_pattern`` up to (excluding) the
+    next heading matching ``end_pattern`` — the whole file's tail if none."""
+
+    start = re.search(start_pattern, text, re.MULTILINE)
+    assert start is not None, f"section start not found: {start_pattern!r}"
+    rest = text[start.start() :]
+    end = re.search(end_pattern, rest[1:], re.MULTILINE)
+    return rest if end is None else rest[: end.start() + 1]
+
+
+def _confirm_section() -> str:
+    """The '### 3. Confirm (single gate)' section and its subsections."""
+
+    return _section(_skill_text(), r"^###\s+3\.\s+Confirm", r"^###\s+4\.")
+
+
+def _finalize_section() -> str:
+    """The '### 5. Finalize' section, up to '## Model and effort'."""
+
+    return _section(_skill_text(), r"^###\s+5\.\s+Finalize", r"^##\s+Model and effort")
+
+
+# --- frontmatter guard -------------------------------------------------------
+
+
+def test_frontmatter_name_is_orchestrate() -> None:
+    assert re.search(r"^name:\s*orchestrate\s*$", _skill_text(), re.MULTILINE)
+
+
+# --- confirm gate: cost estimate formula -------------------------------------
+
+
+def test_confirm_gate_has_agent_cost_estimate_formula() -> None:
+    section = _confirm_section().lower()
+    # An estimate is presented at the gate.
+    assert "estimate" in section
+    assert "≈" in section or "formula" in section
+    # A closed-form referencing the issue count multiplied by the per-issue factor.
+    assert re.search(r"n\s*[×x*]\s*4", section), "expected a closed form like 'N × 4'"
+    # The multiplicative factors are named: panel/reviewer, fix round, integrator.
+    assert "sub-agent" in section
+    assert "fix round" in section
+    assert "panel" in section or "lens" in section or "reviewer" in section
+    assert "integrat" in section
+
+
+def test_estimate_translates_to_a_token_order_of_magnitude() -> None:
+    section = _confirm_section().lower()
+    assert "token" in section
+    assert "thousand" in section or "million" in section or "order" in section
+
+
+# --- confirm gate: chunking recommendation -----------------------------------
+
+
+def test_confirm_gate_recommends_chunking_in_slices() -> None:
+    section = _confirm_section().lower()
+    assert "slice" in section
+    assert re.search(r"8\s*[-–—]\s*10", section), "expected a slice size like 8–10"
+
+
+# --- confirm gate: required cap above a stated size --------------------------
+
+
+def test_confirm_gate_requires_a_cap_above_a_stated_size() -> None:
+    section = _confirm_section().lower()
+    # A stated threshold, e.g. ~10 issues.
+    assert "10 issues" in section
+    # The cap is required, not optional.
+    assert "cap" in section
+    assert "require" in section or "must" in section
+    # A concrete budget/agent bound is named.
+    assert (
+        "budgetfloor" in section
+        or "budget" in section
+        or "max-agents" in section
+        or "agent cap" in section
+    )
+
+
+# --- confirm gate: estimate reflects the LEAN defaults -----------------------
+
+
+def test_estimate_reflects_lean_defaults() -> None:
+    section = _confirm_section().lower()
+    # One broad reviewer, one fix round.
+    assert "single" in section or "one broad reviewer" in section
+    assert "one fix round" in section or "1 fix round" in section
+    # NOT the heavier defaults it replaced.
+    assert "three lenses" not in section
+    assert "two fix rounds" not in section
+
+
+# --- closing: verify each issue individually with `gh issue view` ------------
+
+
+def test_closing_verifies_each_issue_with_gh_issue_view() -> None:
+    section = _finalize_section().lower()
+    assert "gh issue view" in section
+    assert "state" in section or "closed" in section
+
+
+def test_closing_warns_against_trusting_the_list_requery() -> None:
+    section = _finalize_section()
+    # The warning must sit on one physical line (repo markdown rule) carrying the
+    # list command, the stale framing, and a negation together.
+    warn_lines = [
+        ln.lower() for ln in section.splitlines() if "gh issue list" in ln.lower()
+    ]
+    assert warn_lines, "closing guidance must mention gh issue list to warn against it"
+    assert any(("stale" in ln or "eventually consistent" in ln) for ln in warn_lines), (
+        "the gh issue list mention must be framed as stale / eventually consistent"
+    )
+    assert any(
+        re.search(r"\b(not|never|rather than|instead of)\b", ln) for ln in warn_lines
+    ), "the guidance must say not to rely on the list re-query"
