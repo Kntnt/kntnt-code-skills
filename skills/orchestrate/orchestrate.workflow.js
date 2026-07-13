@@ -201,12 +201,27 @@ const toRecord = (number, impl, status, verify) => ({
 // real default branch. End-of-run teardown removes exactly the worktrees this
 // run created (see `builtBranches` and the `finally` block below).
 
+// The shared safe-state contract every code-touching sub-agent is bound by:
+// what it may NEVER do to shared state — close the GitHub issue, push, merge, or
+// run destructive git that can lose committed work — and the ONE non-destructive
+// recipe for reaching a clean tree. Defined ONCE and interpolated into every
+// implement, fix, and verify prompt (and any future salvage/hotfix agent — issue
+// #18 — MUST include it too) rather than copy-pasted, so the rule cannot drift
+// between agents. Deliberately NOT interpolated into `integrate`, whose whole job
+// is to merge and push; `teardown` already carries its own no-delete/no-reset
+// rule and does not merge, so it needs no addition here.
+const AGENT_CONSTRAINTS = `Shared-state rules — these bind you; obey them without exception:\n` +
+  `- You must NOT close the GitHub issue, NOT push to any remote, and NOT merge into the default branch. Closing, pushing, and merging are the orchestrator's and the integrate step's job exclusively; the issue is closed only after independent verification, never by you.\n` +
+  `- NEVER run \`git reset --hard <ref>\` while HEAD is on a feature branch — it silently discards that branch's commits.\n` +
+  `- The ONE safe way to reach a clean state: if a rebase or merge is in progress, abort it (\`git rebase --abort\` / \`git merge --abort\`); then \`git checkout -f <the integration base>\` and discard only working-tree changes to TRACKED files with \`git checkout -- .\`. Never delete untracked files.`
+
 // Dispatch one implementer on its own worktree-isolated branch, test-first.
 const implement = (number) =>
   agent(
     `Implement GitHub issue #${number} ("${titleOf(number)}") test-first.\n` +
       `Read its contract first: run \`gh issue view ${number} --comments\` and treat the "Agent Brief" comment as authoritative; the issue body and acceptance criteria are context.\n` +
       `Read and obey ${standardInstruction}.\n` +
+      `${AGENT_CONSTRAINTS}\n` +
       `Work on a fresh branch off the current integration base. Demonstrate the red — a failing-test commit — before the green, because a test never seen to fail is of unknown value. Refactor only once green.\n` +
       `Automate everything meaningfully automatable, then run the project's full gate suite (discover it from the project) and report the REAL result.\n` +
       `Resolve genuine ambiguity by the most reasonable assumption and record it; never pause to ask. The one exception is work that cannot proceed without contradicting a settled decision (an ADR or design doc): set status "blocked", record the blocker, and stop only this issue.`,
@@ -222,6 +237,7 @@ const fix = (number, impl, findings) =>
       `1. Run \`git worktree list --porcelain\` and find any OTHER worktree that currently has ${impl.branch} checked out.\n` +
       `2. If one exists, run \`git worktree remove --force <that path>\` to free it. \`remove\` KEEPS the branch ref, so ${impl.branch}'s commits survive — NEVER run \`git branch -D\` (or any branch delete) and NEVER \`git reset --hard\`.\n` +
       `3. Now check out ${impl.branch} in your own worktree and do all the work here.\n` +
+      `${AGENT_CONSTRAINTS}\n` +
       `Address ONLY these verified findings, keep the tests green, and obey ${standardInstruction}:\n` +
       findings.map((finding) => `- ${finding.title}: ${finding.detail}`).join('\n') +
       `\nCommit on ${impl.branch}, then re-run the full gate suite and report the real result.`,
@@ -238,10 +254,10 @@ const verify = async (number, impl) => {
       const brief = typeof lens === 'string' ? lens : lens.brief
       const opts = { label: `verify:#${number}:${brief.split(' ')[0]}`, phase: 'Verify', schema: VERDICT_SCHEMA }
       if (typeof lens === 'object' && lens.agentType) opts.agentType = lens.agentType
-
       return agent(
         `Adversarially review branch ${impl.branch} for issue #${number} ("${titleOf(number)}") through ONE lens: ${brief}.\n` +
           `You did NOT write this code. Read the issue's Agent Brief (\`gh issue view ${number} --comments\`) and ${standardInstruction}.\n` +
+          `${AGENT_CONSTRAINTS}\n` +
           `Check ONLY what the gates cannot — do not re-check lint, build, or tests that already passed. Default to clear=false if you find anything real, and be specific.`,
         opts,
       )
