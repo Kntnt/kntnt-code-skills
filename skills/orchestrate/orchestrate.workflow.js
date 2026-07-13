@@ -22,7 +22,7 @@
  *     waves:   number[][],                       // dispatch order; one wave runs concurrently
  *     issues:  { number, title, blocked_by }[],  // from orchestrate.py plan
  *     standardsPath?: string,                    // coding-standard directory the agents read
- *     maxFixRounds?: number,                     // fix<->verify cap per issue (default 2)
+ *     maxFixRounds?: number,                     // fix<->verify cap per issue (default 1)
  *     merge?:  boolean,                          // integrate to the default branch, else open PRs
  *     budgetFloor?: number,                      // stop opening waves below this many tokens left
  *   }
@@ -145,7 +145,7 @@ const planIsEmpty = (config) => !Array.isArray(config.waves) || config.waves.len
 // delivers as a JSON string.
 const config = normalizeArgs(args)
 const issuesByNumber = new Map((config.issues || []).map((issue) => [issue.number, issue]))
-const maxFixRounds = config.maxFixRounds ?? 2
+const maxFixRounds = config.maxFixRounds ?? 1
 const standardsPath = config.standardsPath || 'agents.d/coding-standard/'
 
 // How every sub-agent is told to reach the coding standard: a directory of
@@ -160,19 +160,22 @@ const budgetFloor = config.budgetFloor ?? 60000
 const titleOf = (number) => issuesByNumber.get(number)?.title || `issue ${number}`
 
 // The default verifier panel, used when planning has not annotated the issue:
-// an independent correctness lens, a test-quality lens, and a security lens.
+// a SINGLE broad adversarial reviewer that folds every lean-verification concern
+// into one lens — correctness against the issue intent and its acceptance
+// criteria, the quality of the tests, and any security or data-safety hazard the
+// issue touches. One agent, not three. Planning raises this to 2–3 focused lenses
+// ONLY for a genuinely high-risk issue, via the per-issue `lenses` override below.
 const DEFAULT_LENSES = [
-  'correctness against the issue intent and its acceptance criteria',
-  'test quality — is the red demonstrated, are the tests load-bearing, does every criterion map to a test',
-  'security, error handling, and edge cases',
+  'correctness against the issue intent and its acceptance criteria, the quality of the tests (is the red demonstrated, are the tests load-bearing, does every acceptance criterion map to a test), AND any security or data-safety hazard the issue touches — review all of these together through one broad adversarial lens',
 ]
 
-// The verifier panel for an issue. The orchestrator sets `lenses` per issue
-// during planning, scaled to its real risk — one lens for a trivial change,
-// the full panel plus a security lens for a write path, a permission gate, or
-// an irreversible delete. A lens is a plain brief string, or a
-// { brief, agentType } object to route to one of the project's own review
-// agents (a silent-failure hunter, a test-coverage analyzer, …).
+// The verifier panel for an issue. The default is the single broad adversarial
+// reviewer in DEFAULT_LENSES; planning overrides it per issue by setting
+// `lenses`, scaled to real risk — the orchestrator raises a genuinely high-risk
+// issue (a write path, a permission gate, an irreversible delete) to 2–3 focused
+// lenses. A lens is a plain brief string, or a { brief, agentType } object to
+// route to one of the project's own review agents (a silent-failure hunter, a
+// test-coverage analyzer, …).
 const lensesFor = (issue) => {
   const lenses = issue?.lenses
   return Array.isArray(lenses) && lenses.length > 0 ? lenses : DEFAULT_LENSES
@@ -205,8 +208,8 @@ const toRecord = (number, impl, status, verify) => ({
 // what it may NEVER do to shared state — close the GitHub issue, push, merge, or
 // run destructive git that can lose committed work — and the ONE non-destructive
 // recipe for reaching a clean tree. Defined ONCE and interpolated into every
-// implement, fix, and verify prompt (and any future salvage/hotfix agent — issue
-// #18 — MUST include it too) rather than copy-pasted, so the rule cannot drift
+// implement, fix, verify, and re-verify prompt (and any future salvage/hotfix
+// agent — issue #18 — MUST include it too) rather than copy-pasted, so the rule cannot drift
 // between agents. Deliberately NOT interpolated into `integrate`, whose whole job
 // is to land each green issue on the default branch (rebase-then-fast-forward);
 // pushing that branch to a remote is the orchestrator's separate authorised step,
@@ -269,7 +272,27 @@ const verify = async (number, impl) => {
   return verdicts.filter(Boolean)
 }
 
-// Build one issue, then loop fix<->verify until clear or the cap is hit.
+// Re-verify ONLY the findings a fix round just addressed — a single targeted
+// adversarial agent, NOT the whole panel. This is the biggest cost multiplier
+// removed: after the initial panel runs once, each fix round costs one re-verify
+// agent instead of re-dispatching every lens. It confirms each listed finding is
+// properly resolved and that no regression crept into those specific areas, and
+// returns the same VERDICT_SCHEMA a lens does. Like `verify`, it is a read-only
+// reviewer that did NOT write the code (so it needs no worktree) and is bound by
+// the shared ${AGENT_CONSTRAINTS}: it must not push, merge, or close the issue.
+const reverifyFindings = (number, impl, findings) =>
+  agent(
+    `Adversarially re-verify branch ${impl.branch} for issue #${number} ("${titleOf(number)}") after a fix round.\n` +
+      `A previous fix round was asked to address EXACTLY these findings; review ONLY whether each is now properly resolved and that no regression crept into those specific areas — do NOT re-review the whole change or re-run the full verifier panel:\n` +
+      findings.map((finding) => `- ${finding.title}: ${finding.detail}`).join('\n') +
+      `\nYou did NOT write this code. Read the issue's Agent Brief (\`gh issue view ${number} --comments\`) and ${standardInstruction}.\n` +
+      `${AGENT_CONSTRAINTS}\n` +
+      `Check ONLY what the gates cannot — do not re-check lint, build, or tests that already passed. Return clear=true only when every listed finding is resolved with no new problem in those areas; otherwise clear=false with the specific findings still unresolved or newly regressed.`,
+    { label: `reverify:#${number}`, phase: 'Verify', schema: VERDICT_SCHEMA },
+  )
+
+// Build one issue, then verify once and — if needed — fix and targeted re-verify
+// up to the cap.
 const buildAndVerify = async (number) => {
   let impl = await implement(number)
 
@@ -285,17 +308,31 @@ const buildAndVerify = async (number) => {
 
   if (impl.status === 'blocked') return toRecord(number, impl, 'blocked', 'design blocker')
 
-  // Capped fix<->verify loop: a stubborn issue parks rather than looping forever.
-  for (let round = 0; ; round += 1) {
-    const verdicts = await verify(number, impl)
-    const findings = verdicts.flatMap((verdict) => (verdict.clear ? [] : verdict.findings || []))
-    const summary = verdicts.map((verdict) => verdict.summary).join(' | ')
-    if (findings.length === 0) return toRecord(number, impl, 'done', summary)
-    if (round >= maxFixRounds) return toRecord(number, impl, 'parked', `cap hit after ${round} round(s): ${summary}`)
+  // Initial verification: the full verifier panel runs EXACTLY ONCE, after green.
+  // Collect its findings; clear on the first pass integrates without a fix round.
+  const verdicts = await verify(number, impl)
+  let findings = verdicts.flatMap((verdict) => (verdict.clear ? [] : verdict.findings || []))
+  let summary = verdicts.map((verdict) => verdict.summary).join(' | ')
+  if (findings.length === 0) return toRecord(number, impl, 'done', summary)
 
-    log(`#${number}: fix round ${round + 1}/${maxFixRounds} — ${findings.length} finding(s)`)
+  // Capped fix loop: fix the concrete findings, then RE-VERIFY ONLY THOSE FIXED
+  // FINDINGS with a single targeted agent — never the whole panel again. That
+  // targeted re-verify is the cost saving over re-running every lens each round.
+  // A stubborn issue parks rather than looping forever.
+  for (let round = 1; round <= maxFixRounds; round += 1) {
+    log(`#${number}: fix round ${round}/${maxFixRounds} — ${findings.length} finding(s)`)
     impl = (await fix(number, impl, findings)) ?? impl
+
+    // A dead re-verifier does not silently pass: treat it as unresolved so the
+    // issue re-fixes or, at the cap, parks — it never integrates unconfirmed.
+    const recheck = (await reverifyFindings(number, impl, findings)) ??
+      { clear: false, summary: 're-verify returned nothing', findings }
+    summary = recheck.summary || summary
+    findings = recheck.clear ? [] : recheck.findings || []
+    if (findings.length === 0) return toRecord(number, impl, 'done', summary)
   }
+
+  return toRecord(number, impl, 'parked', `cap hit after ${maxFixRounds} fix round(s): ${summary}`)
 }
 
 // Integrate one green issue: open a PR by default, or land it on the default

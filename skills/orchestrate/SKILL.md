@@ -46,7 +46,7 @@ When the project carries no such pipeline, fall back to whatever `CLAUDE.md` / `
 
 - `[scope]` — which issues to take on: a label (`--label=…`), a milestone (`--milestone=…`), an explicit list (`#42,#43,#48`), or nothing. With no scope, default to the open `ready-for-agent` issues. Resolve scope **without asking** (see the operating contract); if it genuinely cannot be resolved, stop with a one-line report rather than pausing mid-run.
 - `--merge` — integrate finished issues into the default branch automatically. The default is conservative: open one pull request per issue and leave the merge to you, unless the project's own policy already authorizes merging away from the keyboard.
-- `--max-fix-rounds=N` — cap on the fix↔verify loop per issue (default 2). After the cap, the issue is parked in the report rather than looping.
+- `--max-fix-rounds=N` — cap on the fix↔verify loop per issue (default 1). After the cap, the issue is parked in the report rather than looping.
 - `--plan` / `--dry-run` — produce the plan (scope, dependency graph, waves, merge-or-PR decision) and stop, so you can review before the real run.
 - `--yes` — skip the single pre-run confirmation gate.
 
@@ -95,8 +95,8 @@ Show the plan from step 2 — scope, graph, waves, and whether the run will merg
 Either way the per-issue lifecycle is the same:
 
 1. **Implement.** One implementer sub-agent on its own branch reads the **agent brief** (the contract) and the standard, implements **test-first** (red/green/refactor) at the layer the test strategy prescribes, **demonstrates the red** (a failing-test commit before the green one), runs the project's gates, reports their real results, and returns the three-bucket report.
-2. **Verify, independently.** Only after green, fresh verifier sub-agent(s) that did **not** write the code review **only what the gates cannot** — correctness against the brief's intent, test quality (is the red demonstrated? do the tests bind? does every criterion map to a test?), security and edge cases. Scale the panel to risk: one reviewer for a pure-algorithm change; add a test-quality reviewer for ordinary logic; add a security / error-handling reviewer for any write path, permission gate, filesystem boundary, or irreversible delete. Use the project's specialized review agents where they exist; diverse lenses catch what identical reviewers miss.
-3. **Decide.** Read only the verdicts — never the diffs yourself. All clear → integrate. Any real finding → return it to the same implementer to fix, then re-verify, capped at `--max-fix-rounds`; if it still fails, park that issue and continue.
+2. **Verify, independently.** Only after green, a fresh verifier that did **not** write the code reviews **only what the gates cannot**. By default this is a **single broad adversarial reviewer** whose one lens folds every concern together — correctness against the brief's intent and acceptance criteria, test quality (is the red demonstrated? do the tests bind? does every criterion map to a test?), and any security or data-safety hazard the issue touches. Raise the panel to **2–3 focused lenses only for a genuinely high-risk issue** — a write path, a permission gate, a filesystem boundary, an irreversible delete — via the per-issue `lenses` set during planning. Use the project's specialized review agents where they exist; diverse lenses catch what identical reviewers miss, but only pay for them where the risk earns them.
+3. **Decide.** Read only the verdicts — never the diffs yourself. All clear → integrate. Any real finding → return it to the same implementer to fix, then **re-verify only the fixed findings** with a single targeted reviewer — not the whole panel again — capped at `--max-fix-rounds` (default 1); if it still fails, park that issue and continue.
 4. **Integrate, immediately.** Land each green issue the moment it is verified, before the next issue's work begins, in dependency order. Keep history linear: rebase the feature branch onto the up-to-date default branch and fast-forward only — never merge the default branch into the feature branch, never create a merge commit there. Landing per-issue makes partial progress durable: a stop between issues leaves every already-integrated issue on the default branch. Under the conservative default, open a pull request instead and leave the merge to the maintainer.
 
 ### 5. Finalize
@@ -113,7 +113,7 @@ It leads with what is done and green, then the de-duplicated *Remaining for a hu
 
 Put the strong model and the high effort where the judgement is, not where the routing is:
 
-- **Implementers and the adversarial verifiers** (correctness-against-intent, security, error-handling) — **strongest tier, high reasoning effort.** This is where clean, correct code is born and where real bugs are caught; it is worth the spend.
+- **Implementers and the adversarial verifier** — the single broad reviewer that runs by default, plus the extra lenses a high-risk issue adds — **strongest tier, high reasoning effort.** This is where clean, correct code is born and where real bugs are caught; it is worth the spend.
 - **Mechanical leaves** — test-coverage mapping, an integration smoke pass — can run a cheaper tier or, better, be replaced by code.
 - **The spine is code, so there is no expensive "orchestrator LLM" doing routing.** The genuinely cheap deterministic work — is the graph acyclic (`orchestrate.py plan`), did the gates exit green, is there a red-before-green commit (`orchestrate.py redgreen`), does each criterion map to a test — belongs to the helper and the gate run (CPU, not tokens), never to a sub-agent reading text by eye.
 - The one-time planning judgement (reading the briefs to set each issue's risk and verifier panel) can run on the session model.
