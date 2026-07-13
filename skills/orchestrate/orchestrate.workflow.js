@@ -191,6 +191,16 @@ const toRecord = (number, impl, status, verify) => ({
   blockers: impl?.blockers || [],
 })
 
+// Worktree-isolation rule: every code-touching agent — implement and fix here,
+// and any future salvage/hotfix agent (issue #18) — MUST carry
+// `isolation: 'worktree'` in its opts, so no two agents, and no agent and the
+// launcher, ever share a working directory. Sharing one tree let an agent's
+// uncommitted changes park the next issue, and a left-behind worktree locked a
+// branch a later run could not rebase. Read-only verifiers need no worktree;
+// integrate is deliberately un-isolated because it is the SOLE mutator of the
+// real default branch. End-of-run teardown removes exactly the worktrees this
+// run created (see `builtBranches` and the `finally` block below).
+
 // Dispatch one implementer on its own worktree-isolated branch, test-first.
 const implement = (number) =>
   agent(
@@ -210,7 +220,7 @@ const fix = (number, impl, findings) =>
     `Fix issue #${number} ("${titleOf(number)}") on branch ${impl.branch}. Address ONLY these verified findings, keep the tests green, and obey ${standardInstruction}:\n` +
       findings.map((finding) => `- ${finding.title}: ${finding.detail}`).join('\n') +
       `\nThen re-run the full gate suite and report the real result.`,
-    { label: `fix:#${number}`, phase: 'Implement', schema: IMPLEMENT_SCHEMA },
+    { label: `fix:#${number}`, phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree' },
   )
 
 // Run the adversarial panel concurrently; each reviewer gets one lens and only
@@ -241,6 +251,14 @@ const buildAndVerify = async (number) => {
 
   // A dead or blocked implementer parks the issue without a verify pass.
   if (impl == null) return toRecord(number, null, 'parked', 'implementer returned nothing')
+
+  // Record the feature branch this run built. Every such branch was checked out
+  // in the implementer's isolated worktree; the set is the exact, precise list
+  // the end-of-run teardown removes worktrees for — nothing the run did not
+  // create is ever touched. Recorded even for a blocked implementer, which still
+  // ran in a worktree on its branch.
+  if (impl.branch) builtBranches.add(impl.branch)
+
   if (impl.status === 'blocked') return toRecord(number, impl, 'blocked', 'design blocker')
 
   // Capped fix<->verify loop: a stubborn issue parks rather than looping forever.
@@ -280,6 +298,13 @@ const verdicts = []
 const parked = []
 const waves = config.waves || []
 
+// The feature branches this run built, one per implementer worktree. This is the
+// exact, precise identity of the worktrees the run created; the end-of-run
+// teardown removes only worktrees checked out to one of these branches. Empty
+// when the run created no worktree (e.g. the empty-plan early return), so
+// teardown is then a skipped no-op.
+const builtBranches = new Set()
+
 // Loud empty-plan guard: a misdelivered or empty plan must never masquerade as
 // a successful zero-agent run completing in milliseconds. Surface it
 // prominently and return a non-success status so the caller cannot mistake it
@@ -289,31 +314,56 @@ if (planIsEmpty(config)) {
   return { verdicts, parked, status: 'empty-plan', warning: 'No waves to run: the plan was empty or misdelivered.' }
 }
 
-for (let index = 0; index < waves.length; index += 1) {
-  const wave = waves[index]
-  log(`Wave ${index + 1}/${waves.length}: #${wave.join(', #')}`)
+// Everything from here runs inside a `try` whose `finally` always tears down the
+// worktrees this run created — on the clean-completion path, on the
+// parked/blocked path, and even if the body throws. The teardown is the last
+// thing the run does before returning its report.
+try {
+  for (let index = 0; index < waves.length; index += 1) {
+    const wave = waves[index]
+    log(`Wave ${index + 1}/${waves.length}: #${wave.join(', #')}`)
 
-  // Stop opening new waves once the turn's token target is nearly spent; park
-  // the rest so the run ends with a clean report instead of a hard cut-off.
-  if (budget.total && budget.remaining() < budgetFloor) {
-    for (const number of wave) parked.push(toRecord(number, null, 'parked', 'token budget exhausted before dispatch'))
-    continue
-  }
-
-  // Implement and verify every issue in the wave at once (worktree-isolated).
-  const built = (await parallel(wave.map((number) => () => buildAndVerify(number)))).filter(Boolean)
-
-  // Integrate the green ones in issue order; park everything else for the report.
-  for (const record of built.sort((a, b) => a.number - b.number)) {
-    if (record.status !== 'done') {
-      parked.push(record)
+    // Stop opening new waves once the turn's token target is nearly spent; park
+    // the rest so the run ends with a clean report instead of a hard cut-off.
+    if (budget.total && budget.remaining() < budgetFloor) {
+      for (const number of wave) parked.push(toRecord(number, null, 'parked', 'token budget exhausted before dispatch'))
       continue
     }
 
-    // Route by the integration outcome: a clean land is done, a conflict parks.
-    const integrated = await integrate(record)
-    if (integrated.status === 'done') verdicts.push(integrated)
-    else parked.push(integrated)
+    // Implement and verify every issue in the wave at once (worktree-isolated).
+    const built = (await parallel(wave.map((number) => () => buildAndVerify(number)))).filter(Boolean)
+
+    // Integrate the green ones in issue order; park everything else for the report.
+    for (const record of built.sort((a, b) => a.number - b.number)) {
+      if (record.status !== 'done') {
+        parked.push(record)
+        continue
+      }
+
+      // Route by the integration outcome: a clean land is done, a conflict parks.
+      const integrated = await integrate(record)
+      if (integrated.status === 'done') verdicts.push(integrated)
+      else parked.push(integrated)
+    }
+  }
+} finally {
+  // Teardown: remove exactly the worktrees this run created, preserving every
+  // branch ref, whether the run finished cleanly or left issues parked/blocked.
+  // Dispatch only when the run actually created a worktree — `builtBranches` is
+  // empty on the empty-plan early return, so this is then a skipped no-op. The
+  // teardown agent is deliberately NOT worktree-isolated: it must act on the
+  // real repository's worktree admin, not a throwaway copy of it.
+  if (builtBranches.size > 0) {
+    const branches = [...builtBranches]
+    await agent(
+      `Tear down the git worktrees this orchestrate run created, and ONLY those. Act on the real repository — you are NOT in an isolated worktree.\n` +
+        `The run built exactly these feature branches, each checked out in its own throwaway worktree:\n` +
+        branches.map((branch) => `- ${branch}`).join('\n') +
+        `\nRun \`git worktree list --porcelain\` to enumerate every worktree. For each worktree whose checked-out branch is one of the branches listed above, run \`git worktree remove --force <path>\`; \`remove\` KEEPS the branch ref, which is exactly what we want. Finish with \`git worktree prune\`.\n` +
+        `NEVER remove the main worktree (the repository's primary checkout) and NEVER remove a worktree whose branch is not in the list above — those were not created by this run. You MUST preserve every branch ref: do NOT run \`git branch -D\` (or any branch delete), and do NOT run \`git reset --hard\`. Removing a worktree must leave its branch ref intact, so the integrated history and every parked branch survive for the report and any human follow-up.\n` +
+        `Report in one line how many worktrees you removed.`,
+      { label: 'teardown:worktrees', phase: 'Integrate' },
+    )
   }
 }
 

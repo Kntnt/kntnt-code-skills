@@ -186,10 +186,11 @@ def test_integrate_agent_is_not_worktree_isolated() -> None:
 def test_teardown_wave_dispatch_is_wrapped_in_try_finally() -> None:
     source = WORKFLOW.read_text(encoding="utf-8")
 
-    # There is exactly one `finally` (normalizeArgs uses a try/catch, no finally);
-    # the try that pairs with it is the nearest `try {` before it, and the wave
-    # loop must sit between them so teardown always runs — clean or parked.
-    finally_idx = source.index("finally")
+    # Anchor on the `finally {` block itself, not the bare word (which also
+    # appears in explanatory comments). The try that pairs with it is the nearest
+    # `try {` before it, and the wave loop must sit between them so teardown
+    # always runs — clean or parked.
+    finally_idx = source.index("finally {")
     try_idx = source.rindex("try {", 0, finally_idx)
     wave_idx = source.index("for (let index = 0; index < waves.length")
     assert try_idx < wave_idx < finally_idx, (
@@ -200,7 +201,7 @@ def test_teardown_wave_dispatch_is_wrapped_in_try_finally() -> None:
 
 def test_teardown_agent_prunes_worktrees_and_preserves_branch_refs() -> None:
     source = WORKFLOW.read_text(encoding="utf-8")
-    tail = source[source.index("finally") :]
+    tail = source[source.index("finally {") :]
 
     # The teardown agent enumerates, removes (keeping the ref), and prunes.
     assert "git worktree list --porcelain" in tail
