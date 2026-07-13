@@ -645,7 +645,7 @@ try {
       // Land the hotfix through the existing rebase-ff integrate step, then re-
       // review. A hotfix that cannot land is parked with its blocker and the loop
       // stops — there is nothing new to re-review.
-      const landed = await integrate({
+      const hotfixIntegration = await integrate({
         number: 0,
         title: `integration hotfix round ${round}`,
         branch: hotfixBranch,
@@ -656,8 +656,8 @@ try {
         assumptions: [],
         blockers: [],
       })
-      if (landed.status !== 'done') {
-        parked.push(landed)
+      if (hotfixIntegration.status !== 'done') {
+        parked.push(hotfixIntegration)
         break
       }
       review = await integrationReview(verdicts)
