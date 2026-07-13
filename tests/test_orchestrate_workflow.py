@@ -133,10 +133,13 @@ def _agent_block(source: str, name: str) -> str:
     A whole-file grep for ``isolation: 'worktree'`` is useless here — one agent
     already carries it, so the grep would pass even with another agent unfixed.
     This isolates a single ``const`` definition instead: from the ``const
-    <name> = `` line up to the next top-level ``const `` declaration or the first
-    blank line, whichever comes first. Both the multi-line ``agent(…)`` calls and
-    a block-bodied arrow are captured up to (and including) their agent options,
-    which is all these assertions inspect."""
+    <name> = `` line up to the next *top-level boundary* — the next line at column
+    zero that opens a new top-level construct (``const ``/``export ``/``return ``
+    or a ``//`` comment). It deliberately does NOT stop at a blank line, so a
+    readability blank line *inside* an agent function no longer truncates the
+    block; the whole ``agent(…)`` call and its options are captured, which is all
+    these assertions inspect. Everything inside a block is indented, so only a
+    genuine column-zero dedent — never an inner statement — ends it."""
 
     lines = source.splitlines()
     start = next(
@@ -151,7 +154,7 @@ def _agent_block(source: str, name: str) -> str:
 
     block = [lines[start]]
     for line in lines[start + 1 :]:
-        if line.strip() == "" or re.match(r"^const ", line):
+        if re.match(r"^(const |export |return |//)", line):
             break
         block.append(line)
     return "\n".join(block)
@@ -306,6 +309,25 @@ def test_integrate_prompt_excludes_the_constraints() -> None:
     assert reference not in block, (
         "the `integrate` agent must NOT carry the forbidding text — merging and "
         "pushing to the default branch is precisely its job"
+    )
+
+
+def test_agent_block_spans_an_internal_blank_line() -> None:
+    # `verify` carries a readability blank line inside its arrow body; the block
+    # extractor must still return the WHOLE function — from the `const` header to
+    # its final statement — rather than truncating at that blank line. Otherwise
+    # reinserting a blank line inside any agent function (a routine edit in the
+    # next engine issue) would silently break the reference and negative
+    # assertions above without anything actually being wrong.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "verify")
+    assert "" in [line.strip() for line in block.splitlines()], (
+        "this guard is only meaningful while `verify` actually holds a blank line"
+    )
+    assert block.startswith("const verify = "), block[:40]
+    assert "verdicts.filter(Boolean)" in block, (
+        "the block must reach the end of the function, past the internal blank "
+        "line — proof the extractor no longer truncates on blanks"
     )
 
 

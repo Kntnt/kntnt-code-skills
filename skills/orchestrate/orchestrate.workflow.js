@@ -254,6 +254,7 @@ const verify = async (number, impl) => {
       const brief = typeof lens === 'string' ? lens : lens.brief
       const opts = { label: `verify:#${number}:${brief.split(' ')[0]}`, phase: 'Verify', schema: VERDICT_SCHEMA }
       if (typeof lens === 'object' && lens.agentType) opts.agentType = lens.agentType
+
       return agent(
         `Adversarially review branch ${impl.branch} for issue #${number} ("${titleOf(number)}") through ONE lens: ${brief}.\n` +
           `You did NOT write this code. Read the issue's Agent Brief (\`gh issue view ${number} --comments\`) and ${standardInstruction}.\n` +
