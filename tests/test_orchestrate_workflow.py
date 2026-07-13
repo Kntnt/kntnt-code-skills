@@ -403,7 +403,9 @@ def test_integrate_fast_forwards_and_forbids_merging_default_into_feature() -> N
 # resurfacing at the integrate step. These are structural, read off the source.
 
 
-def test_integrate_fast_forwards_default_without_checking_out_the_feature_branch() -> None:
+def test_integrate_fast_forwards_default_without_checking_out_the_feature_branch() -> (
+    None
+):
     source = WORKFLOW.read_text(encoding="utf-8")
     block = _agent_block(source, "integrate")
     lowered = block.lower()
@@ -419,7 +421,9 @@ def test_integrate_fast_forwards_default_without_checking_out_the_feature_branch
     # It must NEVER instruct a checkout of the feature branch (in any flag form): a
     # worktree still holds it locked, so `git checkout <feature>` would fail
     # mechanically — the exact failure this issue removes.
-    assert re.search(r"git checkout(?:\s+-\S+)*\s+\$\{record\.branch\}", block) is None, (
+    assert (
+        re.search(r"git checkout(?:\s+-\S+)*\s+\$\{record\.branch\}", block) is None
+    ), (
         "integrate must NOT tell the integrator to check out the feature branch — "
         "a worktree still holds it and git refuses one branch in two worktrees"
     )
@@ -1246,7 +1250,9 @@ def test_prerequisite_park_reason_names_the_unlanded_prerequisite() -> None:
     # parked issue (it shows `verify` only for a done issue), so a reason placed
     # solely in `verify` would render as "no reason recorded".
     source = WORKFLOW.read_text(encoding="utf-8")
-    prereq_idx = source.index("unlandedPrerequisites(", source.index("for (const number of"))
+    prereq_idx = source.index(
+        "unlandedPrerequisites(", source.index("for (const number of")
+    )
     build_idx = source.index("buildAndVerify(number)")
     region = source[prereq_idx:build_idx]
     assert "prerequisite" in region.lower(), (
