@@ -1,6 +1,27 @@
 repos:
   - repo: local
     hooks:
+      - id: ruff-check
+        name: kntnt-code-skills ruff check
+        entry: uvx ruff check .
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: ruff-format
+        name: kntnt-code-skills ruff format check
+        entry: uvx ruff format --check .
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: mypy
+        name: kntnt-code-skills mypy
+        entry: uv run --with mypy --with pytest mypy scripts tests
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
       - id: audit
         name: kntnt-code-skills audit
         entry: uv run scripts/audit.py

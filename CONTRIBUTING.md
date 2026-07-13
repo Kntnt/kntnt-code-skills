@@ -23,7 +23,17 @@ By submitting a contribution, you agree it is licensed under Apache 2.0 by virtu
 3. **Read the authoring rules** in the README (the *Authoring rules* section and the audit checklist beneath it) before editing the standard's files. The rules exist to prevent recurring architectural drift.
 4. **When adding a new module**, follow the checklist in the README's *Authoring rules*: create `<topic>.md` in `lib/coding-standard/`, add a row and a detection clause to `lib/coding-standard/_index.md`, and add the module to `scripts/scaffold.py`'s `CANONICAL_ORDER` and `MODULE_META` (and an `OVERRIDE_HEADER` sentence if it overrides another module). The script asserts these maps stay in sync; the audit checks the module files against `CANONICAL_ORDER`.
 5. **One concern per PR.** Smaller PRs land faster.
-6. **Run the audit and tests before committing.** `uv run scripts/audit.py` runs the scriptable checks (plugin.json shape and CHANGELOG version match, module ↔ `CANONICAL_ORDER` symmetry), and `uv run --with pytest pytest` runs the test suites for `scripts/orchestrate.py` and `scripts/scaffold.py`. Install the pre-commit hook with `pip install pre-commit && pre-commit install` so both fire automatically; CI re-runs them on every push and PR.
+6. **Run the full gate before committing.** The project's gate is these five commands, and every one must pass:
+
+   ```sh
+   uvx ruff check .
+   uvx ruff format --check .
+   uv run --with mypy --with pytest mypy scripts tests
+   uv run --with pytest pytest -q
+   uv run scripts/audit.py
+   ```
+
+   `ruff check` lints and `ruff format --check` enforces formatting across the repo; `mypy` type-checks `scripts` and `tests`; `pytest` runs the test suites for the helper scripts; and `audit.py` runs the scriptable checks (plugin.json shape and CHANGELOG version match, module ↔ `CANONICAL_ORDER` symmetry). There is no `pyproject.toml`, so the tools run through `uvx` / `uv run`. Install the pre-commit hook with `pip install pre-commit && pre-commit install` so all five fire automatically; CI re-runs the same five on every push and PR.
 
 ## Style and language conventions
 
