@@ -54,6 +54,12 @@ def _finalize_section() -> str:
     return _section(_skill_text(), r"^###\s+5\.\s+Finalize", r"^##\s+Model and effort")
 
 
+def _build_section() -> str:
+    """The '### 4. Build (engine)' section, up to '### 5. Finalize'."""
+
+    return _section(_skill_text(), r"^###\s+4\.\s+Build", r"^###\s+5\.")
+
+
 # --- frontmatter guard -------------------------------------------------------
 
 
@@ -91,9 +97,13 @@ def test_confirm_gate_recommends_chunking_in_slices() -> None:
     section = _confirm_section().lower()
     assert "slice" in section
     assert re.search(r"8\s*[-–—]\s*10", section), "expected a slice size like 8–10"
+    # The durability claim behind slicing is mode-qualified — default-branch under
+    # --merge, per-issue PRs otherwise — not stated as always landing on main.
+    assert "--merge" in section
+    assert "pr" in section
 
 
-# --- confirm gate: required cap above a stated size --------------------------
+# --- confirm gate: required cap names the REAL engine controls ---------------
 
 
 def test_confirm_gate_requires_a_cap_above_a_stated_size() -> None:
@@ -103,13 +113,20 @@ def test_confirm_gate_requires_a_cap_above_a_stated_size() -> None:
     # The cap is required, not optional.
     assert "cap" in section
     assert "require" in section or "must" in section
-    # A concrete budget/agent bound is named.
-    assert (
-        "budgetfloor" in section
-        or "budget" in section
-        or "max-agents" in section
-        or "agent cap" in section
-    )
+    # The named levers are the REAL engine controls: budgetFloor and slicing.
+    assert "budgetfloor" in section
+    assert "slic" in section  # slice / slicing
+    # NOT a fictional max-agents cap the engine has no knob for.
+    assert "max-agents" not in section
+
+
+def test_budgetfloor_is_documented_as_a_settable_engine_arg() -> None:
+    # The cap must be actionable: budgetFloor appears as an engine `args` knob in
+    # the Build step, with its real default, so "require a cap" is something the
+    # operator can actually set.
+    build = _build_section().lower()
+    assert "budgetfloor" in build
+    assert "60000" in build or "60,000" in build
 
 
 # --- confirm gate: estimate reflects the LEAN defaults -----------------------
@@ -123,6 +140,22 @@ def test_estimate_reflects_lean_defaults() -> None:
     # NOT the heavier defaults it replaced.
     assert "three lenses" not in section
     assert "two fix rounds" not in section
+    # The per-issue ×4 must NOT be described as implement/verify/fix/integrate —
+    # that spelling silently drops the re-verify agent the engine always runs.
+    assert "implement/verify/fix/integrate" not in section
+
+
+def test_estimate_distinguishes_typical_from_worst_case() -> None:
+    section = _confirm_section().lower()
+    # The closed form is labelled typical/expected, not the worst case.
+    assert "typical" in section or "average" in section
+    # The honest per-issue range is 3–5 sub-agents.
+    assert re.search(r"3\s*[-–—]\s*5", section), "expected the 3–5 per-issue range"
+    # The re-verify agent dispatched after a fix round is acknowledged, not dropped.
+    assert "re-verify" in section or "reverify" in section
+    # Per-run overhead is stated for both modes (PR ≈2, merge up to ≈5).
+    assert "pr mode" in section
+    assert "merge mode" in section
 
 
 # --- closing: verify each issue individually with `gh issue view` ------------
