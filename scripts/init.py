@@ -40,7 +40,9 @@ SPDX_ALIASES: dict[str, str] = {
 }
 
 # The base URL of the SPDX licence-list-data plain-text licences.
-SPDX_TEXT_BASE: str = "https://raw.githubusercontent.com/spdx/license-list-data/main/text"
+SPDX_TEXT_BASE: str = (
+    "https://raw.githubusercontent.com/spdx/license-list-data/main/text"
+)
 
 # Licences whose canonical text carries year/owner placeholders meant to be
 # filled in by the licensor. Apache and the GPL family are used verbatim — their
@@ -262,13 +264,17 @@ def cmd_templates(args: argparse.Namespace) -> int:
     written: list[str] = []
     for template_name, out_name in TEMPLATE_FILES:
         template = (templates_dir / template_name).read_text(encoding="utf-8")
-        (project_dir / out_name).write_text(substitute(template, tokens), encoding="utf-8")
+        (project_dir / out_name).write_text(
+            substitute(template, tokens), encoding="utf-8"
+        )
         written.append(out_name)
 
     # NOTICE belongs only with the Apache licence (its copyright line lives there).
     if map_spdx(args.spdx).startswith("Apache"):
         notice = (templates_dir / "NOTICE").read_text(encoding="utf-8")
-        (project_dir / "NOTICE").write_text(substitute(notice, tokens), encoding="utf-8")
+        (project_dir / "NOTICE").write_text(
+            substitute(notice, tokens), encoding="utf-8"
+        )
         written.append("NOTICE")
 
     print("wrote: " + ", ".join(written))
@@ -302,11 +308,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    gi = sub.add_parser("gitignore", help="Compose a .gitignore from baseline + fragments.")
+    gi = sub.add_parser(
+        "gitignore", help="Compose a .gitignore from baseline + fragments."
+    )
     gi.add_argument("--gitignore-dir", type=Path, required=True)
-    gi.add_argument("--include", required=True, help="Comma-separated expanded module names.")
+    gi.add_argument(
+        "--include", required=True, help="Comma-separated expanded module names."
+    )
     gi.add_argument("--project-dir", type=Path, default=Path("."))
-    gi.add_argument("--stdout", action="store_true", help="Print instead of writing the file.")
+    gi.add_argument(
+        "--stdout", action="store_true", help="Print instead of writing the file."
+    )
     gi.set_defaults(func=cmd_gitignore)
 
     tp = sub.add_parser("templates", help="Render the generic project templates.")
@@ -319,7 +331,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     tp.add_argument("--author-url", required=True)
     tp.add_argument("--year", required=True)
     tp.add_argument("--date", required=True)
-    tp.add_argument("--spdx", required=True, help="The chosen licence id (drives NOTICE + wording).")
+    tp.add_argument(
+        "--spdx", required=True, help="The chosen licence id (drives NOTICE + wording)."
+    )
     tp.set_defaults(func=cmd_templates)
 
     lc = sub.add_parser("license", help="Fetch, fill, and write LICENSE.")

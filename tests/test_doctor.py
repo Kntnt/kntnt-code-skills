@@ -25,7 +25,9 @@ GITIGNORE_DIR = REPO_ROOT / "lib" / "gitignore"
 
 
 def _load(name: str):
-    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / "scripts" / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(
+        name, REPO_ROOT / "scripts" / f"{name}.py"
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -44,7 +46,9 @@ def git_project(tmp_path: Path) -> Path:
     root = tmp_path / "project"
     root.mkdir()
     subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
-    subprocess.run(["git", "-C", str(root), "config", "user.email", "t@example.com"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.email", "t@example.com"], check=True
+    )
     subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
     (root / "placeholder.txt").write_text("x\n")
     subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
@@ -89,7 +93,10 @@ def test_missing_entries_allows_extra_user_lines():
 
 def test_check_gitignore_flags_missing_file(git_project):
     findings = doctor.check_gitignore(git_project, GITIGNORE_DIR, [])
-    assert any(f["category"] == "gitignore" and "no .gitignore" in f["message"] for f in findings)
+    assert any(
+        f["category"] == "gitignore" and "no .gitignore" in f["message"]
+        for f in findings
+    )
 
 
 def test_check_gitignore_flags_missing_fragment_entries(git_project):
@@ -137,7 +144,9 @@ def test_check_license_clean_with_non_apache(git_project):
 
 def test_inverted_location_check_flags_docs_standard(git_project):
     (git_project / "docs").mkdir()
-    (git_project / "docs" / "coding-standards.md").write_text("old monolithic standard\n")
+    (git_project / "docs" / "coding-standards.md").write_text(
+        "old monolithic standard\n"
+    )
     findings = doctor.check_coding_standard(git_project, MODULES_DIR, [])
     assert any("correct home" in f["message"] for f in findings)
 
@@ -164,9 +173,12 @@ def test_coding_standard_drift_is_flagged(git_project):
 def test_main_emits_valid_json(git_project, capsys):
     code = doctor.main(
         [
-            "--project-dir", str(git_project),
-            "--modules-dir", str(MODULES_DIR),
-            "--gitignore-dir", str(GITIGNORE_DIR),
+            "--project-dir",
+            str(git_project),
+            "--modules-dir",
+            str(MODULES_DIR),
+            "--gitignore-dir",
+            str(GITIGNORE_DIR),
         ]
     )
     out = capsys.readouterr().out

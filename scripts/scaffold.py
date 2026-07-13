@@ -83,6 +83,7 @@ CANONICAL_ORDER: list[str] = [
     "bash",
 ]
 
+
 # Per-module wiring for the generated files. Keyed by module:
 #   label      — human title in the generated H1.
 #   read_when  — completes "Read before writing or changing <read_when>." in
@@ -325,7 +326,9 @@ def sync_references(
         agents_md.write_text(
             f"# {title}\n\n## References\n\n{body}\n", encoding="utf-8"
         )
-        return ["created minimal AGENTS.md with References — run /agents-md to flesh it out"]
+        return [
+            "created minimal AGENTS.md with References — run /agents-md to flesh it out"
+        ]
 
     lines = agents_md.read_text(encoding="utf-8").splitlines()
     actions: list[str] = []
@@ -463,7 +466,9 @@ def do_investigate(
     for module in kept:
         fresh = build_module_file(module, bodies[module])
         on_disk = (out_dir / f"{module}.md").read_text(encoding="utf-8")
-        statuses[module] = "up to date" if on_disk == fresh else "differs (would be updated)"
+        statuses[module] = (
+            "up to date" if on_disk == fresh else "differs (would be updated)"
+        )
 
     actionable = added or removed or any(s != "up to date" for s in statuses.values())
 

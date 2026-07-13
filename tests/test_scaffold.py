@@ -55,15 +55,20 @@ def project_dir(tmp_path: Path) -> Path:
     return root
 
 
-def run(monkeypatch, project_dir: Path, modules_dir: Path, include: str, *flags: str) -> int:
+def run(
+    monkeypatch, project_dir: Path, modules_dir: Path, include: str, *flags: str
+) -> int:
     """Invoke the script's main() with the given arguments, returning its exit
     code."""
 
     argv = [
         "scaffold.py",
-        "--project-dir", str(project_dir),
-        "--modules-dir", str(modules_dir),
-        "--include", include,
+        "--project-dir",
+        str(project_dir),
+        "--modules-dir",
+        str(modules_dir),
+        "--include",
+        include,
         *flags,
     ]
     monkeypatch.setattr(sys, "argv", argv)
@@ -108,7 +113,9 @@ def test_order_modules_rejects_unknown():
 # --- create -------------------------------------------------------------------
 
 
-def test_create_writes_modules_and_wiring_without_manifest(monkeypatch, project_dir, modules_dir):
+def test_create_writes_modules_and_wiring_without_manifest(
+    monkeypatch, project_dir, modules_dir
+):
     assert run(monkeypatch, project_dir, modules_dir, "php,wordpress") == 0
 
     # general is always included; the closure adds php under wordpress.
@@ -126,23 +133,32 @@ def test_create_writes_modules_and_wiring_without_manifest(monkeypatch, project_
     assert (project_dir / "CLAUDE.md").read_text().startswith("@AGENTS.md")
 
 
-def test_create_emits_override_header_for_wordpress(monkeypatch, project_dir, modules_dir):
+def test_create_emits_override_header_for_wordpress(
+    monkeypatch, project_dir, modules_dir
+):
     run(monkeypatch, project_dir, modules_dir, "wordpress")
     body = out_file(project_dir, "wordpress").read_text()
     assert "agents.d/coding-standard/php.md` first" in body
     assert scaffold.PRECEDENCE_LINE in body
 
 
-def test_create_references_are_backticked_and_in_canonical_order(monkeypatch, project_dir, modules_dir):
+def test_create_references_are_backticked_and_in_canonical_order(
+    monkeypatch, project_dir, modules_dir
+):
     run(monkeypatch, project_dir, modules_dir, "wordpress,php")
     agents = (project_dir / "AGENTS.md").read_text()
     for module in ("general", "php", "wordpress"):
         assert f"`agents.d/coding-standard/{module}.md`" in agents
-    order = [agents.index(f"agents.d/coding-standard/{m}.md") for m in ("general", "php", "wordpress")]
+    order = [
+        agents.index(f"agents.d/coding-standard/{m}.md")
+        for m in ("general", "php", "wordpress")
+    ]
     assert order == sorted(order)
 
 
-def test_create_content_matches_build_module_file(monkeypatch, project_dir, modules_dir):
+def test_create_content_matches_build_module_file(
+    monkeypatch, project_dir, modules_dir
+):
     run(monkeypatch, project_dir, modules_dir, "php")
     expected = scaffold.build_module_file("php", (modules_dir / "php.md").read_text())
     assert out_file(project_dir, "php").read_text() == expected
@@ -151,7 +167,9 @@ def test_create_content_matches_build_module_file(monkeypatch, project_dir, modu
 # --- mode detection -----------------------------------------------------------
 
 
-def test_presence_of_a_module_file_selects_investigate(monkeypatch, project_dir, modules_dir, capsys):
+def test_presence_of_a_module_file_selects_investigate(
+    monkeypatch, project_dir, modules_dir, capsys
+):
     # First run creates; a module file now exists, so a bare re-run investigates.
     run(monkeypatch, project_dir, modules_dir, "php")
     capsys.readouterr()
@@ -190,7 +208,9 @@ def test_investigate_flags_content_diff(monkeypatch, project_dir, modules_dir, c
     assert "differs (would be updated)" in out
 
 
-def test_investigate_flags_on_disk_edit_as_differs(monkeypatch, project_dir, modules_dir, capsys):
+def test_investigate_flags_on_disk_edit_as_differs(
+    monkeypatch, project_dir, modules_dir, capsys
+):
     run(monkeypatch, project_dir, modules_dir, "php")
     capsys.readouterr()
     # Editing the scaffolded file also shows as a difference from the canonical.
@@ -201,7 +221,9 @@ def test_investigate_flags_on_disk_edit_as_differs(monkeypatch, project_dir, mod
     assert "differs (would be updated)" in out
 
 
-def test_investigate_reports_project_drift(monkeypatch, project_dir, modules_dir, capsys):
+def test_investigate_reports_project_drift(
+    monkeypatch, project_dir, modules_dir, capsys
+):
     run(monkeypatch, project_dir, modules_dir, "php,python")
     capsys.readouterr()
 
@@ -230,15 +252,23 @@ def test_update_adds_new_module(monkeypatch, project_dir, modules_dir):
     assert run(monkeypatch, project_dir, modules_dir, "php,python", "--update") == 0
 
     assert out_file(project_dir, "python").exists()
-    assert "`agents.d/coding-standard/python.md`" in (project_dir / "AGENTS.md").read_text()
+    assert (
+        "`agents.d/coding-standard/python.md`"
+        in (project_dir / "AGENTS.md").read_text()
+    )
 
 
-def test_update_removes_dropped_module_and_prunes_reference(monkeypatch, project_dir, modules_dir):
+def test_update_removes_dropped_module_and_prunes_reference(
+    monkeypatch, project_dir, modules_dir
+):
     run(monkeypatch, project_dir, modules_dir, "php,python")
     assert run(monkeypatch, project_dir, modules_dir, "php", "--update") == 0
 
     assert not out_file(project_dir, "python").exists()
-    assert "agents.d/coding-standard/python.md" not in (project_dir / "AGENTS.md").read_text()
+    assert (
+        "agents.d/coding-standard/python.md"
+        not in (project_dir / "AGENTS.md").read_text()
+    )
 
 
 def test_update_rewrites_changed_module(monkeypatch, project_dir, modules_dir):
@@ -249,7 +279,9 @@ def test_update_rewrites_changed_module(monkeypatch, project_dir, modules_dir):
     assert "New rules." in out_file(project_dir, "php").read_text()
 
 
-def test_update_overwrites_on_disk_edit_no_protection(monkeypatch, project_dir, modules_dir):
+def test_update_overwrites_on_disk_edit_no_protection(
+    monkeypatch, project_dir, modules_dir
+):
     run(monkeypatch, project_dir, modules_dir, "php")
     out_file(project_dir, "php").write_text("my edits\n", encoding="utf-8")
 
@@ -259,7 +291,9 @@ def test_update_overwrites_on_disk_edit_no_protection(monkeypatch, project_dir, 
     assert out_file(project_dir, "php").read_text() == expected
 
 
-def test_update_preserves_user_prose_in_agents_md(monkeypatch, project_dir, modules_dir):
+def test_update_preserves_user_prose_in_agents_md(
+    monkeypatch, project_dir, modules_dir
+):
     run(monkeypatch, project_dir, modules_dir, "php")
     agents_md = project_dir / "AGENTS.md"
     agents_md.write_text(agents_md.read_text() + "\n## Notes\n\nHand-written prose.\n")
@@ -270,7 +304,9 @@ def test_update_preserves_user_prose_in_agents_md(monkeypatch, project_dir, modu
     assert "`agents.d/coding-standard/python.md`" in text
 
 
-def test_update_with_no_changes_is_a_noop(monkeypatch, project_dir, modules_dir, capsys):
+def test_update_with_no_changes_is_a_noop(
+    monkeypatch, project_dir, modules_dir, capsys
+):
     run(monkeypatch, project_dir, modules_dir, "php")
     before = out_file(project_dir, "php").read_text()
     capsys.readouterr()
@@ -283,7 +319,9 @@ def test_update_with_no_changes_is_a_noop(monkeypatch, project_dir, modules_dir,
 # --- sanity and errors --------------------------------------------------------
 
 
-def test_refuses_non_project_directory_without_force(monkeypatch, tmp_path, modules_dir):
+def test_refuses_non_project_directory_without_force(
+    monkeypatch, tmp_path, modules_dir
+):
     bare = tmp_path / "bare"
     bare.mkdir()
     assert run(monkeypatch, bare, modules_dir, "php") == 1

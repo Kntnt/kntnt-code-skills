@@ -39,7 +39,12 @@ PLUGIN_JSON: Path = REPO_ROOT / ".claude-plugin" / "plugin.json"
 CHANGELOG: Path = REPO_ROOT / "CHANGELOG.md"
 
 # The generic project templates that lib/templates/ must carry.
-REQUIRED_TEMPLATES: tuple[str, ...] = ("README.md", "CHANGELOG.md", "CONTRIBUTING.md", "NOTICE")
+REQUIRED_TEMPLATES: tuple[str, ...] = (
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "NOTICE",
+)
 
 
 @dataclass
@@ -249,7 +254,9 @@ def check_skill_frontmatter() -> CheckResult:
         name = frontmatter_name(skill_md)
         if name is None:
             result.findings.append(
-                Finding(result.name, relpath(skill_md), None, "no `name:` in frontmatter")
+                Finding(
+                    result.name, relpath(skill_md), None, "no `name:` in frontmatter"
+                )
             )
         elif name != skill_dir.name:
             result.findings.append(
@@ -271,11 +278,18 @@ def check_gitignore_fragments() -> CheckResult:
     result = CheckResult(name="(d) lib/gitignore/ fragments are sane")
     if not (GITIGNORE_DIR / "base.txt").is_file():
         result.findings.append(
-            Finding(result.name, relpath(GITIGNORE_DIR / "base.txt"), None, "missing base.txt")
+            Finding(
+                result.name,
+                relpath(GITIGNORE_DIR / "base.txt"),
+                None,
+                "missing base.txt",
+            )
         )
     order = canonical_order()
     known = set(order) if order is not None else set()
-    for fragment in sorted(GITIGNORE_DIR.glob("*.txt")) if GITIGNORE_DIR.exists() else []:
+    for fragment in (
+        sorted(GITIGNORE_DIR.glob("*.txt")) if GITIGNORE_DIR.exists() else []
+    ):
         if fragment.stem == "base":
             continue
         if known and fragment.stem not in known:
@@ -297,7 +311,9 @@ def check_templates_present() -> CheckResult:
     for name in REQUIRED_TEMPLATES:
         if not (TEMPLATES_DIR / name).is_file():
             result.findings.append(
-                Finding(result.name, relpath(TEMPLATES_DIR / name), None, "missing template")
+                Finding(
+                    result.name, relpath(TEMPLATES_DIR / name), None, "missing template"
+                )
             )
     return result
 

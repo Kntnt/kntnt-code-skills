@@ -19,7 +19,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-_spec = importlib.util.spec_from_file_location("init", REPO_ROOT / "scripts" / "init.py")
+_spec = importlib.util.spec_from_file_location(
+    "init", REPO_ROOT / "scripts" / "init.py"
+)
 assert _spec is not None and _spec.loader is not None
 init = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = init
@@ -71,7 +73,9 @@ def test_read_gitignore_composes_real_fragments_deduped():
 
 def test_substitute_replaces_known_tokens():
     template = "# {{PROJECT_NAME}} by {{OWNER}}\n{{DESCRIPTION}}\n"
-    out = init.substitute(template, {"PROJECT_NAME": "foo", "OWNER": "Kntnt", "DESCRIPTION": "A tool."})
+    out = init.substitute(
+        template, {"PROJECT_NAME": "foo", "OWNER": "Kntnt", "DESCRIPTION": "A tool."}
+    )
     assert out == "# foo by Kntnt\nA tool.\n"
 
 
@@ -117,17 +121,23 @@ def test_postprocess_fills_placeholders_for_mit0():
 
 
 def test_postprocess_fills_placeholders_for_bsd1():
-    out = init.postprocess_license("BSD-1-Clause", FIXTURE_LICENSE, year="2026", owner="Kntnt")
+    out = init.postprocess_license(
+        "BSD-1-Clause", FIXTURE_LICENSE, year="2026", owner="Kntnt"
+    )
     assert "Copyright 2026 Kntnt" in out
 
 
 def test_postprocess_leaves_apache_verbatim():
-    out = init.postprocess_license("Apache-2.0", FIXTURE_LICENSE, year="2026", owner="Kntnt")
+    out = init.postprocess_license(
+        "Apache-2.0", FIXTURE_LICENSE, year="2026", owner="Kntnt"
+    )
     assert out == FIXTURE_LICENSE
 
 
 def test_postprocess_leaves_gpl_verbatim():
-    out = init.postprocess_license("GPL-3.0", FIXTURE_LICENSE, year="2026", owner="Kntnt")
+    out = init.postprocess_license(
+        "GPL-3.0", FIXTURE_LICENSE, year="2026", owner="Kntnt"
+    )
     assert out == FIXTURE_LICENSE
 
 
@@ -152,16 +162,26 @@ def test_templates_command_renders_and_writes(tmp_path, monkeypatch):
     project.mkdir()
     argv = [
         "templates",
-        "--templates-dir", str(REPO_ROOT / "lib" / "templates"),
-        "--project-dir", str(project),
-        "--project-name", "demo",
-        "--owner", "Kntnt",
-        "--description", "A demo project.",
-        "--author-name", "Thomas Barregren",
-        "--author-url", "https://kntnt.com",
-        "--year", "2026",
-        "--date", "2026-06-26",
-        "--spdx", "Apache-2.0",
+        "--templates-dir",
+        str(REPO_ROOT / "lib" / "templates"),
+        "--project-dir",
+        str(project),
+        "--project-name",
+        "demo",
+        "--owner",
+        "Kntnt",
+        "--description",
+        "A demo project.",
+        "--author-name",
+        "Thomas Barregren",
+        "--author-url",
+        "https://kntnt.com",
+        "--year",
+        "2026",
+        "--date",
+        "2026-06-26",
+        "--spdx",
+        "Apache-2.0",
     ]
     assert init.main(argv) == 0
 
@@ -184,16 +204,26 @@ def test_templates_command_skips_notice_for_non_apache(tmp_path):
     project.mkdir()
     argv = [
         "templates",
-        "--templates-dir", str(REPO_ROOT / "lib" / "templates"),
-        "--project-dir", str(project),
-        "--project-name", "demo",
-        "--owner", "Kntnt",
-        "--description", "A demo project.",
-        "--author-name", "Thomas Barregren",
-        "--author-url", "https://kntnt.com",
-        "--year", "2026",
-        "--date", "2026-06-26",
-        "--spdx", "MIT-0",
+        "--templates-dir",
+        str(REPO_ROOT / "lib" / "templates"),
+        "--project-dir",
+        str(project),
+        "--project-name",
+        "demo",
+        "--owner",
+        "Kntnt",
+        "--description",
+        "A demo project.",
+        "--author-name",
+        "Thomas Barregren",
+        "--author-url",
+        "https://kntnt.com",
+        "--year",
+        "2026",
+        "--date",
+        "2026-06-26",
+        "--spdx",
+        "MIT-0",
     ]
     assert init.main(argv) == 0
     assert not (project / "NOTICE").exists()
@@ -209,9 +239,12 @@ def test_gitignore_command_writes_file(tmp_path):
     project.mkdir()
     argv = [
         "gitignore",
-        "--gitignore-dir", str(REPO_ROOT / "lib" / "gitignore"),
-        "--include", "general,php,typescript",
-        "--project-dir", str(project),
+        "--gitignore-dir",
+        str(REPO_ROOT / "lib" / "gitignore"),
+        "--include",
+        "general,php,typescript",
+        "--project-dir",
+        str(project),
     ]
     assert init.main(argv) == 0
     content = (project / ".gitignore").read_text()

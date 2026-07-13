@@ -45,7 +45,9 @@ STALE_STANDARD_PATHS: tuple[str, ...] = (
 )
 
 
-def finding(category: str, severity: str, message: str, remedy: str, auto_fixable: bool) -> dict:
+def finding(
+    category: str, severity: str, message: str, remedy: str, auto_fixable: bool
+) -> dict:
     """Build one finding record."""
 
     return {
@@ -95,7 +97,9 @@ def scaffolded_module_stems(project_dir: Path) -> list[str]:
     out_dir = project_dir / OUTPUT_SUBDIR
     if not out_dir.exists():
         return []
-    return sorted(p.stem for p in out_dir.iterdir() if p.is_file() and p.suffix == ".md")
+    return sorted(
+        p.stem for p in out_dir.iterdir() if p.is_file() and p.suffix == ".md"
+    )
 
 
 def check_git(project_dir: Path) -> list[dict]:
@@ -137,7 +141,9 @@ def check_git(project_dir: Path) -> list[dict]:
     return findings
 
 
-def check_gitignore(project_dir: Path, gitignore_dir: Path, modules: list[str]) -> list[dict]:
+def check_gitignore(
+    project_dir: Path, gitignore_dir: Path, modules: list[str]
+) -> list[dict]:
     """`.gitignore` present and covering the baseline + the module fragments."""
 
     findings: list[dict] = []
@@ -178,7 +184,9 @@ def check_gitignore(project_dir: Path, gitignore_dir: Path, modules: list[str]) 
     return findings
 
 
-def check_coding_standard(project_dir: Path, modules_dir: Path, modules: list[str]) -> list[dict]:
+def check_coding_standard(
+    project_dir: Path, modules_dir: Path, modules: list[str]
+) -> list[dict]:
     """Standard in its correct home and in sync.
 
     The inverted location check is deterministic; the in-sync check delegates to
@@ -260,7 +268,10 @@ def check_license(project_dir: Path) -> list[dict]:
         )
         return findings
 
-    if looks_apache(license_file.read_text(encoding="utf-8")) and not (project_dir / "NOTICE").exists():
+    if (
+        looks_apache(license_file.read_text(encoding="utf-8"))
+        and not (project_dir / "NOTICE").exists()
+    ):
         findings.append(
             finding(
                 "license",
@@ -290,7 +301,9 @@ def main(argv: list[str] | None = None) -> int:
     1 when any finding is produced, so a caller can gate on the exit code."""
 
     plugin_root = Path(__file__).resolve().parent.parent
-    parser = argparse.ArgumentParser(description="Deterministic checks for the doctor skill.")
+    parser = argparse.ArgumentParser(
+        description="Deterministic checks for the doctor skill."
+    )
     parser.add_argument("--project-dir", type=Path, default=Path("."))
     parser.add_argument(
         "--modules-dir",
@@ -307,7 +320,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     findings = run_checks(
-        args.project_dir.resolve(), args.modules_dir.resolve(), args.gitignore_dir.resolve()
+        args.project_dir.resolve(),
+        args.modules_dir.resolve(),
+        args.gitignore_dir.resolve(),
     )
     print(json.dumps({"findings": findings}, indent=2))
     return 0 if not findings else 1
