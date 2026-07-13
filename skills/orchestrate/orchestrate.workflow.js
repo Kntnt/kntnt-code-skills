@@ -498,23 +498,27 @@ const integrationHotfix = (branch, findings) =>
 // issue integrated so far on the default branch and nothing already-completed is
 // lost. Processing the waves IN ORDER puts a dependent's build AFTER its
 // prerequisite's, but order alone is not enough: if the prerequisite parked,
-// blocked, or failed to integrate, the base still lacks it. So the loop also
-// honours wave OUTCOME — before building an issue it skips (parks) it when an
-// in-scope prerequisite has not landed (see `landed` and `unlandedPrerequisites`
-// below). The within-wave issue-number sort is only deterministic ordering, since
+// blocked, or failed to integrate — or, in the conservative PR mode, only opened a
+// pull request without merging — the base still lacks it. So the loop also honours
+// wave OUTCOME — before building an issue it skips (parks) it when an in-scope
+// prerequisite has not landed (see `landed` and `unlandedPrerequisites` below). The
+// within-wave issue-number sort is only deterministic ordering, since
 // a wave's issues are independent by construction. Worktree isolation (#14) keeps
 // concurrent agents apart, so serial dispatch is safe.
 const verdicts = []
 const parked = []
 const waves = config.waves || []
 
-// The issue numbers that actually LANDED — integrated onto the default branch (or
-// opened as a PR in the conservative mode) after passing verification. A dependent
-// must build on a base that already contains its prerequisites, so this set is
-// consulted before each build: an issue with an unlanded in-scope prerequisite is
-// skipped rather than built on an incomplete base. Only a successful integration
-// adds to it, so a parked/blocked/failed issue never counts as landed — which is
-// exactly what cascades the skip to everything downstream of it.
+// The issue numbers whose code actually LANDED on the base a dependent builds from
+// — the default branch. A dependent must build on a base that already contains its
+// prerequisites, so this set is consulted before each build: an issue with an
+// unlanded in-scope prerequisite is skipped rather than built on an incomplete
+// base. Only a MERGE-mode integration lands an issue here, because only merge mode
+// puts the change on the default branch; the conservative default PR mode opens a
+// pull request and merges NOTHING, so a PR-opened issue is deliberately absent —
+// its dependents would otherwise build on a base missing it (issue #23). A
+// parked/blocked/failed issue never lands either. Both omissions cascade the skip
+// to everything downstream, which is exactly the intent.
 const landed = new Set()
 
 // The outcome of the mandatory final integration review, surfaced on the return
@@ -559,16 +563,23 @@ try {
         continue
       }
 
-      // Skip (park) this issue when one of its in-scope prerequisites did not land,
-      // rather than build it on a base missing that work. The reason NAMES the
+      // Skip (park) this issue when one of its in-scope prerequisites is not on the
+      // base, rather than build it on a base missing that work. The reason NAMES the
       // unlanded prerequisite and is carried in `blockers` — the field the report
       // surfaces for a parked issue (it shows `verify` only for a done one) — so the
-      // report points at the real cause. Because a skipped issue is never added to
+      // report points at the real cause. It is MODE-AWARE: in merge mode a missing
+      // prerequisite genuinely failed to land (parked/blocked/failed integrate); in
+      // PR mode NOTHING merges, so a prerequisite is missing because it is only an
+      // open PR — the reason points the human at --merge, the way to build this
+      // issue on a base that contains it. Because a skipped issue is never added to
       // `landed`, this same check parks every downstream dependent in turn — the
       // transitive cascade.
       const missing = unlandedPrerequisites(issuesByNumber.get(number)?.blocked_by, issuesByNumber, landed)
       if (missing.length > 0) {
-        const reason = `prerequisite did not land: ${missing.map((prereq) => `#${prereq}`).join(', ')}`
+        const named = missing.map((prereq) => `#${prereq}`).join(', ')
+        const reason = merge
+          ? `prerequisite did not land: ${named}`
+          : `prerequisite not on the base — PR mode opens a pull request without merging it: ${named}. Re-run with --merge (or after the prerequisite's PR merges) to build this issue on a base that contains it.`
         parked.push({ ...toRecord(number, null, 'parked', reason), blockers: [reason] })
         continue
       }
@@ -588,18 +599,23 @@ try {
         continue
       }
 
-      // Land it NOW, before the next issue's build starts: a clean fast-forward
-      // of the default to the feature tip is done, a conflict parks it. Because the
-      // land happens here, inline, a stop after this point still leaves this issue
-      // on the default branch — the durability property the batched design lacked.
+      // Integrate it NOW, before the next issue's build starts: in merge mode a
+      // clean fast-forward of the default to the feature tip lands it, in PR mode a
+      // pull request is opened; a conflict or failure parks it. Because this happens
+      // here, inline, a stop after this point still leaves a merge-mode issue on the
+      // default branch — the durability property the batched design lacked.
       const integrated = await integrate(record)
 
-      // Record the outcome, and on a successful land mark this issue as landed so
-      // its dependents may build on it. A parked integration is NOT added to
-      // `landed`, which cascades the skip to everything that depends on it.
+      // Record the outcome. Mark the issue landed ONLY when the run actually merged
+      // it onto the base — merge mode alone. A PR-mode integration opens a pull
+      // request and merges nothing, so the issue is NOT on the base a dependent
+      // would build from; leaving it out of `landed` parks every in-scope dependent
+      // (pointing them at --merge) and cascades that skip transitively, exactly as a
+      // parked or failed integration does. A parked integration is never landed in
+      // either mode.
       if (integrated.status === 'done') {
         verdicts.push(integrated)
-        landed.add(integrated.number)
+        if (merge) landed.add(integrated.number)
       } else {
         parked.push(integrated)
       }
