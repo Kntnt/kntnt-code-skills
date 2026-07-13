@@ -294,7 +294,7 @@ def test_agent_constraints_text_covers_the_forbidden_actions() -> None:
 def test_code_touching_prompts_reference_the_constraints() -> None:
     source = WORKFLOW.read_text(encoding="utf-8")
     reference = "${" + CONSTRAINTS_NAME + "}"
-    for name in ("implement", "fix", "verify"):
+    for name in ("implement", "fix", "verify", "reverifyFindings"):
         block = _agent_block(source, name)
         assert reference in block, (
             f"the `{name}` prompt must interpolate {reference} so the shared "
@@ -460,6 +460,171 @@ def test_null_build_record_parks_rather_than_silently_dropping() -> None:
     assert "buildAndVerify returned nothing" in region, (
         "the null-record branch must park the issue with a reason so it still "
         "appears in the report"
+    )
+
+
+# --- lean verification defaults (issue #17) ----------------------------------
+
+# Verification is lean by default: the DEFAULT verifier panel is a SINGLE broad
+# adversarial reviewer (correctness against intent + acceptance criteria, test
+# quality, AND any security/data-safety hazard — one lens); maxFixRounds defaults
+# to 1; and a fix round re-verifies ONLY the fixed findings via a targeted
+# single-agent `reverifyFindings` rather than re-running the whole panel. The
+# per-issue `lenses` override still lets planning raise a genuinely high-risk
+# issue to 2–3 lenses. These are structural.
+
+
+def _default_lenses(source: str) -> list[str]:
+    """The string entries of the ``const DEFAULT_LENSES = [ … ]`` array literal.
+
+    Finds the array's opening bracket, walks to its balanced close, and returns
+    the quoted string lines inside — one per lens, in the repo's
+    one-lens-per-line array style."""
+
+    match = re.search(r"^const DEFAULT_LENSES = \[", source, flags=re.MULTILINE)
+    assert match is not None, "`const DEFAULT_LENSES = [` not found"
+    open_idx = source.index("[", match.start())
+    depth = 0
+    close_idx = None
+    for index in range(open_idx, len(source)):
+        if source[index] == "[":
+            depth += 1
+        elif source[index] == "]":
+            depth -= 1
+            if depth == 0:
+                close_idx = index
+                break
+    assert close_idx is not None, "unbalanced brackets in DEFAULT_LENSES"
+    body = source[open_idx + 1 : close_idx]
+    return [line.strip() for line in body.splitlines() if line.strip().startswith("'")]
+
+
+def test_default_lenses_is_one_broad_adversarial_reviewer() -> None:
+    # AC-1: the default panel is ONE broad lens folding correctness + acceptance
+    # criteria, test quality, and security/data-safety into a single reviewer.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    lenses = _default_lenses(source)
+    assert len(lenses) == 1, (
+        f"the default verifier panel must be a SINGLE broad adversarial reviewer, "
+        f"found {len(lenses)} lenses: {lenses}"
+    )
+    text = lenses[0].lower()
+    assert "correctness" in text, "the broad lens must cover correctness"
+    assert "acceptance criteria" in text, (
+        "the broad lens must cover the acceptance criteria"
+    )
+    assert "test" in text, "the broad lens must cover test quality"
+    assert "security" in text or "data-safety" in text or "data safety" in text, (
+        "the broad lens must cover any security/data-safety hazard"
+    )
+
+
+def test_per_issue_lenses_override_still_scales_risk() -> None:
+    # AC-1: the risk-scaling mechanism stays — a per-issue `lenses` array still
+    # overrides the single-lens default so a high-risk issue can request 2–3.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "lensesFor")
+    assert "issue?.lenses" in block, (
+        "lensesFor must still read a per-issue `lenses` override"
+    )
+    assert "DEFAULT_LENSES" in block, (
+        "lensesFor must fall back to the single broad DEFAULT_LENSES"
+    )
+
+
+def test_max_fix_rounds_defaults_to_one() -> None:
+    # AC-2: the fix<->verify cap defaults to 1, not 2.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    match = re.search(r"const maxFixRounds = config\.maxFixRounds \?\? (\d+)", source)
+    assert match is not None, "the maxFixRounds default assignment was not found"
+    assert match.group(1) == "1", (
+        f"maxFixRounds must default to 1, found `?? {match.group(1)}`"
+    )
+
+
+def test_fix_round_reverifies_only_fixed_findings_not_full_panel() -> None:
+    # AC-3: after a fix, re-verify ONLY the fixed findings via the targeted
+    # single-agent reverifyFindings — the full-panel verify() runs once, before
+    # the loop, and is NEVER re-called inside it.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "buildAndVerify")
+
+    # The targeted re-verify agent is used.
+    assert "reverifyFindings(" in block, (
+        "the fix loop must re-verify via the targeted reverifyFindings agent"
+    )
+
+    # The full panel runs once, before the fix loop; split at the loop header.
+    loop_idx = block.index("for (")
+    before, loop = block[:loop_idx], block[loop_idx:]
+    assert "verify(" in before, (
+        "the full-panel verify() must run once, before the fix loop"
+    )
+    assert "reverifyFindings(" in loop, (
+        "the fix round must call reverifyFindings inside the loop"
+    )
+    assert "verify(" not in loop, (
+        "the fix loop must NOT re-run the full-panel verify() — it re-verifies "
+        "only the fixed findings via reverifyFindings"
+    )
+
+
+def test_reverify_findings_is_a_single_agent_not_a_panel() -> None:
+    # AC-3: reverifyFindings is ONE targeted adversarial agent, not a parallel
+    # panel, and it returns the VERDICT_SCHEMA a verifier does over specific
+    # findings.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "reverifyFindings")
+    assert "parallel(" not in block, (
+        "reverifyFindings must be a single agent, never a parallel panel"
+    )
+    assert "VERDICT_SCHEMA" in block, (
+        "reverifyFindings must return the same VERDICT_SCHEMA a verifier does"
+    )
+    assert "findings" in block, (
+        "reverifyFindings must be handed the specific findings to re-check"
+    )
+
+
+def test_reverify_findings_is_read_only_and_carries_constraints() -> None:
+    # Like verify, reverifyFindings is a read-only reviewer that did NOT write the
+    # code, needs no worktree, and is bound by the shared AGENT_CONSTRAINTS.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "reverifyFindings")
+    assert "${" + CONSTRAINTS_NAME + "}" in block, (
+        "reverifyFindings must interpolate the shared AGENT_CONSTRAINTS"
+    )
+    assert "isolation" not in block, (
+        "reverifyFindings is a read-only reviewer and needs no worktree isolation"
+    )
+
+
+def test_verifier_agent_count_is_lower_under_lean_defaults() -> None:
+    # AC-4: for a default (non-high-risk) issue with one finding, the worst-case
+    # number of verifier agents spawned is demonstrably lower than under the
+    # previous defaults. Read the real values from the source and compute both.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    new_lenses = len(_default_lenses(source))
+    match = re.search(r"const maxFixRounds = config\.maxFixRounds \?\? (\d+)", source)
+    assert match is not None
+    new_fix_rounds = int(match.group(1))
+
+    # NEW logic: the panel runs once (new_lenses agents), then each fix round
+    # spawns ONE targeted re-verify agent.
+    new_agents = new_lenses + new_fix_rounds * 1
+
+    # DOCUMENTED previous defaults: a 3-lens panel re-run in full on the initial
+    # pass and every fix round, with 2 fix rounds → 3 * (1 + 2) = 9.
+    old_lenses = 3
+    old_fix_rounds = 2
+    old_agents = old_lenses * (1 + old_fix_rounds)
+
+    assert new_agents < old_agents, (
+        f"worst-case verifier agents must drop: new={new_agents} old={old_agents}"
+    )
+    # Pin the concrete reduction: 2 under the lean defaults, 9 under the old ones.
+    assert (new_agents, old_agents) == (2, 9), (
+        f"expected the reduction 2 vs 9, got {new_agents} vs {old_agents}"
     )
 
 
