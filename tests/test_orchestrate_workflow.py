@@ -984,3 +984,126 @@ def test_blocking_findings_behaviour() -> None:
 
     # A mixed panel (one clear, one not) blocks on the not-clear verdict.
     assert len(out["mixed"]) == 1
+
+
+# --- behavioural: toRecord threads the feature branch onto every record ------
+
+# `toRecord` shapes an implementer result into the per-issue record the run
+# returns. Downstream, `integrate` reads `record.branch` (the merge/PR prompt) and
+# the mandatory integration review reads `verdict.branch` (its PR-mode branch
+# union). If `toRecord` drops `impl.branch`, every record carries `branch:
+# undefined`: integrate prompts "branch undefined", and the integration review's
+# branch-union prompt renders an EMPTY list and clears silently — the exact silent
+# pass that review exists to prevent. This test exercises `toRecord`'s real logic
+# through node (a stub `titleOf` stands in for the module-level lookup) and asserts
+# a DONE record actually CARRIES its branch — a source grep for `.branch` would
+# pass even with the field dropped, so the behaviour is checked, not the text.
+
+
+def _extract_arrow_object_def(source: str, name: str) -> str:
+    """Extract a ``const <name> = (…) => ({ … })`` definition whose body is a
+    parenthesised object literal.
+
+    Walks balanced ``()[]{}`` from the arrow's first opening bracket to its
+    matching close, skipping string literals so a bracket inside a quoted string
+    could never end the scan early. This handles the expression-bodied
+    object-returning arrow that ``_extract_def`` (single-line / block-bodied) does
+    not."""
+
+    match = re.search(rf"^const {re.escape(name)} = ", source, flags=re.MULTILINE)
+    assert match is not None, f"`const {name} =` not found"
+    start = match.start()
+
+    index = source.index("=>", start) + 2
+    while source[index] not in "([{":
+        index += 1
+
+    depth = 0
+    in_string: str | None = None
+    while index < len(source):
+        char = source[index]
+        if in_string is not None:
+            if char == "\\":
+                index += 2
+                continue
+            if char == in_string:
+                in_string = None
+        elif char in "'\"`":
+            in_string = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if depth == 0:
+                return source[start : index + 1]
+        index += 1
+    raise AssertionError(f"unbalanced brackets while extracting `{name}`")
+
+
+# The harness stubs `titleOf` (a module-level lookup in the real engine), injects
+# the extracted `toRecord`, and prints a DONE record built from an impl that
+# carries a branch plus a PARKED record built from a null impl (optional chaining
+# must not throw). `branch ?? null` makes an undefined branch explicit as JSON
+# null so the Python side can assert on it rather than see the key vanish.
+_TORECORD_HARNESS = """
+const titleOf = (number) => `issue ${number}`;
+__TORECORD_DEF__;
+const impl = {
+  branch: 'issue-x',
+  gatesSummary: 'gates green',
+  gatesPassed: true,
+  remainingForHuman: ['r'],
+  assumptions: ['a'],
+  blockers: [],
+};
+const done = toRecord(7, impl, 'done', 'verified');
+const parked = toRecord(9, null, 'parked', 'implementer returned nothing');
+process.stdout.write(JSON.stringify({
+  done_branch: done.branch ?? null,
+  done_number: done.number,
+  done_status: done.status,
+  done_title: done.title,
+  done_gates: done.gates,
+  parked_branch: parked.branch ?? null,
+  parked_status: parked.status,
+}));
+"""
+
+
+def test_to_record_carries_the_feature_branch() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    source = WORKFLOW.read_text(encoding="utf-8")
+    harness = _TORECORD_HARNESS.replace(
+        "__TORECORD_DEF__", _extract_arrow_object_def(source, "toRecord")
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    out = json.loads(result.stdout)
+
+    # The defect: a DONE record must CARRY impl.branch, or integrate and the
+    # integration review both receive `undefined`.
+    assert out["done_branch"] == "issue-x", (
+        "a done record must carry impl.branch so integrate and the integration "
+        "review receive the real feature branch, not undefined"
+    )
+
+    # The rest of the record's shape is unchanged: number, status, the stubbed
+    # title, and the gates summary all thread through as before.
+    assert out["done_number"] == 7
+    assert out["done_status"] == "done"
+    assert out["done_title"] == "issue 7"
+    assert out["done_gates"] == "gates green"
+
+    # A parked record built from a null impl must not throw — branch is sourced
+    # through optional chaining, so it is simply absent (null), never an error.
+    assert out["parked_branch"] is None
+    assert out["parked_status"] == "parked"
