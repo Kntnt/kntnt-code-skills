@@ -1,6 +1,6 @@
-"""Structural tests for the orchestrate SKILL.md guidance (issue #19).
+"""Structural tests for the orchestrate SKILL.md guidance (issues #19, #24).
 
-These read ``skills/orchestrate/SKILL.md`` as text and assert two things the
+These read ``skills/orchestrate/SKILL.md`` as text and assert three things the
 skill's prose must carry:
 
 1. The single confirm gate sizes the run to its cost — an agent/token estimate
@@ -14,6 +14,12 @@ skill's prose must carry:
    own state with ``gh issue view <n>``, and explicitly does NOT trust a
    ``gh issue list`` re-query — GitHub's list endpoint is eventually consistent
    and reads stale right after a close.
+
+3. The finalize step prunes the run's leftover worktree scaffolding branches
+   (issue #24), targeting only this run's own ``worktree-<runId>-*`` prefix with
+   a scoped ``git branch -D`` — so it never deletes a feature branch or touches
+   another run's scaffolding, and leaves #14's worktree teardown and its
+   feature-branch ref preservation unchanged.
 
 Run with: `uv run --with pytest pytest -q`
 """
