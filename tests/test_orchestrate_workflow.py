@@ -1410,3 +1410,143 @@ def test_prerequisite_skip_cascades_in_a_simulated_run() -> None:
     assert out["landed"] == [4, 5, 6, 7], (
         "exactly the issues with all prerequisites satisfied must land"
     )
+
+
+# --- PR mode must not build a dependent on an unmerged prerequisite (issue #23) ---
+
+# Issue #20 parks a dependent whose in-scope prerequisite did not LAND, where
+# "landed" means the prerequisite's code is on the base a dependent builds from. But
+# a successful integration lands the prerequisite there only in --merge mode: in the
+# conservative default PR mode `integrate` merely OPENS a pull request and merges
+# nothing, so a PR-opened prerequisite is absent from the base. The engine must
+# therefore mark an issue landed ONLY when the run actually merged it (merge mode),
+# and in PR mode park any dependent with an in-scope prerequisite — pointing the
+# human at --merge — reusing #20's transitive cascade. These pin the two halves: the
+# merge-gated `landed.add` (the engine wiring, read off the source) and the
+# mode-aware park reason, plus a behavioural run showing the two modes diverge.
+
+
+def test_only_merge_mode_marks_a_prerequisite_landed() -> None:
+    # The sole `landed.add(` must be guarded by merge mode: only a merge-mode
+    # integration puts the issue on the base. In PR mode integrate only opens a PR,
+    # so a PR-opened issue must NOT enter `landed`, or its dependents would build on
+    # a base missing it — the #23 bug. (The single-add / on-the-done-branch
+    # invariants stay pinned by test_only_integrated_issues_enter_the_landed_set.)
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert source.count("landed.add(") == 1, (
+        "the engine must still add to `landed` in exactly one place"
+    )
+    add_idx = source.index("landed.add(")
+    line = source[source.rindex("\n", 0, add_idx) + 1 : source.index("\n", add_idx)]
+    assert "merge" in line, (
+        "the sole `landed.add(` must be guarded by `merge` so a PR-opened issue is "
+        "not treated as landed onto the base — in PR mode nothing merges"
+    )
+
+
+def test_pr_mode_prerequisite_park_reason_points_at_merge() -> None:
+    # AC-1: in PR mode the park reason must name the prerequisite AND point the human
+    # at --merge (re-running merges the base). AC-3: the merge-mode reason (#20) is
+    # unchanged, so the region must still carry its "did not land" wording. The two
+    # coexisting in one region means the reason is mode-aware.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    prereq_idx = source.index(
+        "unlandedPrerequisites(", source.index("for (const number of")
+    )
+    build_idx = source.index("buildAndVerify(number)")
+    region = source[prereq_idx:build_idx]
+    assert "--merge" in region, (
+        "the PR-mode park reason must recommend re-running with --merge"
+    )
+    assert "did not land" in region, (
+        "the merge-mode park reason (#20) must stay unchanged in the mode-aware reason"
+    )
+    assert "prerequisite" in region.lower(), (
+        "the park reason must still name the prerequisite in both modes"
+    )
+
+
+# The engine's park/land decision run over ONE dependency graph in BOTH modes with
+# the REAL helper. The only difference between the two runs is the mode: every built
+# issue integrates successfully (none fails), so any divergence is purely the
+# PR-vs-merge landing rule. In merge mode a dependent of a landed prerequisite builds
+# (#20 unchanged); in PR mode the prerequisite is only an open PR, never on the base,
+# so the dependent parks and the skip cascades to its own dependents.
+_PR_VS_MERGE_HARNESS = """
+import { unlandedPrerequisites } from "__MODULE_URL__";
+const issues = {
+  1: { blocked_by: [] },     // A: builds and integrates (a PR in PR mode)
+  2: { blocked_by: [1] },    // B: depends on A
+  3: { blocked_by: [2] },    // C: depends on B
+  4: { blocked_by: [] },     // D: no prerequisite
+  5: { blocked_by: [99] },   // E: only an out-of-scope prerequisite
+};
+const order = [1, 2, 3, 4, 5];
+const inScope = new Set(order);
+
+// Simulate the engine's per-issue loop: build only when no in-scope prerequisite is
+// unlanded, and enter `landed` ONLY when the run merged the issue onto the base —
+// which happens in merge mode alone. A PR-mode integration opens a PR and merges
+// nothing, so it never lands.
+function run(merge) {
+  const landed = new Set();
+  const skipped = [];
+  const built = [];
+  for (const number of order) {
+    const missing = unlandedPrerequisites(issues[number].blocked_by, inScope, landed);
+    if (missing.length > 0) { skipped.push({ number, missing }); continue; }
+    built.push(number);
+    if (merge) landed.add(number);
+  }
+  return { skipped, built, landed: [...landed].sort((a, b) => a - b) };
+}
+
+process.stdout.write(JSON.stringify({ pr: run(false), merge: run(true) }));
+"""
+
+
+def test_pr_mode_parks_dependent_of_open_pr_while_merge_mode_builds_it() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    harness = _PR_VS_MERGE_HARNESS.replace(
+        "__MODULE_URL__", ENGINE_HELPERS.resolve().as_uri()
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    out = json.loads(result.stdout)
+    pr, merge = out["pr"], out["merge"]
+
+    # Merge mode (#20 unchanged): every dependent of a landed prerequisite builds, so
+    # the whole chain lands.
+    assert merge["built"] == [1, 2, 3, 4, 5]
+    assert merge["skipped"] == []
+    assert merge["landed"] == [1, 2, 3, 4, 5]
+
+    # PR mode (#23): the prerequisite is only an open PR, never on the base, so its
+    # dependent parks — naming it — and the skip cascades to the dependent's own
+    # dependents. Nothing enters `landed` because nothing merged.
+    pr_skipped = {entry["number"]: entry["missing"] for entry in pr["skipped"]}
+    assert pr_skipped.get(2) == [1], (
+        "in PR mode a dependent of an only-a-PR prerequisite must be parked, naming it"
+    )
+    assert pr_skipped.get(3) == [2], (
+        "the PR-mode skip must cascade: a dependent of a skipped issue is skipped too"
+    )
+    assert pr["landed"] == [], "in PR mode nothing merges, so nothing lands"
+
+    # No false parks in either mode: an issue with no in-scope prerequisite (D) or
+    # only an out-of-scope one (E) builds regardless of mode.
+    assert 4 in pr["built"] and 5 in pr["built"], (
+        "an issue with no unlanded in-scope prerequisite must build even in PR mode"
+    )
+    assert 2 not in pr["built"] and 3 not in pr["built"], (
+        "a PR-mode dependent of an unmerged prerequisite must not be built"
+    )
