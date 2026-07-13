@@ -94,6 +94,12 @@ const INTEGRATE_SCHEMA = {
   },
 }
 
+// `normalizeArgs` and `planIsEmpty` are kept inline as plain internal `const`s
+// because the Workflow harness rejects any top-level `export` beyond the single
+// leading `export const meta` and forbids a top-level `import` — so this script
+// cannot import them. Their tested source of truth is the byte-for-byte
+// identical `lib/orchestrate/engine-helpers.mjs`; keep the two in sync.
+
 /**
  * Normalize the raw `args` the Workflow harness delivers into the single config
  * object the engine reads every field off. The harness passes `args` as a JSON
@@ -106,7 +112,7 @@ const INTEGRATE_SCHEMA = {
  * @returns {object} The normalized config the engine consumes:
  *   `{ waves, issues, merge, maxFixRounds, standardsPath, budgetFloor }`.
  */
-export const normalizeArgs = (raw) => {
+const normalizeArgs = (raw) => {
 
   // Tolerate a JSON string from the harness; a malformed string degrades to an
   // empty plan rather than throwing, so the loud empty-plan guard owns the
@@ -132,7 +138,7 @@ export const normalizeArgs = (raw) => {
  * @param {object} config A config from {@link normalizeArgs}.
  * @returns {boolean} Whether the plan would spawn no agents.
  */
-export const planIsEmpty = (config) => !Array.isArray(config.waves) || config.waves.length === 0
+const planIsEmpty = (config) => !Array.isArray(config.waves) || config.waves.length === 0
 
 // Run options, with the conservative defaults the skill documents. Every field
 // is read off the normalized config, never off the raw `args` the harness

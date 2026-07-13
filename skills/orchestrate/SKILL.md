@@ -148,5 +148,5 @@ Two cautions. Run `/goal` **interactively** — `claude -p "/goal …"` is headl
 ## Files this skill uses
 
 - `scripts/orchestrate.py` — deterministic helper: `plan` (issues JSON → dependency graph + waves), `redgreen` (git-log → red-before-green verdict), and `report` (verdicts JSON → consolidated report). Never calls `claude`; covered by `tests/test_orchestrate.py`.
-- `skills/orchestrate/orchestrate.workflow.js` — the Workflow-tool engine: implement → verify → integrate over the planned waves, agents in the subscription pool.
+- `skills/orchestrate/orchestrate.workflow.js` — the Workflow-tool engine: implement → verify → integrate over the planned waves, agents in the subscription pool. A workflow script must have **exactly one top-level `export` (`export const meta`) and no other top-level `export` or `import`** — the Workflow harness rejects any additional top-level `export`/`import` with a `SyntaxError` at launch, so any helper that needs its own unit test is kept inline here and mirrored in an importable module (`lib/orchestrate/engine-helpers.mjs`) that the tests exercise.
 - Reads (per project): `agents.d/coding-standard/` (the scaffolded standard), the issues' agent briefs, the definition of done, the test strategy, and the cited ADRs / design docs.

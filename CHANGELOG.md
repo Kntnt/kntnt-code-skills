@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/orchestrate` engine could not launch.** `skills/orchestrate/orchestrate.workflow.js` declared three top-level exports (`meta`, `normalizeArgs`, `planIsEmpty`), but the Workflow harness tolerates only a single leading `export const meta` and rejects any other top-level `export`/`import` with a `SyntaxError` at launch — so the skill's preferred execution path was dead on arrival. `normalizeArgs` and `planIsEmpty` are now plain internal `const`s, leaving `export const meta` as the only top-level export and no top-level `import`. Their logic is mirrored byte-for-byte in a new importable module `lib/orchestrate/engine-helpers.mjs` that is unit tested, and `tests/test_orchestrate_workflow.py` now guards the single-export constraint structurally as well. `skills/orchestrate/SKILL.md` documents the constraint.
+
 ## [0.9.0] – 2026-06-26
 
 ### Added
