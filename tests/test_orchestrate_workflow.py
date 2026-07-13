@@ -239,6 +239,76 @@ def test_teardown_agent_prunes_worktrees_and_preserves_branch_refs() -> None:
     assert "main worktree" in lowered, "teardown must never touch the main worktree"
 
 
+# --- shared safe-state constraints (issue #15) -------------------------------
+
+# Every code-touching sub-agent must be forbidden — in ONE place, reused, never
+# copy-pasted divergently — from closing the GitHub issue, pushing to a remote,
+# merging into the default branch, or running destructive git that can lose
+# committed work (`git reset --hard` on a feature branch), and handed one safe
+# clean-start recipe instead. The forbidding text lives in a single module-level
+# constant interpolated into the implement, fix, and verify prompts; integrate is
+# deliberately excluded because merging/pushing to the default branch is its job.
+
+CONSTRAINTS_NAME = "AGENT_CONSTRAINTS"
+
+
+def test_agent_constraints_declared_exactly_once() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    decls = re.findall(
+        rf"^const {re.escape(CONSTRAINTS_NAME)} = ", source, flags=re.MULTILINE
+    )
+    assert len(decls) == 1, (
+        f"expected exactly one top-level `const {CONSTRAINTS_NAME} =`, found "
+        f"{len(decls)} — the forbidding text must be defined once and reused, "
+        f"not copy-pasted divergently"
+    )
+
+
+def test_agent_constraints_text_covers_the_forbidden_actions() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, CONSTRAINTS_NAME)
+    lowered = block.lower()
+
+    # It forbids the three shared-state mutations reserved for the orchestrator
+    # and the integrate step.
+    assert "close" in lowered, "constraints must forbid closing the issue"
+    assert "push" in lowered, "constraints must forbid pushing to a remote"
+    assert "merge" in lowered, "constraints must forbid merging into the default branch"
+
+    # It forbids the destructive git that silently loses committed work, and
+    # gives the one non-destructive clean-start recipe in its place.
+    assert "git reset --hard" in block, (
+        "constraints must forbid `git reset --hard` on a feature branch"
+    )
+    assert "git checkout -f" in block, (
+        "constraints must give the safe clean-start checkout"
+    )
+    assert "git checkout -- ." in block, (
+        "constraints must discard only tracked working-tree changes"
+    )
+
+
+def test_code_touching_prompts_reference_the_constraints() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    reference = "${" + CONSTRAINTS_NAME + "}"
+    for name in ("implement", "fix", "verify"):
+        block = _agent_block(source, name)
+        assert reference in block, (
+            f"the `{name}` prompt must interpolate {reference} so the shared "
+            f"forbidding text reaches the sub-agent"
+        )
+
+
+def test_integrate_prompt_excludes_the_constraints() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    reference = "${" + CONSTRAINTS_NAME + "}"
+    block = _agent_block(source, "integrate")
+    assert reference not in block, (
+        "the `integrate` agent must NOT carry the forbidding text — merging and "
+        "pushing to the default branch is precisely its job"
+    )
+
+
 # --- behavioural: the extracted helpers, exercised through node --------------
 
 # The JS harness imports the extracted module by absolute file:// URL, runs the
