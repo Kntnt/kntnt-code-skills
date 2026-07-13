@@ -88,6 +88,20 @@ The plan also carries a `merge_required` flag (with a human-readable `merge_note
 
 Show the plan from step 2 — scope, graph, waves, and whether the run will merge or open pull requests — and wait for one confirmation. `--yes`, or a `--plan` you have already reviewed, skips it. Beyond this gate the run does not stop, with one exception: integrating into the default branch happens only under `--merge` or an explicit project authorization; otherwise the work lands as pull requests.
 
+#### Cost and chunking
+
+Size the run before you confirm it — present an **agent and token estimate** at the gate, not just a list of issues. Under the lean defaults — a **single** broad adversarial reviewer and one fix round — each issue costs about `1 implement + 1 verify (one broad lens) + up to 1 fix round (1 fix + 1 targeted re-verify) + 1 integrate`, i.e. **3–5 sub-agents per issue**, worst case ≈ 4. Add a fixed **≈ 3 once per run** for the mandatory integration review (plus up to one hotfix and its re-review) and the worktree teardown. That gives a closed form you can compute at the gate — `N` is the issue count, `4` folds the default panel size 1 × fix rounds 1 over implement/verify/fix/integrate:
+
+```text
+agents ≈ N × 4 + 3
+```
+
+That matches the engine's lean defaults — one broad reviewer, one fix round — not the heavier multi-lens, multi-round panel it replaced. The `× 4` per issue holds only while every issue keeps the default one-lens panel; where planning raised a genuinely high-risk issue above one lens, add that issue's extra `lenses` (each extra lens is one more verify sub-agent) on top of its 4. Translate to tokens so the reader sees the real cost, not just an agent count: each implement/verify/fix sub-agent runs at the strong tier and spends on the **order of tens of thousands to low hundreds of thousands of tokens**, so a 30-issue run — `30 × 4 + 3 ≈ 123` sub-agents — is on the order of millions of tokens, easily enough to hit a monthly cap mid-run.
+
+Because each green issue integrates the moment it is verified (step 4), a stopped run keeps every issue already landed durably on the default branch. Exploit that: run a large backlog in **slices of 8–10 issues at a time**, not one unbounded run, so a spend cut-off loses at most the current slice rather than the whole batch — this pairs with the per-issue incremental landing that already makes each green issue durable.
+
+For any run above **~10 issues**, do not pass this gate unbounded: **require an explicit cap** — a `budget` / `budgetFloor` bound or a max-agents cap, together with slicing — and state it in the confirmation. A large run without a cap must not be confirmed; that bound is what the confirm gate exists to enforce for a big batch.
+
 ### 4. Build (engine)
 
 **Preferred — the Workflow tool.** Launch `skills/orchestrate/orchestrate.workflow.js` with the plan JSON (plus `merge`, `maxFixRounds`, and each issue's risk-scaled verifier panel `lenses`, set during planning) as `args`. The control flow — wave order, the capped fix↔verify loop, and per-issue serial dispatch that integrates each green issue the moment it is verified (so a mid-run stop leaves every prior issue durably on the default branch) — is code there, so it cannot drift over a long unattended run; agents run in the subscription pool; worktree isolation keeps concurrent agents apart; the run is budget-bounded and resumable via its `runId`.
@@ -110,6 +124,12 @@ uv run "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.py" report < verdicts.json
 ```
 
 It leads with what is done and green, then the de-duplicated *Remaining for a human* list, then *Assumptions* and the parked or blocked issues. Do not bump the version, tag, or publish — when the merged work is ready to ship, that is the `release` skill.
+
+#### Confirming closures
+
+The orchestrator closes each verified-and-integrated issue itself (never a sub-agent), and confirms each close **individually**: verify a closure by querying that issue's own state with `gh issue view <n>` (read its `state` / `closed` field), and count the issue as closed only when its own record says so.
+
+Do not confirm closures by re-running `gh issue list` — GitHub's issue-list endpoint is eventually consistent and reads **stale** immediately after a close, so a just-closed issue can still show as open in the list even though its own `gh issue view` already reports it closed; the report/closing step counts a close only against that individual `gh issue view <n>` state, never against the list re-query.
 
 ## Model and effort
 
