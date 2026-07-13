@@ -405,9 +405,7 @@ def test_parse_dependencies_does_not_warn_for_none_can_start_immediately() -> No
 
 
 def test_parse_dependencies_does_not_warn_when_a_number_reference_resolves() -> None:
-    signals = orchestrate.parse_dependencies(
-        "## Blocked by\n\n- #42", title_index={}
-    )
+    signals = orchestrate.parse_dependencies("## Blocked by\n\n- #42", title_index={})
     assert signals.warnings == []
 
 

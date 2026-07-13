@@ -93,6 +93,31 @@ INLINE_EDGE_RE = re.compile(
 # form of a label followed by a list (`**Depends on:**\n- #44\n- #45`).
 BULLET_REF_RE = re.compile(r"^\s*[-*]\s*#(\d+)\b")
 
+# A single bullet-list item carrying arbitrary content, used to peel the marker
+# off a prose-title bullet (`- User schema migration`) before normalising it.
+# `#N` bullets are still read by BULLET_REF_RE; this only reaches the prose ones.
+BULLET_CONTENT_RE = re.compile(r"^\s*[-*]\s+(?P<content>.+?)\s*$")
+
+# The shortest a normalised title may be and still be matched. A one- or
+# two-character title ("A", "CI") would collide with stray prose, so anything
+# below this length is dropped from the title index rather than risk a false
+# edge — the "a very short or empty title should never match" guard.
+MIN_TITLE_MATCH_LEN = 3
+
+# An explicit "None ..." in a dependency region is a deliberate no-dependency
+# statement, not unresolved content — so it must never raise the unresolved
+# warning. Anchored at the start of a region line's stripped text.
+NONE_SENTINEL_RE = re.compile(r"none\b", re.IGNORECASE)
+
+# The warning raised when a `## Blocked by` section carries real bullet/prose
+# content yet yields no resolvable reference — the silent-empty-graph failure
+# this issue exists to make loud. Body-scoped; the issue number is prefixed by
+# `build_plan` when the warning reaches the plan's top-level `warnings` array.
+BLOCKED_BY_UNRESOLVED_WARNING = (
+    "Blocked by section has content but resolved to zero issue references "
+    "(a prerequisite named by prose may not match any known issue title)"
+)
+
 # Non-directional coupling phrases. These are NEVER edges — over-serialising on
 # a vague "relates to" would hold issues back for no real dependency — but they
 # are recorded as soft notes so a possible coupling stays visible after an
@@ -144,10 +169,13 @@ class DependencySignals:
     `edges` maps each blocking issue number to the keyword that produced it
     (the audit trail an unattended run is inspected by). `soft_notes` holds the
     non-directional coupling phrases that must stay visible but never block.
+    `warnings` holds body-scoped alerts — a dependency region with real content
+    that resolved to nothing — so a silently-empty graph is made loud.
     """
 
     edges: dict[int, str] = field(default_factory=dict)
     soft_notes: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -156,7 +184,8 @@ class Issue:
 
     `blocked_by` is the bare set of in/out-of-scope blockers used by the graph;
     `blocked_by_origin` records which keyword produced each edge for the plan's
-    audit trail; `soft_notes` carries possible-coupling phrases for the report.
+    audit trail; `soft_notes` carries possible-coupling phrases for the report;
+    `warnings` carries body-scoped unresolved-dependency alerts for the plan.
     """
 
     number: int
@@ -165,6 +194,7 @@ class Issue:
     blocked_by: set[int]
     blocked_by_origin: dict[int, str] = field(default_factory=dict)
     soft_notes: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -201,7 +231,9 @@ def fail(message: str) -> NoReturn:
     raise SystemExit(1)
 
 
-def _scan_reference_region(body: str, start: int) -> list[int]:
+def _scan_reference_region(
+    body: str, start: int, title_index: dict[str, int] | None = None
+) -> list[int]:
     """Collect the issue numbers a hard-edge keyword governs, starting just past
     the keyword at `start`. References in the keyword's own clause are taken — the
     same-line remainder up to the next sentence terminator or the next hard/soft
@@ -212,49 +244,141 @@ def _scan_reference_region(body: str, start: int) -> list[int]:
     refs (`Depends on\\nthe #44 schema.`), the conservative reach issue #10 asks
     for. Scanning stops at the first line that is neither blank nor a bullet (and,
     once any ref is in hand, the prose-continuation reach is not taken), so
-    trailing prose and later unrelated lists are left out."""
+    trailing prose and later unrelated lists are left out.
+
+    When `title_index` is supplied (a caller passes it only for a genuine label
+    form), a governed piece with no `#N` is also resolved by exact title match,
+    so `**Depends on:** User schema migration` and a bullet list of prose titles
+    become edges. Passing None keeps the pure-`#N` behaviour byte-for-byte."""
 
     # Take the references in the keyword's own clause: the same-line remainder cut
     # at the first clause boundary, so a trailing soft phrase or a second keyword
-    # on the line does not pull its refs into this edge.
+    # on the line does not pull its refs into this edge. With no `#N`, a label's
+    # own line may name its prerequisite by title instead.
     newline = body.find("\n", start)
     head = body[start:] if newline == -1 else body[start:newline]
     numbers = _refs_in_first_clause(head)
+    if not numbers and title_index:
+        head_title = _title_number(_first_clause(head), title_index)
+        if head_title is not None:
+            numbers.append(head_title)
 
     # Then walk the following lines: skip blanks, absorb bullet references, and
-    # stop the moment a line is neither. A non-bullet line ends the bullet list;
-    # but when nothing has matched yet (a bare label whose `#N` sits on the next
-    # line as prose, not a bullet), that first prose line is the keyword's
-    # continuation, so its own clause supplies the refs before scanning stops.
+    # stop the moment a line is neither. A `#N` bullet is consumed as before; a
+    # prose-title bullet resolves by title and the list continues; when nothing
+    # has matched yet, the first non-bullet prose line is the keyword's
+    # continuation — its clause supplies the ref (by `#N` or, failing that, by
+    # title) before scanning stops.
     rest = "" if newline == -1 else body[newline + 1 :]
     for line in rest.splitlines():
         if not line.strip():
             continue
         bullet = BULLET_REF_RE.match(line)
-        if bullet is None:
-            if not numbers:
-                numbers.extend(_refs_in_first_clause(line))
-            break
-        numbers.append(int(bullet[1]))
+        if bullet is not None:
+            numbers.append(int(bullet[1]))
+            continue
+        if title_index:
+            content = BULLET_CONTENT_RE.match(line)
+            if content is not None:
+                bullet_title = _title_number(
+                    _first_clause(content["content"]), title_index
+                )
+                if bullet_title is not None:
+                    numbers.append(bullet_title)
+                    continue
+        if not numbers:
+            refs = _refs_in_first_clause(line)
+            if not refs and title_index:
+                line_title = _title_number(_first_clause(line), title_index)
+                if line_title is not None:
+                    refs = [line_title]
+            numbers.extend(refs)
+        break
 
     return numbers
 
 
-def _refs_in_first_clause(line: str) -> list[int]:
-    """Return the `#N` references in the first clause of `line` — the run up to
-    the first clause boundary (a sentence terminator, or the start of the next
-    hard keyword or soft phrase). Cutting at the boundary keeps a soft phrase or a
-    second keyword sharing the line from pulling its refs into the current edge."""
+def _first_clause(line: str) -> str:
+    """Return the first clause of `line` — the run up to the first clause
+    boundary (a sentence terminator, or the start of the next hard keyword or
+    soft phrase). Cutting here keeps a soft phrase or a second keyword sharing
+    the line from being read as part of the current clause."""
 
     boundary = CLAUSE_BOUNDARY_RE.search(line)
-    clause = line if boundary is None else line[: boundary.start()]
-    return [int(number) for number in ISSUE_REF_RE.findall(clause)]
+    return line if boundary is None else line[: boundary.start()]
 
 
-def parse_dependencies(body: str, self_number: int | None = None) -> DependencySignals:
+def _refs_in_first_clause(line: str) -> list[int]:
+    """Return the `#N` references in the first clause of `line`, so a soft phrase
+    or a second keyword sharing the line does not pull its refs into this edge."""
+
+    return [int(number) for number in ISSUE_REF_RE.findall(_first_clause(line))]
+
+
+def normalize_title(title: str) -> str:
+    """Reduce a title to its matching key: internal whitespace collapsed,
+    lowercased, surrounding emphasis markers removed, and trailing punctuation
+    stripped — so `**User schema migration.**`, `- User schema migration`, and
+    `User schema migration` all compare equal. The key is compared for exact
+    equality against the title index; it is never matched as a substring."""
+
+    collapsed = re.sub(r"\s+", " ", title).strip().lower()
+    return collapsed.strip("*_ ").rstrip(".,;:!?-–— ")
+
+
+def _title_number(text: str, title_index: dict[str, int]) -> int | None:
+    """Resolve `text` to an issue number when it is an exact normalised-title
+    match, else None. Titles shorter than MIN_TITLE_MATCH_LEN never match, so a
+    stray one- or two-character clause cannot mint an edge."""
+
+    key = normalize_title(text)
+    if len(key) < MIN_TITLE_MATCH_LEN:
+        return None
+    return title_index.get(key)
+
+
+def _region_has_content(region: str) -> bool:
+    """Whether a dependency region carries real bullet or prose content — a line
+    that is neither blank nor an explicit "None ..." statement. This gates the
+    unresolved-dependency warning so an empty or deliberately-none section stays
+    quiet."""
+
+    for line in region.splitlines():
+        bullet = BULLET_CONTENT_RE.match(line)
+        content = bullet["content"] if bullet is not None else line.strip()
+        if not content or NONE_SENTINEL_RE.match(content):
+            continue
+        return True
+    return False
+
+
+def _section_has_any_reference(region: str, title_index: dict[str, int] | None) -> bool:
+    """Whether a dependency region resolves to at least one reference — a `#N`
+    anywhere, or (when a title index is given) a line that exactly matches a
+    known title. Used only to decide whether to warn, so it is deliberately
+    permissive about `#N`: an out-of-scope or self number still counts as the
+    author having named a real reference."""
+
+    if ISSUE_REF_RE.search(region):
+        return True
+    if title_index:
+        for line in region.splitlines():
+            bullet = BULLET_CONTENT_RE.match(line)
+            piece = bullet["content"] if bullet is not None else line.strip()
+            if _title_number(piece, title_index) is not None:
+                return True
+    return False
+
+
+def parse_dependencies(
+    body: str,
+    self_number: int | None = None,
+    title_index: dict[str, int] | None = None,
+) -> DependencySignals:
     """Derive the dependency signals from an issue body: hard blocking edges
-    (with the keyword that produced each) and soft, non-directional coupling
-    notes.
+    (with the keyword that produced each), soft non-directional coupling notes,
+    and warnings for a dependency region that has content but resolves to
+    nothing.
 
     Hard edges come from two sources treated identically: the heading-form
     `## Blocked by` section, and inline/labelled forms anywhere in the text
@@ -262,29 +386,64 @@ def parse_dependencies(body: str, self_number: int | None = None) -> DependencyS
     by one or more `#N` — optionally bold-wrapped and optionally trailing into a
     bullet list. Vague phrases ("relates to", "touches the same files as") are
     recorded as soft notes only. A self-reference is never an edge.
+
+    When `title_index` (a normalised title -> number map of the in-scope issues)
+    is supplied, a prerequisite named by its exact prose title — with no `#N` —
+    also becomes an edge, but ONLY inside these same dependency regions: the
+    heading section, and inline forms that read as a genuine label (bold, or
+    colon-bearing, or beginning their line). A title mentioned anywhere else in
+    the body produces no edge. When the `## Blocked by` section has real content
+    yet resolves to zero references, a warning is raised so the otherwise-silent
+    empty graph is made loud.
     """
 
     text = body or ""
     edges: dict[int, str] = {}
+    warnings: list[str] = []
 
     # Inline/labelled forms anywhere in the body. The keyword's canonical
-    # spelling (not the author's casing) is recorded as the edge origin.
+    # spelling (not the author's casing) is recorded as the edge origin. Title
+    # resolution is offered only to a genuine label form — bold-wrapped,
+    # colon-bearing, or line-initial — so an ordinary prose verb ("needs
+    # review") cannot mint a title edge from a stray following clause.
     for match in INLINE_EDGE_RE.finditer(text):
         keyword = next(
             canonical
             for canonical in HARD_EDGE_KEYWORDS
             if canonical.lower() == match["keyword"].lower()
         )
-        for number in _scan_reference_region(text, match.end()):
+        is_label = (
+            "*" in match.group()
+            or ":" in match.group()
+            or match.start() == 0
+            or text[match.start() - 1] == "\n"
+        )
+        region_titles = title_index if is_label else None
+        for number in _scan_reference_region(text, match.end(), region_titles):
             edges.setdefault(number, keyword)
 
-    # The heading-form `## Blocked by` section: every reference under it is an
-    # edge, attributed to "Blocked by" unless an inline keyword already claimed
-    # it (so `- depends on #43` keeps its more specific origin).
+    # The heading-form `## Blocked by` section: every `#N` under it is an edge,
+    # attributed to "Blocked by" unless an inline keyword already claimed it (so
+    # `- depends on #43` keeps its more specific origin). A prerequisite named
+    # only by its prose title is recovered by exact match against the title
+    # index, per line so a whole normalised bullet or paragraph must equal a
+    # known title. A section with content that resolves to nothing warns.
     section = BLOCKED_BY_SECTION_RE.search(text)
     if section is not None:
-        for number in ISSUE_REF_RE.findall(section["body"]):
+        section_body = section["body"]
+        for number in ISSUE_REF_RE.findall(section_body):
             edges.setdefault(int(number), "Blocked by")
+        if title_index:
+            for line in section_body.splitlines():
+                bullet = BULLET_CONTENT_RE.match(line)
+                piece = bullet["content"] if bullet is not None else line.strip()
+                title_number = _title_number(piece, title_index)
+                if title_number is not None:
+                    edges.setdefault(title_number, "Blocked by")
+        if _region_has_content(section_body) and not _section_has_any_reference(
+            section_body, title_index
+        ):
+            warnings.append(BLOCKED_BY_UNRESOLVED_WARNING)
 
     # Non-directional coupling: visible as a soft note, never an edge. A ref
     # already claimed as a hard edge keeps its edge and is not down-graded.
@@ -297,7 +456,7 @@ def parse_dependencies(body: str, self_number: int | None = None) -> DependencyS
     if self_number is not None:
         edges.pop(self_number, None)
 
-    return DependencySignals(edges=edges, soft_notes=soft_notes)
+    return DependencySignals(edges=edges, soft_notes=soft_notes, warnings=warnings)
 
 
 def parse_blocked_by(body: str, self_number: int | None = None) -> set[int]:
@@ -309,9 +468,39 @@ def parse_blocked_by(body: str, self_number: int | None = None) -> set[int]:
     return set(parse_dependencies(body, self_number).edges)
 
 
+def _build_title_index(entries: list[Any]) -> dict[str, int]:
+    """Build the normalised title -> number map that lets one issue's body
+    resolve a prerequisite named by another's prose title. Titles too short to
+    match safely are dropped; a title that two issues share is dropped entirely,
+    because an ambiguous match would attach the edge to the wrong prerequisite.
+    Malformed entries are skipped here — `load_issues` raises on them."""
+
+    index: dict[str, int] = {}
+    ambiguous: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or "number" not in entry:
+            continue
+        key = normalize_title(str(entry.get("title", "")))
+        if len(key) < MIN_TITLE_MATCH_LEN:
+            continue
+        number = int(entry["number"])
+        existing = index.get(key)
+        if existing is not None and existing != number:
+            ambiguous.add(key)
+        index[key] = number
+
+    for key in ambiguous:
+        index.pop(key, None)
+    return index
+
+
 def load_issues(raw: str) -> list[Issue]:
     """Parse a `gh issue list --json number,title,labels,body` payload into
-    Issue records. Raises ValueError on malformed JSON or a missing number."""
+    Issue records. Raises ValueError on malformed JSON or a missing number.
+
+    Runs in two passes: first the in-scope titles are indexed, then each body is
+    parsed against that index so a prerequisite named by its prose title (not
+    `#N`) still produces an edge."""
 
     try:
         data = json.loads(raw)
@@ -320,6 +509,8 @@ def load_issues(raw: str) -> list[Issue]:
 
     if not isinstance(data, list):
         raise ValueError("expected a JSON array of issues")
+
+    title_index = _build_title_index(data)
 
     issues: list[Issue] = []
     for entry in data:
@@ -333,10 +524,13 @@ def load_issues(raw: str) -> list[Issue]:
             for label in entry.get("labels", [])
         ]
 
-        # Derive the hard edges (with provenance) and soft notes once, passing
-        # the issue's own number so a self-reference is dropped as a blocker.
+        # Derive the hard edges (with provenance), soft notes, and warnings once,
+        # passing the issue's own number so a self-reference is dropped as a
+        # blocker, and the shared title index so prose-named prerequisites edge.
         number = int(entry["number"])
-        signals = parse_dependencies(entry.get("body", ""), self_number=number)
+        signals = parse_dependencies(
+            entry.get("body", ""), self_number=number, title_index=title_index
+        )
 
         issues.append(
             Issue(
@@ -346,6 +540,7 @@ def load_issues(raw: str) -> list[Issue]:
                 blocked_by=set(signals.edges),
                 blocked_by_origin=signals.edges,
                 soft_notes=signals.soft_notes,
+                warnings=signals.warnings,
             )
         )
 
@@ -447,7 +642,8 @@ def build_plan(
     """Assemble the plan the orchestrator dispatches from. The existing fields
     (`scope_label`, `issues`, `waves`, `external_dependencies`, `excluded`) are
     preserved verbatim for the Workflow engine that consumes this as its args;
-    the dependency provenance, soft notes, and merge signal are added alongside.
+    the dependency provenance, soft notes, merge signal, and unresolved-
+    dependency warnings are added alongside.
 
     Raises ValueError (via `build_waves`) when the in-scope graph has a cycle.
     """
@@ -463,6 +659,13 @@ def build_plan(
         {"number": issue.number, "note": note}
         for issue in kept
         for note in issue.soft_notes
+    ]
+
+    # Surface every unresolved-dependency warning at the top level, prefixed with
+    # the issue it came from, so a section whose prose named a prerequisite that
+    # matched nothing is loud rather than a silently-empty graph.
+    warnings = [
+        f"#{issue.number}: {warning}" for issue in kept for warning in issue.warnings
     ]
 
     return {
@@ -481,6 +684,7 @@ def build_plan(
             else "No intra-set dependencies; one-PR-per-issue integration is safe."
         ),
         "soft_notes": soft_notes,
+        "warnings": warnings,
         "external_dependencies": external_dependencies(kept),
         "excluded": [
             {"number": i.number, "title": i.title, "labels": i.labels} for i in excluded
