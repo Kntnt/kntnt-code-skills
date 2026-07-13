@@ -217,9 +217,14 @@ const implement = (number) =>
 // re-runs the gates and returns a fresh implement record.
 const fix = (number, impl, findings) =>
   agent(
-    `Fix issue #${number} ("${titleOf(number)}") on branch ${impl.branch}. Address ONLY these verified findings, keep the tests green, and obey ${standardInstruction}:\n` +
+    `Fix issue #${number} ("${titleOf(number)}") on branch ${impl.branch}.\n` +
+      `You are in a FRESH isolated worktree, but branch ${impl.branch} is still checked out in another worktree (the implementer's, now defunct, or a previous fix round's), and git refuses to check out one branch in two worktrees at once. BEFORE anything else, take the branch over:\n` +
+      `1. Run \`git worktree list --porcelain\` and find any OTHER worktree that currently has ${impl.branch} checked out.\n` +
+      `2. If one exists, run \`git worktree remove --force <that path>\` to free it. \`remove\` KEEPS the branch ref, so ${impl.branch}'s commits survive — NEVER run \`git branch -D\` (or any branch delete) and NEVER \`git reset --hard\`.\n` +
+      `3. Now check out ${impl.branch} in your own worktree and do all the work here.\n` +
+      `Address ONLY these verified findings, keep the tests green, and obey ${standardInstruction}:\n` +
       findings.map((finding) => `- ${finding.title}: ${finding.detail}`).join('\n') +
-      `\nThen re-run the full gate suite and report the real result.`,
+      `\nCommit on ${impl.branch}, then re-run the full gate suite and report the real result.`,
     { label: `fix:#${number}`, phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree' },
   )
 
