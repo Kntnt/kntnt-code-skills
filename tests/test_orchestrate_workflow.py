@@ -386,6 +386,48 @@ def test_integrate_rebases_and_forbids_merging_default_into_feature() -> None:
     assert "linear" in lowered, "integrate must state the history stays linear"
 
 
+# --- integrate fast-forwards the default without checking out the feature (issue #21) ---
+
+# Every code-touching agent now runs in a PERSISTED git worktree, so the feature
+# branch is still checked out in the implementer's (or a fix round's) worktree when
+# integrate runs — and git refuses to check out one branch in two worktrees at
+# once. The merge-mode integrate instruction must therefore advance the DEFAULT
+# branch to the feature branch's tip WITHOUT checking out the feature branch: from
+# the default-branch checkout, `git merge --ff-only <feature>` fast-forwards the
+# default and never needs the feature branch checked out. Without this, a `git
+# checkout <feature>` would fail mechanically and block integration for a
+# non-conflict reason — the exact worktree-lock failure isolation set out to kill,
+# resurfacing at the integrate step. These are structural, read off the source.
+
+
+def test_integrate_fast_forwards_default_without_checking_out_the_feature_branch() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrate")
+    lowered = block.lower()
+
+    # The pinned landing form is the non-checkout fast-forward: from the default
+    # branch, `git merge --ff-only <feature>` advances the default to the feature
+    # tip and needs no checkout of the feature branch.
+    assert "merge --ff-only" in lowered, (
+        "integrate must fast-forward the default branch to the feature tip with "
+        "`git merge --ff-only <feature>` — the non-checkout landing form"
+    )
+
+    # It must NEVER instruct a checkout of the feature branch (in any flag form): a
+    # worktree still holds it locked, so `git checkout <feature>` would fail
+    # mechanically — the exact failure this issue removes.
+    assert re.search(r"git checkout(?:\s+-\S+)*\s+\$\{record\.branch\}", block) is None, (
+        "integrate must NOT tell the integrator to check out the feature branch — "
+        "a worktree still holds it and git refuses one branch in two worktrees"
+    )
+
+    # The prompt must state WHY it never checks the feature branch out — a worktree
+    # still holds it — so the integrator understands the constraint, not just obeys it.
+    assert "worktree" in lowered, (
+        "integrate must explain that the feature branch is still held by a worktree"
+    )
+
+
 def test_each_green_issue_integrates_immediately_not_batched() -> None:
     # AC-2/AC-3: integration is per-issue and inline, not a post-build batch. The
     # old engine built an ENTIRE wave concurrently (`parallel(wave.map(...))`) and
