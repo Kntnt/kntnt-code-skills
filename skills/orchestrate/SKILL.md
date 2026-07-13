@@ -131,6 +131,10 @@ The orchestrator closes each verified-and-integrated issue itself (never a sub-a
 
 Do not confirm closures by re-running `gh issue list` — GitHub's issue-list endpoint is eventually consistent and reads **stale** immediately after a close, so a just-closed issue can still show as open in the list even though its own `gh issue view` already reports it closed; the report/closing step counts a close only against that individual `gh issue view <n>` state, never against the list re-query.
 
+#### Pruning the run's scaffolding branches
+
+Leave the repository state-neutral: prune this run's own leftover worktree scaffolding branches as the last finalize act. The Workflow harness names each per-worktree scaffolding branch `worktree-<runId>-<n>`, and once an agent checks out its own feature branch that ref is orphaned — #14's teardown removes the worktrees and preserves every feature-branch ref, but leaves these now-orphaned scaffolding branches behind to accumulate across runs. Because they are order-independent of the report and the closures (nothing there reads a branch ref), pruning them fits equally before or after those steps; do it once the engine has returned and the worktrees are already torn down. You know the run's `runId` from the Workflow launch, so delete **only** the branches matching this run's own `worktree-<runId>-*` prefix — `git branch --list "worktree-<runId>-*"` to list them, then `git branch -D` each. Confine the match to the exact `runId`: **never** delete a feature branch, an integration-hotfix branch, or any branch outside that run-scoped prefix, and never touch another run's scaffolding. This is the one authorised branch delete the orchestrator makes — the sub-agents and the worktree teardown are forbidden any — and it changes nothing about #14's worktree teardown or its preservation of every feature-branch ref.
+
 ## Model and effort
 
 Put the strong model and the high effort where the judgement is, not where the routing is:
