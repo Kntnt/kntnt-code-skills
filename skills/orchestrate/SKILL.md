@@ -45,6 +45,7 @@ When the project carries no such pipeline, fall back to whatever `CLAUDE.md` / `
 ## Arguments
 
 - `[scope]` — which issues to take on: a label (`--label=…`), a milestone (`--milestone=…`), an explicit list (`#42,#43,#48`), or nothing. With no scope, default to the open `ready-for-agent` issues. Resolve scope **without asking** (see the operating contract); if it genuinely cannot be resolved, stop with a one-line report rather than pausing mid-run.
+- `--level=XS|S|M|L|XL` — the single **ambition dial**, default `M`. It sets how much model and reasoning effort every sub-agent gets: the orchestrator derives a per-role `(model, effort)` from the level (see *Model and effort*), sliding from a quick, cheap posture at `XS` to a strongest-tier, most-thorough posture at `XL`. This is the one knob for "how hard to try" — you set the ambition, and the model and effort of the judgment, implementer, and mechanical roles all follow from it, rather than every agent inheriting the session tier. Omit it (or omit the resolution entirely, as an older plan does) and every agent simply inherits the session model.
 - `--merge` — integrate finished issues into the default branch automatically. The default is conservative: open one pull request per issue and leave the merge to you, unless the project's own policy already authorizes merging away from the keyboard.
 - `--max-fix-rounds=N` — cap on the fix↔verify loop per issue (default 1). After the cap, the issue is parked in the report rather than looping.
 - `--plan` / `--dry-run` — produce the plan (scope, dependency graph, waves, merge-or-PR decision) and stop, so you can review before the real run.
@@ -137,14 +138,30 @@ Leave the repository state-neutral: prune this run's own leftover worktree scaff
 
 ## Model and effort
 
-Put the strong model and the high effort where the judgement is, not where the routing is:
+Model and reasoning effort are not set per agent by hand — they are **derived from the `--level` dial**. The **orchestrator** (the session-model planning pass) turns the level into a **per-role `(model, effort)`** and hands it to the engine as `args.roles`; the engine stores no model-name table and only applies what it is given (spreading it into each sub-agent's dispatch), so a role that carries no resolution — or an older plan with no `roles` at all — simply inherits the session model. Put the strong model and the high effort where the judgement is, not where the routing is — and let the level decide how strong.
 
-- **Implementers and the adversarial verifier** — the single broad reviewer that runs by default, plus the extra lenses a high-risk issue adds — **strongest tier, high reasoning effort.** This is where clean, correct code is born and where real bugs are caught; it is worth the spend.
-- **Mechanical leaves** — test-coverage mapping, an integration smoke pass — can run a cheaper tier or, better, be replaced by code.
-- **The spine is code, so there is no expensive "orchestrator LLM" doing routing.** The genuinely cheap deterministic work — is the graph acyclic (`orchestrate.py plan`), did the gates exit green, is there a red-before-green commit (`orchestrate.py redgreen`), does each criterion map to a test — belongs to the helper and the gate run (CPU, not tokens), never to a sub-agent reading text by eye.
-- The one-time planning judgement (reading the briefs to set each issue's risk and verifier panel) can run on the session model.
+**Three role classes carry the tuning**, with the hierarchy `reviewer ≥ implementer ≥ mechanical`:
 
-The earlier instinct — "put the orchestrator on the top tier because verification rides on its judgement" — is inverted: the orchestrator only reads verdicts and routes, which is the cheapest work or pure code. The judgement lives in the verifier and implementer sub-agents, and that is where the tier and the effort should go.
+- **Judgment** — the one-time planning judgement and the **adversarial verifier**: the single broad reviewer that runs by default, the extra lenses a high-risk issue adds, and the mandatory integration review. The strongest tier the level allows — this is where real bugs are caught.
+- **Implementer** — the code-writing agents (implement, its fix round, the integration hotfix). Its model **slides with the level**: a cheaper executor of a detailed plan at the low end, rising to meet the reviewer at `L`/`XL`, where it is the primary thinker.
+- **Mechanical leaves** — integrate and the worktree teardown. The cheapest tier; they gain nothing from a stronger model.
+
+**The mapping is derived at runtime, not hardcoded.** What is fixed is the set of levels and their semantic intent per role; the concrete `(model, effort)` is resolved by the orchestrator **against the harness's live model list** at plan time, so it self-updates as models change (a new Opus, Fable's successor) with no literal model-name table stored as the durable contract. The ladder below is what that derivation produces *today* — an **illustrative, non-durable** instantiation (as of 2026-07), refreshed as models change, never a promise:
+
+| Level | Judgment (planning + review) | Implementer | Mechanical |
+| ----- | ---------------------------- | ----------- | ---------- |
+| **XS** | Sonnet · high | Haiku · thinking | Haiku · thinking |
+| **S** | Sonnet · xhigh | Sonnet · high | Haiku · thinking |
+| **M** | Opus · high | Sonnet · xhigh | Sonnet · high |
+| **L** | Opus · xhigh | Opus · xhigh | Sonnet · high |
+| **XL** | Fable · xhigh | Fable · xhigh | Sonnet · high |
+
+Effort maps to the harness ladder `low < medium < high < xhigh < max`. Two **guardrails** bound this runtime derivation:
+
+- **Only dispatchable models.** The resolution may pick only a model the harness can actually **dispatch**; an intent that would land on an unavailable model falls back to the nearest available tier rather than failing the run.
+- **Judgment never below the session tier.** The judgment roles (planning + the adversarial reviewer) never resolve *below* the session model's tier — the reviewer is the last line of defence and is not silently cheapened — **unless** the maintainer explicitly dialed down with a low `--level`.
+
+The spine itself stays **code, not an LLM**, so there is no expensive "orchestrator LLM" doing routing: the deterministic work — is the graph acyclic (`orchestrate.py plan`), did the gates exit green, is there a red-before-green commit (`orchestrate.py redgreen`), does each criterion map to a test — belongs to the helper and the gate run (CPU, not tokens), never to a sub-agent reading text by eye. The orchestrator only reads verdicts and routes; the judgement lives in the verifier and implementer sub-agents, and that — scaled by the level — is where the tier and the effort go.
 
 ## Running it unattended (`/goal`)
 

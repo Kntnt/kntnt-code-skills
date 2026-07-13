@@ -26,6 +26,11 @@
  *     maxIntegrationRounds?: number,             // integration-review hotfix cap (default maxFixRounds)
  *     merge?:  boolean,                          // integrate to the default branch, else open PRs
  *     budgetFloor?: number,                      // stop opening waves below this many tokens left
+ *     roles?:  {                                 // per-role (model, effort) the orchestrator
+ *       judgment?:    { model?, effort? },       //   resolved from --level; absent → session model
+ *       implementer?: { model?, effort? },
+ *       mechanical?:  { model?, effort? },
+ *     },
  *   }
  *
  * Returns { verdicts, parked, integration } in the shape `orchestrate.py report`
@@ -98,12 +103,12 @@ const INTEGRATE_SCHEMA = {
   },
 }
 
-// `normalizeArgs`, `planIsEmpty`, `blockingFindings`, and `unlandedPrerequisites`
-// are kept inline as plain internal `const`s because the Workflow harness rejects
-// any top-level `export` beyond the single leading `export const meta` and forbids
-// a top-level `import` — so this script cannot import them. Their tested source of
-// truth is the byte-for-byte identical `lib/orchestrate/engine-helpers.mjs`; keep
-// the two in sync.
+// `normalizeArgs`, `planIsEmpty`, `blockingFindings`, `unlandedPrerequisites`, and
+// `roleTuning` are kept inline as plain internal `const`s because the Workflow
+// harness rejects any top-level `export` beyond the single leading `export const
+// meta` and forbids a top-level `import` — so this script cannot import them. Their
+// tested source of truth is the byte-for-byte identical
+// `lib/orchestrate/engine-helpers.mjs`; keep the two in sync.
 
 /**
  * Normalize the raw `args` the Workflow harness delivers into the single config
@@ -208,6 +213,41 @@ const unlandedPrerequisites = (blockedBy, inScope, landed) => {
 
 }
 
+/**
+ * The `agent()` opts fragment that tunes one role's sub-agents to the model and
+ * reasoning effort the `--level` dial resolved for it. The ambition dial is
+ * turned OUTSIDE the engine: the orchestrator resolves `--level` into a per-role
+ * `(model, effort)` against the harness's live model list — the engine has no
+ * primitive to enumerate models — and passes the result in as `args.roles`. This
+ * helper merely APPLIES one role's resolution, storing no model-name table of its
+ * own. Only a field the resolution actually set is copied, and an absent or
+ * non-object role yields an empty fragment: spread into an agent's opts it adds no
+ * `model`/`effort` key, so the agent inherits the session model and a plan
+ * produced before the dial existed still runs unchanged.
+ *
+ * @param {{model?: string, effort?: string}|undefined} role One role's resolved
+ *   tuning from `args.roles` (`judgment` / `implementer` / `mechanical`), or
+ *   nothing.
+ * @returns {{model?: string, effort?: string}} The opts fragment to spread into an
+ *   `agent()` call — only the fields the resolution actually set, nothing when it
+ *   set none.
+ */
+const roleTuning = (role) => {
+
+  // An absent, null, or non-object resolution yields an empty fragment: spread into
+  // an agent's opts it adds no model/effort key, so the agent inherits the session
+  // model and a plan produced before the dial existed runs unchanged.
+  if (role == null || typeof role !== 'object') return {}
+
+  // Copy only the fields the orchestrator actually resolved, so a role that set
+  // just the model (or just the effort) overrides only that one dimension.
+  const tuning = {}
+  if (role.model != null) tuning.model = role.model
+  if (role.effort != null) tuning.effort = role.effort
+  return tuning
+
+}
+
 // Run options, with the conservative defaults the skill documents. Every field
 // is read off the normalized config, never off the raw `args` the harness
 // delivers as a JSON string.
@@ -230,6 +270,16 @@ const standardInstruction =
   `the coding standard in \`${standardsPath}\` — read \`general.md\` plus the module(s) for the language or framework you touch`
 const merge = config.merge === true
 const budgetFloor = config.budgetFloor ?? 60000
+
+// The per-role (model, effort) the orchestrator resolved from the `--level`
+// ambition dial against the harness's live model list, keyed by role class —
+// `judgment` (planning + adversarial review), `implementer` (writes code), and
+// `mechanical` (integrate, teardown). The engine stores NO model-name table; it
+// only applies what it is handed, spreading `roleTuning(roles.<class>)` into each
+// agent's opts. An absent `roles` (a plan produced before the dial existed) leaves
+// this an empty object, so every role resolves to an empty fragment and every
+// agent inherits the session model — the run is unchanged.
+const roles = config.roles || {}
 
 // Title lookup for logging and report records.
 const titleOf = (number) => issuesByNumber.get(number)?.title || `issue ${number}`
@@ -307,7 +357,7 @@ const implement = (number) =>
       `Work on a fresh branch off the current integration base. Demonstrate the red — a failing-test commit — before the green, because a test never seen to fail is of unknown value. Refactor only once green.\n` +
       `Automate everything meaningfully automatable, then run the project's full gate suite (discover it from the project) and report the REAL result.\n` +
       `Resolve genuine ambiguity by the most reasonable assumption and record it; never pause to ask. The one exception is work that cannot proceed without contradicting a settled decision (an ADR or design doc): set status "blocked", record the blocker, and stop only this issue.`,
-    { label: `implement:#${number}`, phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree' },
+    { label: `implement:#${number}`, phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree', ...roleTuning(roles.implementer) },
   )
 
 // Re-dispatch the same kind of implementer to fix concrete findings, then it
@@ -323,7 +373,7 @@ const fix = (number, impl, findings) =>
       `Address ONLY these verified findings, keep the tests green, and obey ${standardInstruction}:\n` +
       findings.map((finding) => `- ${finding.title}: ${finding.detail}`).join('\n') +
       `\nCommit on ${impl.branch}, then re-run the full gate suite and report the real result.`,
-    { label: `fix:#${number}`, phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree' },
+    { label: `fix:#${number}`, phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree', ...roleTuning(roles.implementer) },
   )
 
 // Run the adversarial panel concurrently; each reviewer gets one lens and only
@@ -334,7 +384,7 @@ const verify = async (number, impl) => {
     lenses.map((lens) => () => {
       // A lens is a brief string, or { brief, agentType } to use a named agent.
       const brief = typeof lens === 'string' ? lens : lens.brief
-      const opts = { label: `verify:#${number}:${brief.split(' ')[0]}`, phase: 'Verify', schema: VERDICT_SCHEMA }
+      const opts = { label: `verify:#${number}:${brief.split(' ')[0]}`, phase: 'Verify', schema: VERDICT_SCHEMA, ...roleTuning(roles.judgment) }
       if (typeof lens === 'object' && lens.agentType) opts.agentType = lens.agentType
 
       return agent(
@@ -365,7 +415,7 @@ const reverifyFindings = (number, impl, findings) =>
       `\nYou did NOT write this code. Read the issue's contract (\`gh issue view ${number} --comments\`; if an Agent Brief comment exists it is authoritative, OTHERWISE the issue body and its acceptance criteria are the contract) and ${standardInstruction}.\n` +
       `${AGENT_CONSTRAINTS}\n` +
       `Check ONLY what the gates cannot — do not re-check lint, build, or tests that already passed. Return clear=true only when every listed finding is resolved with no new problem in those areas; otherwise clear=false with the specific findings still unresolved or newly regressed.`,
-    { label: `reverify:#${number}`, phase: 'Verify', schema: VERDICT_SCHEMA },
+    { label: `reverify:#${number}`, phase: 'Verify', schema: VERDICT_SCHEMA, ...roleTuning(roles.judgment) },
   )
 
 // Build one issue, then verify once and — if needed — fix and targeted re-verify
@@ -429,7 +479,7 @@ const integrate = async (record) => {
     : `Open a pull request for branch ${record.branch} against the default branch. Do NOT merge.`
   const result = await agent(
     `Integrate issue #${record.number} ("${record.title}"). ${action} Report what you did in one line.`,
-    { label: `integrate:#${record.number}`, phase: 'Integrate', schema: INTEGRATE_SCHEMA },
+    { label: `integrate:#${record.number}`, phase: 'Integrate', schema: INTEGRATE_SCHEMA, ...roleTuning(roles.mechanical) },
   )
 
   // A failed or missing integration parks the otherwise-green issue with its reason.
@@ -466,7 +516,7 @@ const integrationReview = (verdicts) => {
       `You did NOT write this code. Read each issue's contract (\`gh issue view <n> --comments\`; if an Agent Brief comment exists it is authoritative, OTHERWISE the issue body and its acceptance criteria are the contract) and ${standardInstruction}.\n` +
       `${AGENT_CONSTRAINTS}\n` +
       `Check what a per-issue reviewer structurally cannot: the interaction of the changes. Default to clear=false if you find anything real across the union, name the specific issues that interact, and be concrete.`,
-    { label: 'integration-review', phase: 'Verify', schema: VERDICT_SCHEMA },
+    { label: 'integration-review', phase: 'Verify', schema: VERDICT_SCHEMA, ...roleTuning(roles.judgment) },
   )
 }
 
@@ -487,7 +537,7 @@ const integrationHotfix = (branch, findings) =>
       `Address ONLY these integration findings — nothing else — demonstrate the red before the green, keep every test green, and obey ${standardInstruction}:\n` +
       findings.map((finding) => `- ${finding.title}: ${finding.detail}`).join('\n') +
       `\nCommit on ${branch}, then re-run the full gate suite and report the real result.`,
-    { label: 'integration-hotfix', phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree' },
+    { label: 'integration-hotfix', phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree', ...roleTuning(roles.implementer) },
   )
 
 // Drive the waves in dependency order, processing issues SERIALLY and
@@ -735,7 +785,7 @@ try {
         `\nRun \`git worktree list --porcelain\` to enumerate every worktree. For each worktree whose checked-out branch is one of the branches listed above, run \`git worktree remove --force <path>\`; \`remove\` KEEPS the branch ref, which is exactly what we want. Finish with \`git worktree prune\`.\n` +
         `NEVER remove the main worktree (the repository's primary checkout) and NEVER remove a worktree whose branch is not in the list above — those were not created by this run. You MUST preserve every branch ref: do NOT run \`git branch -D\` (or any branch delete), and do NOT run \`git reset --hard\`. Removing a worktree must leave its branch ref intact, so the integrated history and every parked branch survive for the report and any human follow-up.\n` +
         `Report in one line how many worktrees you removed.`,
-      { label: 'teardown:worktrees', phase: 'Integrate' },
+      { label: 'teardown:worktrees', phase: 'Integrate', ...roleTuning(roles.mechanical) },
     )
   }
 }

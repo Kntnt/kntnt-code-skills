@@ -363,8 +363,7 @@ def test_model_effort_states_the_two_guardrails() -> None:
     section = _model_effort_section().lower()
     # Guardrail 1: only models the harness can actually dispatch are chosen.
     assert "dispatch" in section, (
-        "§Model and effort must state guardrail 1 — only dispatchable models are "
-        "picked"
+        "§Model and effort must state guardrail 1 — only dispatchable models are picked"
     )
     # Guardrail 2: judgment roles never drop below the session tier unless the
     # maintainer explicitly dialed down.
