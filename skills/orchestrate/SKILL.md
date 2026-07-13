@@ -37,7 +37,7 @@ The work must land in the **interactive subscription pool**, not the headless cr
 `orchestrate` is the last stage of a pipeline, not a standalone. Upstream, `grill-with-docs` sharpens the plan, `to-issues` cuts it into vertical-slice issues (each marked HITL or AFK, with checkbox acceptance criteria and a `Blocked by` section), and `triage` moves each issue to a terminal state and writes its brief. This skill reads that output:
 
 - **Scope defaults to the `ready-for-agent` issues** — triage's "fully specified, ready for an AFK agent" state (the real label string may be mapped per project). It **excludes `ready-for-human`**: those need human implementation by definition and are never built autonomously.
-- **The agent brief is the per-issue contract.** When an issue reaches `ready-for-agent`, triage posts a durable agent brief (behavioral, no file paths, with testable acceptance criteria and explicit out-of-scope). The implementer works from the brief; the issue body is context.
+- **The agent brief is the per-issue contract when one exists.** When an issue reaches `ready-for-agent`, triage posts a durable agent brief (behavioral, no file paths, with testable acceptance criteria and explicit out-of-scope). If an Agent Brief comment exists it is authoritative and the issue body is context; **otherwise the issue body and its acceptance criteria are the contract**, so an issue whose brief was never posted is still built without error. The plan flags each in-scope issue that has no brief.
 - **The acceptance criteria and `Blocked by` are machine-read** by `orchestrate.py plan` to build the graph — so the serialization constraint is computed, not guessed.
 
 When the project carries no such pipeline, fall back to whatever `CLAUDE.md` / `AGENTS.md` defines as its autonomous-agent contract, and resolve scope from the argument.
@@ -73,12 +73,14 @@ Hand the issues to the helper rather than reasoning out the graph by hand:
 
 ```bash
 gh issue list --label ready-for-agent --state open \
-    --json number,title,labels,body --limit 200 \
+    --json number,title,labels,body,comments --limit 200 \
   | uv run "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.py" plan \
         --exclude-label ready-for-human
 ```
 
 It returns the dependency graph, the topologically ordered **waves** (issues in one wave are independent and may run concurrently), any dependency that points outside the scope, and the issues it excluded. A dependency cycle is a hard error it reports rather than guessing past. With `--plan`, present this and stop.
+
+Fetch `comments` (as above) so brief detection is real: the plan flags each in-scope issue that carries no Agent Brief comment — a per-issue `no_brief` boolean and a convenience top-level `issues_without_brief` list. Those issues are **still built**, from their body and acceptance criteria; the flag is visibility, not exclusion, and the engine falls back cleanly when no brief was posted.
 
 The plan also carries a `merge_required` flag (with a human-readable `merge_note`): it is `true` whenever the in-scope graph has any cross-issue edge. Treat it as the cue for the merge-vs-PR decision below — when it is `true`, set the engine's `merge` arg (step 4) so dependents build on a base that already contains their prerequisites, rather than branching off bare `main`. The conservative one-PR-per-issue default is safe only when `merge_required` is `false`.
 
@@ -94,14 +96,14 @@ Show the plan from step 2 — scope, graph, waves, and whether the run will merg
 
 Either way the per-issue lifecycle is the same:
 
-1. **Implement.** One implementer sub-agent on its own branch reads the **agent brief** (the contract) and the standard, implements **test-first** (red/green/refactor) at the layer the test strategy prescribes, **demonstrates the red** (a failing-test commit before the green one), runs the project's gates, reports their real results, and returns the three-bucket report.
+1. **Implement.** One implementer sub-agent on its own branch reads the **agent brief** (the contract, or — when no brief was posted — the issue body and its acceptance criteria) and the standard, implements **test-first** (red/green/refactor) at the layer the test strategy prescribes, **demonstrates the red** (a failing-test commit before the green one), runs the project's gates, reports their real results, and returns the three-bucket report.
 2. **Verify, independently.** Only after green, a fresh verifier that did **not** write the code reviews **only what the gates cannot**. By default this is a **single broad adversarial reviewer** whose one lens folds every concern together — correctness against the brief's intent and acceptance criteria, test quality (is the red demonstrated? do the tests bind? does every criterion map to a test?), and any security or data-safety hazard the issue touches. Raise the panel to **2–3 focused lenses only for a genuinely high-risk issue** — a write path, a permission gate, a filesystem boundary, an irreversible delete — via the per-issue `lenses` set during planning. Use the project's specialized review agents where they exist; diverse lenses catch what identical reviewers miss, but only pay for them where the risk earns them.
 3. **Decide.** Read only the verdicts — never the diffs yourself. All clear → integrate. Any real finding → return it to the same implementer to fix, then **re-verify only the fixed findings** with a single targeted reviewer — not the whole panel again — capped at `--max-fix-rounds` (default 1); if it still fails, park that issue and continue.
 4. **Integrate, immediately.** Land each green issue the moment it is verified, before the next issue's work begins, in dependency order. Keep history linear: rebase the feature branch onto the up-to-date default branch and fast-forward only — never merge the default branch into the feature branch, never create a merge commit there. Landing per-issue makes partial progress durable: a stop between issues leaves every already-integrated issue on the default branch. Under the conservative default, open a pull request instead and leave the merge to the maintainer.
 
 ### 5. Finalize
 
-Re-run the full gate suite over the merged whole — green on each issue does not guarantee green on the union — and commission one integration verifier over the combined diff (give it the same adversarial brief, not a token smoke test). Then fold the per-issue verdicts into one report:
+Re-run the full gate suite over the merged whole — green on each issue does not guarantee green on the union. Then the engine runs a **mandatory** adversarial integration review over the combined diff of everything the run landed: one reviewer given a per-issue verifier's full rigor (never a token smoke test), hunting the cross-issue defects no per-issue lens can see — one issue's change silently weakening another's guarantee, a contradiction between two landed issues, a broken invariant across their union. It **always runs** whenever the run integrated at least one issue, its clear decision goes through the same block-unless-explicitly-cleared rule a per-issue verdict does, and it can **fix, not merely report**: a real finding drives a **bounded hotfix + re-review** — a code-touching agent on its own worktree addresses only those findings, the fix lands through the same linear rebase-and-fast-forward step, and the combined diff is re-reviewed — capped like a per-issue fix loop; a finding still unresolved at the cap is parked for a human, never dropped. Then fold the per-issue verdicts into one report:
 
 ```bash
 uv run "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.py" report < verdicts.json

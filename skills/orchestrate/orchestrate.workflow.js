@@ -23,14 +23,18 @@
  *     issues:  { number, title, blocked_by }[],  // from orchestrate.py plan
  *     standardsPath?: string,                    // coding-standard directory the agents read
  *     maxFixRounds?: number,                     // fix<->verify cap per issue (default 1)
+ *     maxIntegrationRounds?: number,             // integration-review hotfix cap (default maxFixRounds)
  *     merge?:  boolean,                          // integrate to the default branch, else open PRs
  *     budgetFloor?: number,                      // stop opening waves below this many tokens left
  *   }
  *
- * Returns { verdicts, parked } in the shape `orchestrate.py report` consumes:
- * the main session pipes them back to it to render the final report. An empty
- * or misdelivered plan instead returns { verdicts: [], parked: [], status:
- * 'empty-plan', warning } so a zero-agent run can never pass for a clean one.
+ * Returns { verdicts, parked, integration } in the shape `orchestrate.py report`
+ * consumes: the main session pipes the verdicts/parked records back to it to
+ * render the final report, and `integration` carries the mandatory final
+ * integration review's outcome ({ cleared, ... } or null when nothing was
+ * integrated). An empty or misdelivered plan instead returns { verdicts: [],
+ * parked: [], status: 'empty-plan', warning } so a zero-agent run can never pass
+ * for a clean one.
  */
 export const meta = {
   name: 'orchestrate',
@@ -180,6 +184,13 @@ const blockingFindings = (verdicts) => {
 const config = normalizeArgs(args)
 const issuesByNumber = new Map((config.issues || []).map((issue) => [issue.number, issue]))
 const maxFixRounds = config.maxFixRounds ?? 1
+
+// The cap on the mandatory integration review's hotfix loop: how many times a
+// cross-issue finding may be hotfixed and the combined diff re-reviewed before
+// the finding is parked for a human rather than looping. Defaults to
+// `maxFixRounds` (itself 1), so the integration stage is bounded exactly as a
+// per-issue fix loop is; a run can raise it via `maxIntegrationRounds`.
+const maxIntegrationRounds = config.maxIntegrationRounds ?? maxFixRounds
 const standardsPath = config.standardsPath || 'agents.d/coding-standard/'
 
 // How every sub-agent is told to reach the coding standard: a directory of
@@ -229,7 +240,7 @@ const toRecord = (number, impl, status, verify) => ({
 })
 
 // Worktree-isolation rule: every code-touching agent — implement and fix here,
-// and any future salvage/hotfix agent (issue #18) — MUST carry
+// and the integration hotfix (issue #18) — MUST carry
 // `isolation: 'worktree'` in its opts, so no two agents, and no agent and the
 // launcher, ever share a working directory. Sharing one tree let an agent's
 // uncommitted changes park the next issue, and a left-behind worktree locked a
@@ -242,8 +253,8 @@ const toRecord = (number, impl, status, verify) => ({
 // what it may NEVER do to shared state — close the GitHub issue, push, merge, or
 // run destructive git that can lose committed work — and the ONE non-destructive
 // recipe for reaching a clean tree. Defined ONCE and interpolated into every
-// implement, fix, verify, and re-verify prompt (and any future salvage/hotfix
-// agent — issue #18 — MUST include it too) rather than copy-pasted, so the rule cannot drift
+// implement, fix, verify, and re-verify prompt — and the integration hotfix
+// (issue #18) — rather than copy-pasted, so the rule cannot drift
 // between agents. Deliberately NOT interpolated into `integrate`, whose whole job
 // is to land each green issue on the default branch (rebase-then-fast-forward);
 // pushing that branch to a remote is the orchestrator's separate authorised step,
@@ -258,7 +269,7 @@ const AGENT_CONSTRAINTS = `Shared-state rules — these bind you; obey them with
 const implement = (number) =>
   agent(
     `Implement GitHub issue #${number} ("${titleOf(number)}") test-first.\n` +
-      `Read its contract first: run \`gh issue view ${number} --comments\` and treat the "Agent Brief" comment as authoritative; the issue body and acceptance criteria are context.\n` +
+      `Read its contract first: run \`gh issue view ${number} --comments\`. If an Agent Brief comment exists it is authoritative; OTHERWISE the issue body and its acceptance criteria ARE the contract — build from them and never stall for a missing brief.\n` +
       `Read and obey ${standardInstruction}.\n` +
       `${AGENT_CONSTRAINTS}\n` +
       `Work on a fresh branch off the current integration base. Demonstrate the red — a failing-test commit — before the green, because a test never seen to fail is of unknown value. Refactor only once green.\n` +
@@ -296,7 +307,7 @@ const verify = async (number, impl) => {
 
       return agent(
         `Adversarially review branch ${impl.branch} for issue #${number} ("${titleOf(number)}") through ONE lens: ${brief}.\n` +
-          `You did NOT write this code. Read the issue's Agent Brief (\`gh issue view ${number} --comments\`) and ${standardInstruction}.\n` +
+          `You did NOT write this code. Read the issue's contract (\`gh issue view ${number} --comments\`; if an Agent Brief comment exists it is authoritative, OTHERWISE the issue body and its acceptance criteria are the contract) and ${standardInstruction}.\n` +
           `${AGENT_CONSTRAINTS}\n` +
           `Check ONLY what the gates cannot — do not re-check lint, build, or tests that already passed. Default to clear=false if you find anything real, and be specific.`,
         opts,
@@ -319,7 +330,7 @@ const reverifyFindings = (number, impl, findings) =>
     `Adversarially re-verify branch ${impl.branch} for issue #${number} ("${titleOf(number)}") after a fix round.\n` +
       `A previous fix round was asked to address EXACTLY these findings; review ONLY whether each is now properly resolved and that no regression crept into those specific areas — do NOT re-review the whole change or re-run the full verifier panel:\n` +
       findings.map((finding) => `- ${finding.title}: ${finding.detail}`).join('\n') +
-      `\nYou did NOT write this code. Read the issue's Agent Brief (\`gh issue view ${number} --comments\`) and ${standardInstruction}.\n` +
+      `\nYou did NOT write this code. Read the issue's contract (\`gh issue view ${number} --comments\`; if an Agent Brief comment exists it is authoritative, OTHERWISE the issue body and its acceptance criteria are the contract) and ${standardInstruction}.\n` +
       `${AGENT_CONSTRAINTS}\n` +
       `Check ONLY what the gates cannot — do not re-check lint, build, or tests that already passed. Return clear=true only when every listed finding is resolved with no new problem in those areas; otherwise clear=false with the specific findings still unresolved or newly regressed.`,
     { label: `reverify:#${number}`, phase: 'Verify', schema: VERDICT_SCHEMA },
@@ -393,6 +404,49 @@ const integrate = async (record) => {
   return { ...record, verify: `${record.verify} | ${result.summary}` }
 }
 
+// The MANDATORY final integration review: ONE adversarial reviewer over the
+// COMBINED diff of everything this run landed on the default branch. A per-issue
+// verifier sees one issue in isolation and structurally CANNOT catch a cross-
+// issue defect — one issue's change silently weakening another's guarantee, two
+// landed issues contradicting each other, an invariant that holds per issue but
+// breaks across their union. So this reviewer is given the SAME rigor as a per-
+// issue verifier, NOT a token smoke test, and hunts exactly that class of defect.
+// It did NOT write any of the code, is read-only (no worktree), carries the
+// shared ${AGENT_CONSTRAINTS}, and returns the same VERDICT_SCHEMA a verifier
+// does — so its clear decision runs through `blockingFindings` just like a per-
+// issue verdict and a dead / not-clear / empty-findings review can never pass.
+const integrationReview = (verdicts) =>
+  agent(
+    `Adversarially review the COMBINED diff of everything this run integrated onto the default branch — issues ${verdicts.map((verdict) => `#${verdict.number}`).join(', ')} TOGETHER, as one union, NOT any single issue on its own.\n` +
+      `Give this the SAME rigor as a per-issue verifier — this is NOT a smoke test. Hunt for CROSS-issue defects that no per-issue review could see: one issue's change silently weakening another's guarantee, two landed issues contradicting each other, a broken invariant across their union, a gate that passes per issue but not over the combined whole.\n` +
+      `You did NOT write this code. Read each issue's contract (\`gh issue view <n> --comments\`; if an Agent Brief comment exists it is authoritative, OTHERWISE the issue body and its acceptance criteria are the contract) and ${standardInstruction}.\n` +
+      `${AGENT_CONSTRAINTS}\n` +
+      `Check what a per-issue reviewer structurally cannot: the interaction of the changes. Default to clear=false if you find anything real across the union, name the specific issues that interact, and be concrete.`,
+    { label: 'integration-review', phase: 'Verify', schema: VERDICT_SCHEMA },
+  )
+
+// Dispatch ONE code-touching hotfix agent to address ONLY the integration
+// review's cross-issue findings, on a fresh hotfix branch off the up-to-date
+// default branch, test-first. This is the salvage/hotfix agent #14's comment
+// anticipated: it TOUCHES CODE, so it MUST carry `isolation: 'worktree'` and the
+// shared ${AGENT_CONSTRAINTS} (it must not merge, push, or close), and it
+// reconciles the worktree branch-lock exactly as `fix` does — freeing any other
+// worktree still holding its branch, keeping the ref, before checking it out —
+// so a later round's hotfix branch is never blocked by a stale worktree.
+const integrationHotfix = (branch, findings) =>
+  agent(
+    `Fix the cross-issue integration findings below on branch ${branch} (create it off the up-to-date default branch), test-first.\n` +
+      `You are in a FRESH isolated worktree. If ${branch} already exists and is checked out in ANOTHER worktree (a previous hotfix round's), git refuses to check out one branch in two worktrees at once. BEFORE anything else, take the branch over:\n` +
+      `1. Run \`git worktree list --porcelain\` and find any OTHER worktree that currently has ${branch} checked out.\n` +
+      `2. If one exists, run \`git worktree remove --force <that path>\` to free it. \`remove\` KEEPS the branch ref, so its commits survive — NEVER run \`git branch -D\` (or any branch delete) and NEVER \`git reset --hard\`.\n` +
+      `3. Now create or check out ${branch} off the up-to-date default branch in your own worktree and do all the work here.\n` +
+      `${AGENT_CONSTRAINTS}\n` +
+      `Address ONLY these integration findings — nothing else — demonstrate the red before the green, keep every test green, and obey ${standardInstruction}:\n` +
+      findings.map((finding) => `- ${finding.title}: ${finding.detail}`).join('\n') +
+      `\nCommit on ${branch}, then re-run the full gate suite and report the real result.`,
+    { label: 'integration-hotfix', phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree' },
+  )
+
 // Drive the waves in dependency order, processing issues SERIALLY and
 // integrating each green one the MOMENT it goes green — before the next issue's
 // work begins. This makes partial progress durable: each verified-green issue
@@ -407,6 +461,11 @@ const integrate = async (record) => {
 const verdicts = []
 const parked = []
 const waves = config.waves || []
+
+// The outcome of the mandatory final integration review, surfaced on the return
+// so the caller/report can see whether the combined diff cleared. Stays null
+// when the run integrated nothing (no combined diff exists to review).
+let integrationOutcome = null
 
 // The feature branches this run built, one per implementer worktree. This is the
 // exact, precise identity of the worktrees the run created; the end-of-run
@@ -469,6 +528,80 @@ try {
       else parked.push(integrated)
     }
   }
+
+  // MANDATORY final integration review. A per-issue verifier sees one issue in
+  // isolation and structurally cannot catch a cross-issue defect across the
+  // combined diff. So whenever the run integrated at least one issue
+  // (verdicts.length > 0 — the only case a combined diff exists), one adversarial
+  // reviewer examines that combined diff with a verifier's full rigor, and its
+  // clear decision runs through blockingFindings exactly like a per-issue verdict:
+  // a dead / not-clear / empty-findings review can never pass silently. A real
+  // finding drives a BOUNDED hotfix + re-review — not a mere report — and a
+  // finding still unresolved when the cap is hit is parked for a human, never
+  // dropped. This sits after the wave loop but INSIDE the teardown try, and
+  // before the finally, so teardown still fires and any hotfix worktree is torn
+  // down too.
+  if (verdicts.length > 0) {
+    let review = await integrationReview(verdicts)
+    let findings = blockingFindings(review ? [review] : [])
+
+    // Bounded hotfix loop: address ONLY the cross-issue findings on a fresh
+    // hotfix branch (tracked in builtBranches so teardown removes its worktree),
+    // land it through the same linear rebase-ff integrate step, then RE-REVIEW —
+    // the hotfix could itself break the union. Stops when the review clears or
+    // the round cap is reached.
+    for (let round = 1; round <= maxIntegrationRounds && findings.length > 0; round += 1) {
+      log(`integration review: hotfix round ${round}/${maxIntegrationRounds} — ${findings.length} finding(s)`)
+
+      const hotfixBranch = `orchestrate-integration-hotfix-${round}`
+      builtBranches.add(hotfixBranch)
+      const impl = await integrationHotfix(hotfixBranch, findings)
+
+      // A dead hotfix agent leaves the findings unresolved for the next round or
+      // the cap; the combined diff is never re-reviewed on an unconfirmed hotfix.
+      if (impl == null) continue
+
+      // Land the hotfix through the existing rebase-ff integrate step, then re-
+      // review. A hotfix that cannot land is parked with its blocker and the loop
+      // stops — there is nothing new to re-review.
+      const landed = await integrate({
+        number: 0,
+        title: `integration hotfix round ${round}`,
+        branch: hotfixBranch,
+        status: 'done',
+        gates: '',
+        verify: '',
+        remaining_for_human: [],
+        assumptions: [],
+        blockers: [],
+      })
+      if (landed.status !== 'done') {
+        parked.push(landed)
+        break
+      }
+      review = await integrationReview(verdicts)
+      findings = blockingFindings(review ? [review] : [])
+    }
+
+    // Record the integration outcome for the return, and park an unresolved
+    // cross-issue finding for a human rather than dropping it.
+    integrationOutcome =
+      findings.length === 0
+        ? { cleared: true, summary: review?.summary || 'integration review cleared the combined diff' }
+        : { cleared: false, findings }
+    if (findings.length > 0) {
+      parked.push({
+        number: 0,
+        title: 'integration review',
+        status: 'parked',
+        gates: '',
+        verify: review?.summary || '',
+        remaining_for_human: [],
+        assumptions: [],
+        blockers: findings.map((finding) => `${finding.title}: ${finding.detail}`),
+      })
+    }
+  }
 } finally {
   // Teardown: remove exactly the worktrees this run created, preserving every
   // branch ref, whether the run finished cleanly or left issues parked/blocked.
@@ -490,4 +623,4 @@ try {
   }
 }
 
-return { verdicts, parked }
+return { verdicts, parked, integration: integrationOutcome }

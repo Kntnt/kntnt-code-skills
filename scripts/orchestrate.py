@@ -23,7 +23,7 @@ pool, not the headless (`claude -p`) credit. This script only reads from stdin
 and writes to stdout; it shells out to nothing — the caller runs `gh` and
 `git` and pipes their output in:
 
-  * `plan`     <- `gh issue list --json number,title,labels,body`
+  * `plan`     <- `gh issue list --json number,title,labels,body,comments`
   * `redgreen` <- `git log --reverse --no-merges --format='commit %H' --name-only <base>..<head>`
 
 Standard library only; the PEP 723 block pins only the Python version so
@@ -56,6 +56,12 @@ from typing import Any, NoReturn, cast
 # without a human in the loop. The caller's `gh` query resolves the real
 # scope; this constant only documents the default and labels the plan output.
 DEFAULT_SCOPE_LABEL = "ready-for-agent"
+
+# The phrase a triage-posted agent brief comment carries. An issue HAS a brief
+# iff any of its comment bodies contains this phrase (case-insensitive); an issue
+# without one is flagged so the run knows it is built from its body + acceptance
+# criteria instead. Matched case-insensitively against the lowercased body.
+AGENT_BRIEF_MARKER = "agent brief"
 
 # The `Blocked by` section of the to-issues template, and the issue-reference
 # token (`#42`) used inside it. The section body runs to the next heading or
@@ -187,6 +193,11 @@ class Issue:
     `blocked_by_origin` records which keyword produced each edge for the plan's
     audit trail; `soft_notes` carries possible-coupling phrases for the report;
     `warnings` carries body-scoped unresolved-dependency alerts for the plan.
+    `no_brief` flags an issue that carries no Agent Brief comment, so the plan
+    surfaces which issues are built from their body + acceptance criteria rather
+    than a posted brief. It defaults to True — an issue with no detectable brief
+    — so a record built without comment data is flagged rather than silently
+    assumed to have one; the engine's fallback still builds it either way.
     """
 
     number: int
@@ -196,6 +207,7 @@ class Issue:
     blocked_by_origin: dict[int, str] = field(default_factory=dict)
     soft_notes: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    no_brief: bool = True
 
 
 @dataclass
@@ -531,13 +543,30 @@ def _build_title_index(entries: list[Any]) -> dict[str, int]:
     return index
 
 
+def _has_agent_brief(comments: Any) -> bool:
+    """Whether any comment names an Agent Brief (case-insensitive). `gh` returns
+    `comments` as a list of {"body": ...} objects; bare strings are tolerated,
+    and a missing or non-list value is treated as no brief — the safe default,
+    since the engine's fallback builds the issue from its body either way."""
+
+    if not isinstance(comments, list):
+        return False
+    for comment in comments:
+        body = comment.get("body", "") if isinstance(comment, dict) else comment
+        if AGENT_BRIEF_MARKER in str(body).lower():
+            return True
+    return False
+
+
 def load_issues(raw: str) -> list[Issue]:
-    """Parse a `gh issue list --json number,title,labels,body` payload into
-    Issue records. Raises ValueError on malformed JSON or a missing number.
+    """Parse a `gh issue list --json number,title,labels,body,comments` payload
+    into Issue records. Raises ValueError on malformed JSON or a missing number.
 
     Runs in two passes: first the in-scope titles are indexed, then each body is
     parsed against that index so a prerequisite named by its prose title (not
-    `#N`) still produces an edge."""
+    `#N`) still produces an edge. The optional `comments` field, when present, is
+    scanned for an Agent Brief so `no_brief` flags an issue lacking one; an entry
+    with no `comments` field is flagged as having no detectable brief."""
 
     try:
         data = json.loads(raw)
@@ -578,6 +607,7 @@ def load_issues(raw: str) -> list[Issue]:
                 blocked_by_origin=signals.edges,
                 soft_notes=signals.soft_notes,
                 warnings=signals.warnings,
+                no_brief=not _has_agent_brief(entry.get("comments")),
             )
         )
 
@@ -679,14 +709,22 @@ def build_plan(
     """Assemble the plan the orchestrator dispatches from. The existing fields
     (`scope_label`, `issues`, `waves`, `external_dependencies`, `excluded`) are
     preserved verbatim for the Workflow engine that consumes this as its args;
-    the dependency provenance, soft notes, merge signal, and unresolved-
-    dependency warnings are added alongside.
+    the dependency provenance, soft notes, merge signal, unresolved-dependency
+    warnings, and the missing-brief flags are added alongside. Each `issues[]`
+    entry carries a `no_brief` boolean, and `issues_without_brief` lists the
+    numbers lacking a brief for convenience — those issues are still built, from
+    their body + acceptance criteria.
 
     Raises ValueError (via `build_waves`) when the in-scope graph has a cycle.
     """
 
     waves = build_waves(kept)
     edges = dependency_edges(kept)
+
+    # The in-scope issues that carry no Agent Brief comment. They are still built
+    # — from their body + acceptance criteria — so this is a visibility flag, not
+    # an exclusion.
+    issues_without_brief = sorted(issue.number for issue in kept if issue.no_brief)
 
     # When any cross-issue edge exists, dependents must build on a base that
     # already contains their prerequisites — flag merge mode so the engine does
@@ -708,9 +746,15 @@ def build_plan(
     return {
         "scope_label": scope_label,
         "issues": [
-            {"number": i.number, "title": i.title, "blocked_by": sorted(i.blocked_by)}
+            {
+                "number": i.number,
+                "title": i.title,
+                "blocked_by": sorted(i.blocked_by),
+                "no_brief": i.no_brief,
+            }
             for i in kept
         ],
+        "issues_without_brief": issues_without_brief,
         "waves": waves,
         "dependency_edges": edges,
         "merge_required": merge_required,
