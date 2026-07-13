@@ -287,7 +287,8 @@ const toRecord = (number, impl, status, verify) => ({
 // implement, fix, verify, and re-verify prompt — and the integration hotfix
 // (issue #18) — rather than copy-pasted, so the rule cannot drift
 // between agents. Deliberately NOT interpolated into `integrate`, whose whole job
-// is to land each green issue on the default branch (rebase-then-fast-forward);
+// is to land each green issue on the default branch (fast-forward the default to
+// the feature tip, without checking out the worktree-locked feature branch);
 // pushing that branch to a remote is the orchestrator's separate authorised step,
 // not integrate's. `teardown` already carries its own no-delete/no-reset rule and
 // does not integrate, so it needs no addition here.
@@ -416,13 +417,15 @@ const buildAndVerify = async (number) => {
 }
 
 // Integrate one green issue: open a PR by default, or land it on the default
-// branch with a linear rebase-then-fast-forward when the run is authorized to.
-// Integration is the one outward-facing, irreversible step.
+// branch when the run is authorized to — by fast-forwarding the default branch
+// to the feature branch's tip WITHOUT checking out the worktree-locked feature
+// branch. Integration is the one outward-facing, irreversible step.
 const integrate = async (record) => {
   const action = merge
-    ? `Rebase branch ${record.branch} onto the up-to-date default branch, then fast-forward the default branch to it — fast-forward ONLY. ` +
+    ? `Land branch ${record.branch} on the default branch by fast-forwarding the DEFAULT branch to that branch's tip, WITHOUT ever checking out ${record.branch}. ${record.branch} is still checked out in the implementer's (or a fix round's) persisted worktree, and git refuses to check out one branch in two worktrees at once, so checking it out here would fail mechanically for a non-conflict reason. From the default branch, run \`git merge --ff-only ${record.branch}\` — this advances the default to the feature tip and creates NO merge commit. ` +
       `Keep the integrated history LINEAR: NEVER merge the default branch INTO the feature branch, and NEVER create a merge commit on the feature branch. ` +
-      `If the rebase hits a conflict you cannot resolve safely, do NOT merge — report it as a blocker.`
+      `In the serial integrate-immediately design nothing landed between ${record.branch}'s build and now, so it is already a fast-forward ahead of the default and \`--ff-only\` succeeds with no rebase replay. Only in the rare case the default moved under the feature branch will the fast-forward be refused; that is the one case a genuine rebase is needed — perform it WITHOUT checking out ${record.branch} while a worktree still holds it: free that worktree first with \`git worktree remove --force <path>\` (which KEEPS the branch ref), exactly as the fix-round handoff does, then rebase and fast-forward the default. ` +
+      `If a genuine conflict makes that rebase unsafe to resolve, do NOT merge — report it as a blocker.`
     : `Open a pull request for branch ${record.branch} against the default branch. Do NOT merge.`
   const result = await agent(
     `Integrate issue #${record.number} ("${record.title}"). ${action} Report what you did in one line.`,
@@ -490,17 +493,17 @@ const integrationHotfix = (branch, findings) =>
 // Drive the waves in dependency order, processing issues SERIALLY and
 // integrating each green one the MOMENT it goes green — before the next issue's
 // work begins. This makes partial progress durable: each verified-green issue
-// lands on the default branch immediately (rebase-then-fast-forward), so a
-// mid-run stop — a spend-limit cut-off, a crash — leaves every issue integrated
-// so far on the default branch and nothing already-completed is lost. Processing
-// the waves IN ORDER puts a dependent's build AFTER its prerequisite's, but order
-// alone is not enough: if the prerequisite parked, blocked, or failed to
-// integrate, the base still lacks it. So the loop also honours wave OUTCOME —
-// before building an issue it skips (parks) it when an in-scope prerequisite has
-// not landed (see `landed` and `unlandedPrerequisites` below). The within-wave
-// issue-number sort is only deterministic ordering, since a wave's issues are
-// independent by construction. Worktree isolation (#14) keeps concurrent agents
-// apart, so serial dispatch is safe.
+// lands on the default branch immediately (fast-forward the default to the
+// feature tip), so a mid-run stop — a spend-limit cut-off, a crash — leaves every
+// issue integrated so far on the default branch and nothing already-completed is
+// lost. Processing the waves IN ORDER puts a dependent's build AFTER its
+// prerequisite's, but order alone is not enough: if the prerequisite parked,
+// blocked, or failed to integrate, the base still lacks it. So the loop also
+// honours wave OUTCOME — before building an issue it skips (parks) it when an
+// in-scope prerequisite has not landed (see `landed` and `unlandedPrerequisites`
+// below). The within-wave issue-number sort is only deterministic ordering, since
+// a wave's issues are independent by construction. Worktree isolation (#14) keeps
+// concurrent agents apart, so serial dispatch is safe.
 const verdicts = []
 const parked = []
 const waves = config.waves || []
@@ -585,10 +588,10 @@ try {
         continue
       }
 
-      // Land it NOW, before the next issue's build starts: a clean rebase-then-
-      // fast-forward is done, a conflict parks it. Because the land happens here,
-      // inline, a stop after this point still leaves this issue on the default
-      // branch — the durability property the batched design lacked.
+      // Land it NOW, before the next issue's build starts: a clean fast-forward
+      // of the default to the feature tip is done, a conflict parks it. Because the
+      // land happens here, inline, a stop after this point still leaves this issue
+      // on the default branch — the durability property the batched design lacked.
       const integrated = await integrate(record)
 
       // Record the outcome, and on a successful land mark this issue as landed so
@@ -627,8 +630,9 @@ try {
 
     // Bounded hotfix loop — MERGE MODE ONLY (the `merge &&` guard). Address ONLY
     // the cross-issue findings on a fresh hotfix branch (tracked in builtBranches
-    // so teardown removes its worktree), land it through the same linear rebase-ff
-    // integrate step, then RE-REVIEW — the hotfix could itself break the union.
+    // so teardown removes its worktree), land it through the same linear
+    // fast-forward integrate step, then RE-REVIEW — the hotfix could itself break
+    // the union.
     // Stops when the review clears or the round cap is reached. In PR mode the
     // guard is false, the loop never runs, and the finding is parked below.
     for (let round = 1; merge && round <= maxIntegrationRounds && findings.length > 0; round += 1) {
@@ -642,7 +646,7 @@ try {
       // the cap; the combined diff is never re-reviewed on an unconfirmed hotfix.
       if (impl == null) continue
 
-      // Land the hotfix through the existing rebase-ff integrate step, then re-
+      // Land the hotfix through the existing fast-forward integrate step, then re-
       // review. A hotfix that cannot land is parked with its blocker and the loop
       // stops — there is nothing new to re-review.
       const hotfixIntegration = await integrate({
