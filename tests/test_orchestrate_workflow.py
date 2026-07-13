@@ -1579,3 +1579,162 @@ def test_pr_mode_parks_dependent_of_open_pr_while_merge_mode_builds_it() -> None
     assert 2 not in pr["built"] and 3 not in pr["built"], (
         "a PR-mode dependent of an unmerged prerequisite must not be built"
     )
+
+
+# --- per-role model/effort derived from the --level dial (issue #25) ----------
+
+# The `--level` ambition dial makes every sub-agent's model and reasoning effort a
+# function of one dial instead of everything inheriting the session tier. The
+# ORCHESTRATOR resolves `--level` → a per-role `(model, effort)` against the live
+# model list (the engine has no primitive to enumerate models) and passes it in as
+# `args.roles = { judgment, implementer, mechanical }`. The ENGINE only APPLIES
+# what it is handed: it reads the resolution off the normalized config and spreads
+# a `roleTuning(...)` opts fragment into each sub-agent — judgment onto verify /
+# reverifyFindings / integrationReview, implementer onto implement / fix /
+# integrationHotfix, mechanical onto integrate and the teardown agent. An absent
+# role or field yields NO override, so the agent inherits the session model and a
+# plan produced before the dial existed still runs unchanged. The resolution
+# helper is pure and drift-guarded against its inline copy, like the others.
+
+
+def test_engine_helpers_exports_role_tuning() -> None:
+    # The apply-a-resolution logic is a pure fragment builder, so it lives in the
+    # tested source of truth alongside the other engine helpers — the drift guard
+    # then holds its inline workflow copy byte-identical automatically.
+    helpers = ENGINE_HELPERS.read_text(encoding="utf-8")
+    names = _exported_const_names(helpers)
+    assert "roleTuning" in names, (
+        "engine-helpers.mjs must export `roleTuning` as the tested source of truth "
+        "for turning a resolved per-role (model, effort) into an agent opts fragment"
+    )
+
+
+def test_engine_reads_roles_from_config() -> None:
+    # The engine must read the per-role resolution off the NORMALIZED config (never
+    # the raw args), and default it to an empty object so an absent `args.roles`
+    # means every role dispatches with no override.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert "const roles = config.roles || {}" in source, (
+        "the engine must read `config.roles` (normalized) and default it to {} so "
+        "an absent resolution adds no model/effort override to any agent"
+    )
+
+
+def test_judgment_agents_carry_judgment_role_tuning() -> None:
+    # Judgment = the adversarial reviewers (per-issue verify, the targeted
+    # re-verify, and the mandatory integration review). Each must spread the
+    # judgment role's resolved tuning into its agent opts.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    for name in ("verify", "reverifyFindings", "integrationReview"):
+        block = _agent_block(source, name)
+        assert "...roleTuning(roles.judgment)" in block, (
+            f"the `{name}` agent (a judgment role) must spread "
+            f"roleTuning(roles.judgment) into its opts so its model/effort derives "
+            f"from the level"
+        )
+
+
+def test_implementer_agents_carry_implementer_role_tuning() -> None:
+    # Implementer = the code-writing agents (implement, its fix round, and the
+    # integration hotfix). Each must spread the implementer role's resolved tuning.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    for name in ("implement", "fix", "integrationHotfix"):
+        block = _agent_block(source, name)
+        assert "...roleTuning(roles.implementer)" in block, (
+            f"the `{name}` agent (an implementer role) must spread "
+            f"roleTuning(roles.implementer) into its opts"
+        )
+
+
+def test_integrate_agent_carries_mechanical_role_tuning() -> None:
+    # Integrate is a mechanical leaf — it lands a green branch, no reasoning — so it
+    # must spread the mechanical role's resolved tuning (the cheapest tier).
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrate")
+    assert "...roleTuning(roles.mechanical)" in block, (
+        "the `integrate` agent (a mechanical leaf) must spread "
+        "roleTuning(roles.mechanical) into its opts"
+    )
+
+
+def test_teardown_agent_carries_mechanical_role_tuning() -> None:
+    # The end-of-run teardown agent is the other mechanical leaf. It is dispatched
+    # inline in the teardown `finally`, not as a named const, so assert on the tail.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    tail = source[source.index("finally {") :]
+    assert "...roleTuning(roles.mechanical)" in tail, (
+        "the teardown agent (a mechanical leaf) must spread "
+        "roleTuning(roles.mechanical) into its opts"
+    )
+
+
+def test_role_tuning_is_the_only_model_effort_source() -> None:
+    # The engine stores no model-name table and applies model/effort ONLY through
+    # roleTuning — never a hardcoded `model:`/`effort:` literal in an agent's opts.
+    # A stray literal would be an un-derived override the level could not move.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert re.search(r"\bmodel:\s*'", source) is None, (
+        "no agent opts may hardcode a `model: '...'` literal — model/effort must "
+        "flow only through the derived roleTuning fragment"
+    )
+    assert re.search(r"\beffort:\s*'", source) is None, (
+        "no agent opts may hardcode an `effort: '...'` literal — model/effort must "
+        "flow only through the derived roleTuning fragment"
+    )
+
+
+# The pure fragment builder, exercised through node over a table: an absent role
+# (or field) yields an EMPTY fragment so the spread is a no-op and the agent
+# inherits the session model; a present field is copied verbatim. This is the
+# behaviour AC-2 rests on — a plan with no `roles` still runs unchanged.
+_ROLE_TUNING_HARNESS = """
+import { roleTuning } from "__MODULE_URL__";
+const out = {
+  absent: roleTuning(undefined),
+  nul: roleTuning(null),
+  non_object: roleTuning('opus'),
+  empty: roleTuning({}),
+  model_only: roleTuning({ model: 'sonnet' }),
+  effort_only: roleTuning({ effort: 'high' }),
+  both: roleTuning({ model: 'opus', effort: 'xhigh' }),
+  extra_ignored: roleTuning({ model: 'haiku', effort: 'low', mode: 'executes' }),
+};
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_role_tuning_behaviour() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    harness = _ROLE_TUNING_HARNESS.replace(
+        "__MODULE_URL__", ENGINE_HELPERS.resolve().as_uri()
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    out = json.loads(result.stdout)
+
+    # An absent, null, or non-object role degrades to an EMPTY fragment: spread into
+    # an agent's opts it adds no model/effort key, so the agent inherits the session
+    # model — the pre-dial plan runs unchanged.
+    assert out["absent"] == {}
+    assert out["nul"] == {}
+    assert out["non_object"] == {}
+    assert out["empty"] == {}
+
+    # Only the fields the orchestrator actually resolved are copied — a role that
+    # set just the model (or just the effort) overrides only that.
+    assert out["model_only"] == {"model": "sonnet"}
+    assert out["effort_only"] == {"effort": "high"}
+    assert out["both"] == {"model": "opus", "effort": "xhigh"}
+
+    # A resolution carrying extra keys (e.g. an advisory `mode`) contributes only
+    # the two opts the harness understands — model and effort, nothing else.
+    assert out["extra_ignored"] == {"model": "haiku", "effort": "low"}

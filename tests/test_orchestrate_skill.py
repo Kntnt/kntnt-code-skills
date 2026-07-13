@@ -66,6 +66,18 @@ def _build_section() -> str:
     return _section(_skill_text(), r"^###\s+4\.\s+Build", r"^###\s+5\.")
 
 
+def _arguments_section() -> str:
+    """The '## Arguments' section, up to '## The operating contract'."""
+
+    return _section(_skill_text(), r"^##\s+Arguments", r"^##\s+The operating contract")
+
+
+def _model_effort_section() -> str:
+    """The '## Model and effort' section, up to the next '## ' heading."""
+
+    return _section(_skill_text(), r"^##\s+Model and effort", r"^##\s+\S")
+
+
 # --- frontmatter guard -------------------------------------------------------
 
 
@@ -266,4 +278,105 @@ def test_prune_preserves_issue_14_teardown() -> None:
     assert "#14" in section or "feature-branch ref" in lowered, (
         "the prune step must state it leaves #14's teardown / ref preservation "
         "unchanged"
+    )
+
+
+# --- the --level ambition dial (issue #25) -----------------------------------
+
+# One semantic ambition dial — `--level`, fixed vocabulary XS|S|M|L|XL, default
+# M — makes the model and reasoning effort of every sub-agent a function of the
+# dial instead of everything inheriting the session tier. §Arguments documents the
+# dial; §Model and effort documents that the ORCHESTRATOR derives the per-role
+# (model, effort) from the level against the harness's LIVE model list (the engine
+# stores no model-name table), shows the ADR §4 ladder as an illustrative,
+# NON-durable instantiation, and states the two guardrails: only dispatchable
+# models, and judgment roles never below the session tier unless dialed down.
+
+
+def test_arguments_documents_the_level_dial() -> None:
+    section = _arguments_section()
+    lowered = section.lower()
+    # The dial itself is named as a flag.
+    assert "--level" in section, "§Arguments must document the `--level` flag"
+    # Its fixed t-shirt vocabulary is spelled out.
+    for size in ("XS", "S", "M", "L", "XL"):
+        assert re.search(rf"\b{size}\b", section), (
+            f"§Arguments must list the `{size}` level in the dial's vocabulary"
+        )
+    # The default is M.
+    assert "default" in lowered and re.search(r"default[^.]*\bm\b", lowered), (
+        "§Arguments must state the dial defaults to M"
+    )
+
+
+def test_model_effort_derives_per_role_from_the_level() -> None:
+    section = _model_effort_section()
+    lowered = section.lower()
+    # The derivation is the orchestrator's, keyed on the level, per role.
+    assert "--level" in section or "level" in lowered, (
+        "§Model and effort must tie the per-role model/effort to the level"
+    )
+    assert "orchestrator" in lowered, (
+        "§Model and effort must say the ORCHESTRATOR does the resolution — the "
+        "engine has no primitive to enumerate live models"
+    )
+    assert "per-role" in lowered or "per role" in lowered, (
+        "§Model and effort must describe a PER-ROLE (model, effort) resolution"
+    )
+    assert "effort" in lowered and "model" in lowered, (
+        "the resolution carries both a model and a reasoning effort"
+    )
+
+
+def test_model_effort_resolves_against_the_live_model_list() -> None:
+    section = _model_effort_section()
+    lowered = section.lower()
+    # The mapping is derived at runtime against the harness's live model list, so it
+    # self-updates as models change — no literal model-name table is the contract.
+    assert "live model" in lowered or "live models" in lowered, (
+        "§Model and effort must say the resolution is against the harness's LIVE "
+        "model list, so the mapping self-updates as models change"
+    )
+    assert "table" in lowered or "non-durable" in lowered or "not durable" in lowered, (
+        "§Model and effort must state the concrete mapping is not the durable "
+        "contract (no stored model-name table)"
+    )
+
+
+def test_model_effort_shows_the_illustrative_ladder() -> None:
+    section = _model_effort_section().lower()
+    # The ADR §4 ladder appears as an ILLUSTRATIVE, non-durable instantiation.
+    assert "illustrative" in section or "as of" in section, (
+        "§Model and effort must present the ladder as an illustrative instantiation"
+    )
+    # A ladder is shown: some concrete model names the derivation produces today.
+    named_models = sum(
+        1 for model in ("opus", "sonnet", "haiku", "fable") if model in section
+    )
+    assert named_models >= 2, (
+        "§Model and effort must show a concrete illustrative ladder naming the "
+        "models the derivation produces today (e.g. Opus / Sonnet / Haiku)"
+    )
+
+
+def test_model_effort_states_the_two_guardrails() -> None:
+    section = _model_effort_section().lower()
+    # Guardrail 1: only models the harness can actually dispatch are chosen.
+    assert "dispatch" in section, (
+        "§Model and effort must state guardrail 1 — only dispatchable models are "
+        "picked"
+    )
+    # Guardrail 2: judgment roles never drop below the session tier unless the
+    # maintainer explicitly dialed down.
+    assert "judgment" in section or "judgement" in section, (
+        "§Model and effort must name the judgment roles for guardrail 2"
+    )
+    assert "session" in section, (
+        "guardrail 2 pins judgment roles to the session tier as a floor"
+    )
+    assert "dial" in section and (
+        "below" in section or "never" in section or "floor" in section
+    ), (
+        "guardrail 2 must state judgment roles never drop below the session tier "
+        "unless the maintainer dialed down"
     )
