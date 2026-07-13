@@ -296,11 +296,14 @@ const buildAndVerify = async (number) => {
   }
 }
 
-// Integrate one green issue: open a PR by default, or merge with rebase when the
-// run is authorized to. Integration is the one outward-facing, irreversible step.
+// Integrate one green issue: open a PR by default, or land it on the default
+// branch with a linear rebase-then-fast-forward when the run is authorized to.
+// Integration is the one outward-facing, irreversible step.
 const integrate = async (record) => {
   const action = merge
-    ? `Rebase branch ${record.branch} onto the up-to-date default branch, then fast-forward merge it. If the rebase hits a conflict you cannot resolve safely, do NOT merge — report it as a blocker.`
+    ? `Rebase branch ${record.branch} onto the up-to-date default branch, then fast-forward the default branch to it — fast-forward ONLY. ` +
+      `Keep the integrated history LINEAR: NEVER merge the default branch INTO the feature branch, and NEVER create a merge commit on the feature branch. ` +
+      `If the rebase hits a conflict you cannot resolve safely, do NOT merge — report it as a blocker.`
     : `Open a pull request for branch ${record.branch} against the default branch. Do NOT merge.`
   const result = await agent(
     `Integrate issue #${record.number} ("${record.title}"). ${action} Report what you did in one line.`,
@@ -313,9 +316,15 @@ const integrate = async (record) => {
   return { ...record, verify: `${record.verify} | ${result.summary}` }
 }
 
-// Drive the waves: implement + verify a whole wave concurrently, then integrate
-// its green issues serially so a real file conflict is rebased, not raced. A
-// later wave depends on an earlier one, so the wave boundary is a real barrier.
+// Drive the waves in dependency order, processing issues SERIALLY and
+// integrating each green one the MOMENT it goes green — before the next issue's
+// work begins. This makes partial progress durable: each verified-green issue
+// lands on the default branch immediately (rebase-then-fast-forward), so a
+// mid-run stop — a spend-limit cut-off, a crash — leaves every issue integrated
+// so far on the default branch and nothing already-completed is lost. Ordering
+// (waves in order, issue numbers within a wave in order) still guarantees a
+// dependent issue builds on an already-integrated prerequisite; worktree
+// isolation (#14) keeps concurrent agents apart, so serial dispatch is safe.
 const verdicts = []
 const parked = []
 const waves = config.waves || []
@@ -345,24 +354,30 @@ try {
     const wave = waves[index]
     log(`Wave ${index + 1}/${waves.length}: #${wave.join(', #')}`)
 
-    // Stop opening new waves once the turn's token target is nearly spent; park
-    // the rest so the run ends with a clean report instead of a hard cut-off.
-    if (budget.total && budget.remaining() < budgetFloor) {
-      for (const number of wave) parked.push(toRecord(number, null, 'parked', 'token budget exhausted before dispatch'))
-      continue
-    }
+    // Process the wave's issues one at a time, in issue-number order, each built
+    // and — when green — integrated before the next issue's build begins.
+    for (const number of [...wave].sort((a, b) => a - b)) {
 
-    // Implement and verify every issue in the wave at once (worktree-isolated).
-    const built = (await parallel(wave.map((number) => () => buildAndVerify(number)))).filter(Boolean)
+      // Stop dispatching once the turn's token target is nearly spent; park this
+      // issue without dispatching. The budget only falls, so every later issue is
+      // parked too, and the run ends with a clean report instead of a hard cut-off.
+      if (budget.total && budget.remaining() < budgetFloor) {
+        parked.push(toRecord(number, null, 'parked', 'token budget exhausted before dispatch'))
+        continue
+      }
 
-    // Integrate the green ones in issue order; park everything else for the report.
-    for (const record of built.sort((a, b) => a.number - b.number)) {
+      // Build + independently verify this one issue (worktree-isolated).
+      const record = await buildAndVerify(number)
+      if (record == null) continue
       if (record.status !== 'done') {
         parked.push(record)
         continue
       }
 
-      // Route by the integration outcome: a clean land is done, a conflict parks.
+      // Land it NOW, before the next issue's build starts: a clean rebase-then-
+      // fast-forward is done, a conflict parks it. Because the land happens here,
+      // inline, a stop after this point still leaves this issue on the default
+      // branch — the durability property the batched design lacked.
       const integrated = await integrate(record)
       if (integrated.status === 'done') verdicts.push(integrated)
       else parked.push(integrated)
