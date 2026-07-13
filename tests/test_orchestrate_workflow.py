@@ -166,6 +166,30 @@ def test_fix_agent_is_worktree_isolated() -> None:
     )
 
 
+def test_fix_agent_reconciles_the_branch_lock() -> None:
+    # A worktree-isolated `fix` gets a FRESH worktree, but its target branch is
+    # still checked out in the implementer's (or a prior fix round's) persisted
+    # worktree, and git forbids checking out one branch in two worktrees at once.
+    # The prompt must tell `fix` to free that other worktree first, keeping the
+    # branch ref, before it takes the branch over — otherwise the checkout fails
+    # and the fixes are lost.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "fix")
+    lowered = block.lower()
+    assert "git worktree list --porcelain" in block, (
+        "the `fix` prompt must locate the other worktree holding the target branch"
+    )
+    assert "git worktree remove --force" in block, (
+        "the `fix` prompt must free the worktree that still holds the target branch"
+    )
+    assert "branch ref" in lowered, (
+        "freeing the lock must preserve the branch ref (remove keeps it)"
+    )
+    assert "git branch -d" in lowered, (
+        "the `fix` prompt must forbid deleting the branch"
+    )
+
+
 def test_implement_agent_is_worktree_isolated() -> None:
     source = WORKFLOW.read_text(encoding="utf-8")
     block = _agent_block(source, "implement")
