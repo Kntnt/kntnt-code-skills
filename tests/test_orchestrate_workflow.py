@@ -645,6 +645,195 @@ def test_verifier_agent_count_is_lower_under_lean_defaults() -> None:
     )
 
 
+# --- mandatory adversarial integration review + hotfix loop (issue #18) ------
+
+# After the wave loop and inside the teardown try, whenever the run integrated at
+# least one issue (verdicts.length > 0 — the only case a combined diff exists), a
+# MANDATORY adversarial integration review examines the COMBINED diff for
+# cross-issue defects with a verifier's full rigor (never a smoke test). Its clear
+# decision runs through blockingFindings, so a dead / not-clear / empty-findings
+# review cannot pass silently. A real finding drives a BOUNDED hotfix + re-review
+# — a code-touching agent that carries worktree isolation and the shared
+# constraints and reconciles the branch lock like `fix` — not a mere report; a
+# finding still unresolved when the cap is hit is parked, never dropped. These are
+# structural, read off the workflow source.
+
+
+def test_integration_review_agent_is_adversarial_read_only_reviewer() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrationReview")
+    lowered = block.lower()
+
+    # Adversarial over the COMBINED diff, with a per-issue verifier's rigor.
+    assert "combined diff" in lowered, (
+        "the integration review must review the COMBINED diff of the run"
+    )
+    assert "adversarial" in lowered, "the integration review must be adversarial"
+    assert "cross-issue" in lowered, (
+        "the integration review must hunt cross-issue defects a per-issue lens misses"
+    )
+    assert "smoke test" in lowered, (
+        "the integration review must state it is NOT a token smoke test"
+    )
+
+    # Read-only: it did not write the code, so it needs no worktree.
+    assert "isolation" not in block, (
+        "the integration reviewer is read-only and must not carry worktree isolation"
+    )
+
+    # Bound by the shared constraints and returns the verifier schema.
+    assert "${" + CONSTRAINTS_NAME + "}" in block, (
+        "the integration reviewer must interpolate the shared AGENT_CONSTRAINTS"
+    )
+    assert "VERDICT_SCHEMA" in block, (
+        "the integration reviewer must return the same VERDICT_SCHEMA a verifier does"
+    )
+
+
+def test_integration_review_is_gated_on_verdicts_and_uses_blocking_findings() -> None:
+    # The review runs only when the run integrated at least one issue, and its
+    # clear decision goes through the #17 blockingFindings helper so a dead or
+    # not-clear review cannot pass silently.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    guard = "if (verdicts.length > 0)"
+    assert guard in source, (
+        "the integration review must be gated on verdicts.length > 0 (a combined "
+        "diff exists only when the run integrated at least one issue)"
+    )
+    guard_idx = source.index(guard)
+    finally_idx = source.index("finally {")
+    region = source[guard_idx:finally_idx]
+    assert "integrationReview(" in region, (
+        "the integration review must be dispatched in the post-wave region"
+    )
+    assert "blockingFindings(" in region, (
+        "the integration review's clear decision must go through blockingFindings, "
+        "so a dead / clear:false / empty-findings review never passes silently"
+    )
+
+
+def test_integration_review_runs_after_wave_loop_and_before_teardown() -> None:
+    # The review sits AFTER the wave loop but INSIDE the try that pairs with the
+    # teardown finally, so teardown still fires and any hotfix worktree is torn
+    # down too.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    wave_loop_idx = source.index("for (let index = 0; index < waves.length")
+    guard_idx = source.index("if (verdicts.length > 0)")
+    finally_idx = source.index("finally {")
+    try_idx = source.rindex("try {", 0, finally_idx)
+    assert try_idx < wave_loop_idx < guard_idx < finally_idx, (
+        "the integration review must run after the wave loop and before the "
+        "teardown finally, all inside the teardown try"
+    )
+
+
+def test_integration_hotfix_is_worktree_isolated_and_carries_constraints() -> None:
+    # The hotfix is code-touching: it MUST run in its own worktree (#14 — this is
+    # the future hotfix agent that comment anticipated) and carry the shared
+    # constraints (#15 — it must not merge, push, or close).
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrationHotfix")
+    assert "isolation: 'worktree'" in block, (
+        "the integrationHotfix agent touches code and MUST carry isolation: 'worktree'"
+    )
+    assert "${" + CONSTRAINTS_NAME + "}" in block, (
+        "the integrationHotfix agent must interpolate the shared AGENT_CONSTRAINTS"
+    )
+
+
+def test_integration_hotfix_reconciles_the_branch_lock_like_fix() -> None:
+    # Like `fix`, the worktree-isolated hotfix must free any other worktree that
+    # holds its branch before checking it out, keeping the branch ref.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrationHotfix")
+    lowered = block.lower()
+    assert "git worktree list --porcelain" in block, (
+        "the integrationHotfix prompt must locate the worktree holding its branch"
+    )
+    assert "git worktree remove --force" in block, (
+        "the integrationHotfix prompt must free the worktree that holds its branch"
+    )
+    assert "branch ref" in lowered, (
+        "freeing the lock must preserve the branch ref (remove keeps it)"
+    )
+    assert "git branch -d" in lowered, (
+        "the integrationHotfix prompt must forbid deleting the branch"
+    )
+
+
+def test_integration_hotfix_loop_is_bounded_by_a_cap() -> None:
+    # The hotfix loop must be bounded by a documented cap; the hotfix branch must
+    # be tracked in builtBranches so teardown removes its worktree too.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert re.search(
+        r"const maxIntegrationRounds = config\.maxIntegrationRounds \?\?", source
+    ), "the hotfix loop must be bounded by a documented maxIntegrationRounds cap"
+
+    guard_idx = source.index("if (verdicts.length > 0)")
+    finally_idx = source.index("finally {")
+    region = source[guard_idx:finally_idx]
+    assert "integrationHotfix(" in region, (
+        "the hotfix agent must be dispatched inside the bounded integration loop"
+    )
+    assert "maxIntegrationRounds" in region, (
+        "the hotfix loop must be capped by maxIntegrationRounds"
+    )
+    assert "builtBranches.add" in region, (
+        "the hotfix branch must be tracked in builtBranches so teardown removes it"
+    )
+
+
+def test_unresolved_integration_finding_is_parked_not_dropped() -> None:
+    # When the cap is hit with the review still not clear, the unresolved finding
+    # must be recorded into the report (parked), never silently dropped.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    guard_idx = source.index("if (verdicts.length > 0)")
+    finally_idx = source.index("finally {")
+    region = source[guard_idx:finally_idx]
+    assert "parked.push(" in region, (
+        "an unresolved integration finding after the cap must be parked into the report"
+    )
+
+
+def test_integration_outcome_is_returned_to_the_caller() -> None:
+    # The returned result keeps the { verdicts, parked } shape working and adds the
+    # integration outcome so the caller/report can see it.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    ret_idx = source.rindex("return { verdicts, parked")
+    tail = source[ret_idx : ret_idx + 120]
+    assert "integration" in tail, (
+        "the final return must surface the integration outcome alongside "
+        "verdicts and parked"
+    )
+
+
+# --- graceful missing-brief fallback in the prompts (issue #18) --------------
+
+# The implement, verify, and reverify prompts must fall back cleanly when an issue
+# has no Agent Brief: if a brief exists it is authoritative, OTHERWISE the issue
+# body and its acceptance criteria are the contract. The old "treat the Agent
+# Brief as authoritative" wording (brief-only) must be gone from these prompts.
+
+
+def test_brief_prompts_use_the_fallback_wording_not_brief_only() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    for name in ("implement", "verify", "reverifyFindings"):
+        block = _agent_block(source, name)
+        lowered = block.lower()
+        assert "otherwise" in lowered, (
+            f"the `{name}` prompt must fall back with 'otherwise' when no brief exists"
+        )
+        assert "acceptance criteria" in lowered, (
+            f"the `{name}` prompt must name the acceptance criteria as the fallback"
+        )
+        assert "body" in lowered, (
+            f"the `{name}` prompt must name the issue body as the fallback contract"
+        )
+        assert 'treat the "agent brief" comment as authoritative' not in lowered, (
+            f"the `{name}` prompt must not treat the Agent Brief as the only contract"
+        )
+
+
 # --- behavioural: the extracted helpers, exercised through node --------------
 
 # The JS harness imports the extracted module by absolute file:// URL, runs the

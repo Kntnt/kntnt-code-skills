@@ -676,6 +676,112 @@ def test_build_plan_keeps_existing_top_level_fields() -> None:
         assert key in plan
 
 
+# --- missing Agent Brief fallback flag (issue #18) ----------------------------
+#
+# The plan must flag each in-scope issue that carries no Agent Brief comment, so
+# a run knows which issues are built from their body + acceptance criteria rather
+# than a posted brief. An issue HAS a brief iff any comment body contains the
+# phrase "Agent Brief" (case-insensitive). gh returns `comments` as a list of
+# {"body": ...} objects; bare strings are tolerated, and an absent `comments`
+# field is treated as no detectable brief (the engine's fallback still copes).
+
+
+def test_load_issues_flags_issue_with_agent_brief_comment() -> None:
+    raw = (
+        '[{"number":1,"title":"A","labels":[],"body":"Do a thing.",'
+        '"comments":[{"body":"## Agent Brief\\n\\nBuild the widget."}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    assert issues[0].no_brief is False
+
+
+def test_load_issues_flags_issue_with_comments_but_no_brief() -> None:
+    raw = (
+        '[{"number":2,"title":"B","labels":[],"body":"Do a thing.",'
+        '"comments":[{"body":"Just a plain discussion comment."}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    assert issues[0].no_brief is True
+
+
+def test_load_issues_treats_absent_comments_as_no_brief() -> None:
+    raw = '[{"number":3,"title":"C","labels":[],"body":"Do a thing."}]'
+    issues = orchestrate.load_issues(raw)
+    assert issues[0].no_brief is True
+
+
+def test_load_issues_tolerates_bare_string_comments() -> None:
+    raw = (
+        '[{"number":4,"title":"D","labels":[],"body":"x",'
+        '"comments":["Agent Brief: build it"]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    assert issues[0].no_brief is False
+
+
+def test_load_issues_brief_detection_is_case_insensitive() -> None:
+    raw = (
+        '[{"number":5,"title":"E","labels":[],"body":"x",'
+        '"comments":[{"body":"agent brief follows below"}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    assert issues[0].no_brief is False
+
+
+def test_build_plan_surfaces_no_brief_per_issue_and_top_level() -> None:
+    raw = (
+        '[{"number":1,"title":"Has brief","labels":[],"body":"x",'
+        '"comments":[{"body":"Agent Brief here"}]},'
+        '{"number":2,"title":"No brief","labels":[],"body":"y",'
+        '"comments":[{"body":"just chatter"}]},'
+        '{"number":3,"title":"No comments","labels":[],"body":"z"}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+
+    # Per-issue flag: false only for the issue that actually carries a brief.
+    by_number = {i["number"]: i for i in plan["issues"]}
+    assert by_number[1]["no_brief"] is False
+    assert by_number[2]["no_brief"] is True
+    assert by_number[3]["no_brief"] is True
+
+    # Convenience top-level list of the numbers lacking a brief, sorted.
+    assert plan["issues_without_brief"] == [2, 3]
+
+
+def test_build_plan_no_brief_list_empty_when_every_issue_has_a_brief() -> None:
+    raw = (
+        '[{"number":1,"title":"A","labels":[],"body":"x",'
+        '"comments":[{"body":"Agent Brief: do it"}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    assert plan["issues_without_brief"] == []
+    assert plan["issues"][0]["no_brief"] is False
+
+
+def test_build_plan_keeps_every_prior_field_with_no_brief_added() -> None:
+    # The no_brief additions must not drop any pre-existing plan field the engine
+    # or the report consume.
+    raw = '[{"number":1,"title":"A","labels":[],"body":"Standalone."}]'
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    for key in (
+        "scope_label",
+        "issues",
+        "waves",
+        "dependency_edges",
+        "merge_required",
+        "merge_note",
+        "soft_notes",
+        "warnings",
+        "external_dependencies",
+        "excluded",
+        "issues_without_brief",
+    ):
+        assert key in plan
+
+
 # --- exclude_by_label ---------------------------------------------------------
 
 
