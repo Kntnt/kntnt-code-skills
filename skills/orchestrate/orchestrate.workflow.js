@@ -98,11 +98,12 @@ const INTEGRATE_SCHEMA = {
   },
 }
 
-// `normalizeArgs`, `planIsEmpty`, and `blockingFindings` are kept inline as plain
-// internal `const`s because the Workflow harness rejects any top-level `export`
-// beyond the single leading `export const meta` and forbids a top-level `import`
-// — so this script cannot import them. Their tested source of truth is the
-// byte-for-byte identical `lib/orchestrate/engine-helpers.mjs`; keep the two in sync.
+// `normalizeArgs`, `planIsEmpty`, `blockingFindings`, and `unlandedPrerequisites`
+// are kept inline as plain internal `const`s because the Workflow harness rejects
+// any top-level `export` beyond the single leading `export const meta` and forbids
+// a top-level `import` — so this script cannot import them. Their tested source of
+// truth is the byte-for-byte identical `lib/orchestrate/engine-helpers.mjs`; keep
+// the two in sync.
 
 /**
  * Normalize the raw `args` the Workflow harness delivers into the single config
@@ -175,6 +176,35 @@ const blockingFindings = (verdicts) => {
       ? findings
       : [{ title: 'unresolved', detail: verdict.summary || 'reviewer did not clear the change' }]
   })
+
+}
+
+/**
+ * The in-scope prerequisites of an issue that have NOT yet landed — the reason to
+ * skip (park) it rather than build it on an incomplete base. A dependent must
+ * build on a base that already contains its prerequisites; when a prerequisite
+ * parked, blocked, or failed to integrate it is absent from `landed`, so building
+ * the dependent would sit it on a base missing that work. Only IN-SCOPE
+ * prerequisites count: a `blocked_by` entry outside this run's plan is assumed
+ * already present on the default branch and never blocks. Returning the unlanded
+ * numbers (not a bare boolean) lets the caller name them in the park reason and
+ * drives the cascade — a skipped issue never enters `landed`, so its own
+ * dependents find it unlanded here and skip in turn, transitively.
+ *
+ * @param {number[]|undefined} blockedBy The issue's `blocked_by` numbers, in- and
+ *   out-of-scope alike.
+ * @param {{has: (n: number) => boolean}} inScope Membership of this run's plan;
+ *   only `.has` is used, so the engine's `issuesByNumber` Map serves directly.
+ * @param {Set<number>} landed The numbers of the issues that have integrated.
+ * @returns {number[]} The in-scope prerequisites still missing from `landed`;
+ *   empty when the issue is clear to build.
+ */
+const unlandedPrerequisites = (blockedBy, inScope, landed) => {
+
+  // Keep only the blockers that are BOTH in this run's scope and not yet landed.
+  // An out-of-scope blocker is assumed already on the default branch; an in-scope
+  // one that has not integrated would leave this issue on an incomplete base.
+  return (blockedBy || []).filter((prereq) => inScope.has(prereq) && !landed.has(prereq))
 
 }
 
@@ -463,14 +493,26 @@ const integrationHotfix = (branch, findings) =>
 // lands on the default branch immediately (rebase-then-fast-forward), so a
 // mid-run stop — a spend-limit cut-off, a crash — leaves every issue integrated
 // so far on the default branch and nothing already-completed is lost. Processing
-// the waves IN ORDER is what guarantees a dependent issue builds on an
-// already-integrated prerequisite (a later wave depends on an earlier one); the
-// within-wave issue-number sort is only deterministic ordering, since a wave's
-// issues are independent by construction. Worktree isolation (#14) keeps
-// concurrent agents apart, so serial dispatch is safe.
+// the waves IN ORDER puts a dependent's build AFTER its prerequisite's, but order
+// alone is not enough: if the prerequisite parked, blocked, or failed to
+// integrate, the base still lacks it. So the loop also honours wave OUTCOME —
+// before building an issue it skips (parks) it when an in-scope prerequisite has
+// not landed (see `landed` and `unlandedPrerequisites` below). The within-wave
+// issue-number sort is only deterministic ordering, since a wave's issues are
+// independent by construction. Worktree isolation (#14) keeps concurrent agents
+// apart, so serial dispatch is safe.
 const verdicts = []
 const parked = []
 const waves = config.waves || []
+
+// The issue numbers that actually LANDED — integrated onto the default branch (or
+// opened as a PR in the conservative mode) after passing verification. A dependent
+// must build on a base that already contains its prerequisites, so this set is
+// consulted before each build: an issue with an unlanded in-scope prerequisite is
+// skipped rather than built on an incomplete base. Only a successful integration
+// adds to it, so a parked/blocked/failed issue never counts as landed — which is
+// exactly what cascades the skip to everything downstream of it.
+const landed = new Set()
 
 // The outcome of the mandatory final integration review, surfaced on the return
 // so the caller/report can see whether the combined diff cleared. Stays null
@@ -514,6 +556,20 @@ try {
         continue
       }
 
+      // Skip (park) this issue when one of its in-scope prerequisites did not land,
+      // rather than build it on a base missing that work. The reason NAMES the
+      // unlanded prerequisite and is carried in `blockers` — the field the report
+      // surfaces for a parked issue (it shows `verify` only for a done one) — so the
+      // report points at the real cause. Because a skipped issue is never added to
+      // `landed`, this same check parks every downstream dependent in turn — the
+      // transitive cascade.
+      const missing = unlandedPrerequisites(issuesByNumber.get(number)?.blocked_by, issuesByNumber, landed)
+      if (missing.length > 0) {
+        const reason = `prerequisite did not land: ${missing.map((prereq) => `#${prereq}`).join(', ')}`
+        parked.push({ ...toRecord(number, null, 'parked', reason), blockers: [reason] })
+        continue
+      }
+
       // Build + independently verify this one issue (worktree-isolated).
       const record = await buildAndVerify(number)
 
@@ -534,8 +590,16 @@ try {
       // inline, a stop after this point still leaves this issue on the default
       // branch — the durability property the batched design lacked.
       const integrated = await integrate(record)
-      if (integrated.status === 'done') verdicts.push(integrated)
-      else parked.push(integrated)
+
+      // Record the outcome, and on a successful land mark this issue as landed so
+      // its dependents may build on it. A parked integration is NOT added to
+      // `landed`, which cascades the skip to everything that depends on it.
+      if (integrated.status === 'done') {
+        verdicts.push(integrated)
+        landed.add(integrated.number)
+      } else {
+        parked.push(integrated)
+      }
     }
   }
 

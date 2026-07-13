@@ -1163,7 +1163,10 @@ def test_prerequisite_skip_is_consulted_before_the_build_and_parks() -> None:
 
 def test_prerequisite_park_reason_names_the_unlanded_prerequisite() -> None:
     # The park reason must NAME the unlanded prerequisite(s), not merely say the
-    # issue was skipped, so the report points at the real cause.
+    # issue was skipped, so the report points at the real cause. Crucially it must
+    # land in the record's `blockers` — the ONLY field render_report surfaces for a
+    # parked issue (it shows `verify` only for a done issue), so a reason placed
+    # solely in `verify` would render as "no reason recorded".
     source = WORKFLOW.read_text(encoding="utf-8")
     prereq_idx = source.index("unlandedPrerequisites(", source.index("for (const number of"))
     build_idx = source.index("buildAndVerify(number)")
@@ -1173,6 +1176,10 @@ def test_prerequisite_park_reason_names_the_unlanded_prerequisite() -> None:
     )
     assert "missing.map(" in region or "${missing" in region, (
         "the park reason must interpolate the unlanded prerequisite numbers"
+    )
+    assert "blockers:" in region, (
+        "the naming reason must be placed in the record's `blockers` field, which "
+        "is where render_report surfaces a parked issue's reason"
     )
 
 

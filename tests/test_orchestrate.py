@@ -954,6 +954,32 @@ def test_render_report_leads_with_done_and_dedupes_human_followups() -> None:
     assert "flaky a11y assertion" in report
 
 
+def test_render_report_surfaces_a_prerequisite_park_reason() -> None:
+    # Issue #20: an issue skipped because an in-scope prerequisite did not land is
+    # parked with a reason NAMING that prerequisite. The engine emits that reason in
+    # the record's `blockers` (the field render_report shows for a parked issue), so
+    # the report must surface it rather than "no reason recorded".
+    verdicts = [
+        Verdict(
+            12,
+            "Dependent",
+            "parked",
+            "",
+            "",
+            [],
+            [],
+            ["prerequisite did not land: #11"],
+        ),
+    ]
+    report = orchestrate.render_report(verdicts)
+
+    assert "#12 Dependent (parked) — prerequisite did not land: #11" in report, (
+        "a prerequisite-parked issue must appear in the report naming the "
+        "unlanded prerequisite, not 'no reason recorded'"
+    )
+    assert "no reason recorded" not in report
+
+
 def test_render_report_shows_none_for_empty_sections() -> None:
     report = orchestrate.render_report(
         [Verdict(1, "A", "done", "green", "clear", [], [], [])]
