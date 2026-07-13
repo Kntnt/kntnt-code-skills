@@ -66,7 +66,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, TypedDict
 
 # Canonical order. Later entries override earlier ones on points where they
 # differ. The order is also the precedence order written into AGENTS.md's
@@ -90,7 +90,17 @@ CANONICAL_ORDER: list[str] = [
 #   requires   — modules that must be read first because this one overrides or
 #                builds on them; drives the prerequisite header and the
 #                prerequisite closure. Empty for standalone modules.
-MODULE_META: dict[str, dict[str, object]] = {
+class ModuleMeta(TypedDict):
+    """The wiring for one module: its H1 label, its read-when phrase, and the
+    modules it requires (read first because this one overrides or builds on
+    them)."""
+
+    label: str
+    read_when: str
+    requires: list[str]
+
+
+MODULE_META: dict[str, ModuleMeta] = {
     "general": {"label": "General", "read_when": "any code", "requires": []},
     "php": {"label": "PHP", "read_when": "PHP", "requires": []},
     "wordpress": {
