@@ -12,17 +12,22 @@ Run with: `uv run --with pytest pytest -q`
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
+
+# The path to the standalone script under test, used both to load it by path and
+# to exercise its real CLI through a subprocess (the `plan` argument parsing).
+SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "orchestrate.py"
 
 # Load scripts/orchestrate.py by path, since it is a standalone script rather
 # than an importable package. Register it in sys.modules before executing so
 # its @dataclass decorators can resolve their own module during class creation.
-_spec = importlib.util.spec_from_file_location(
-    "orchestrate", Path(__file__).resolve().parent.parent / "scripts" / "orchestrate.py"
-)
+_spec = importlib.util.spec_from_file_location("orchestrate", SCRIPT)
 assert _spec is not None and _spec.loader is not None
 orchestrate = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = orchestrate
@@ -986,3 +991,231 @@ def test_render_report_shows_none_for_empty_sections() -> None:
     )
     assert "## Remaining for a human\n\n- None." in report
     assert "## Blockers and parked issues\n\n- None." in report
+
+
+# --- verify rigor from --level + per-issue Risk (issue #26) --------------------
+#
+# The planner derives the verify-panel rigor (per-issue lens count) and the
+# run-level fix-round cap from the `--level` dial and each issue's explicit risk,
+# per ADR-0001 §5-§6. The §5 baseline table: XS/S/M -> 1 lens, 1 fix round;
+# L -> 2 lenses, 2 rounds; XL -> 3 lenses, 2 rounds. Per-issue risk escalates on
+# top (escalate-only, highest signal wins); an inviolable floor of >=1 lens and
+# 1 fix round always holds; `0` fix rounds is reachable only via an explicit
+# `--max-fix-rounds=0`. These tests assert on the emitted plan JSON.
+
+
+def _plan(
+    body: str,
+    *,
+    number: int = 1,
+    labels: list[str] | None = None,
+    level: str = "M",
+    max_fix_rounds: int | None = None,
+) -> dict[str, Any]:
+    """Load a single-issue plan from a body and return the built plan JSON. The
+    level and fix-round override thread straight through to build_plan."""
+
+    entry = {
+        "number": number,
+        "title": f"Issue {number}",
+        "labels": labels or [],
+        "body": body,
+    }
+    issues = orchestrate.load_issues(json.dumps([entry]))
+    return orchestrate.build_plan(
+        issues, [], "ready-for-agent", level=level, max_fix_rounds=max_fix_rounds
+    )
+
+
+def _lenses(plan: dict[str, Any], number: int = 1) -> list[Any]:
+    """The lens list emitted for one issue in a plan."""
+
+    return next(i["lenses"] for i in plan["issues"] if i["number"] == number)
+
+
+# AC-1: level -> baseline lookup for lenses and the run-level fix-round cap.
+
+
+@pytest.mark.parametrize("level", ["XS", "S", "M"])
+def test_build_plan_low_levels_emit_one_lens_and_one_fix_round(level: str) -> None:
+    plan = _plan("Standalone.", level=level)
+    assert len(_lenses(plan)) == 1
+    assert plan["maxFixRounds"] == 1
+
+
+def test_build_plan_level_l_emits_two_lenses_and_two_fix_rounds() -> None:
+    plan = _plan("Standalone.", level="L")
+    assert len(_lenses(plan)) == 2
+    assert plan["maxFixRounds"] == 2
+
+
+def test_build_plan_level_xl_emits_three_lenses_and_two_fix_rounds() -> None:
+    plan = _plan("Standalone.", level="XL")
+    assert len(_lenses(plan)) == 3
+    assert plan["maxFixRounds"] == 2
+
+
+def test_build_plan_defaults_to_the_m_baseline() -> None:
+    # No level argument at all resolves to the M baseline (one lens, one round).
+    plan = _plan("Standalone.")
+    assert len(_lenses(plan)) == 1
+    assert plan["maxFixRounds"] == 1
+
+
+def test_plan_cli_accepts_level_and_emits_rigor() -> None:
+    # AC-1: the real CLI accepts `--level` and emits the derived rigor.
+    raw = '[{"number":7,"title":"A","labels":[],"body":"Standalone."}]'
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "plan", "--level=L"],
+        input=raw,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    plan = json.loads(result.stdout)
+    assert plan["level"] == "L"
+    assert plan["maxFixRounds"] == 2
+    assert len(plan["issues"][0]["lenses"]) == 2
+
+
+# AC-2: the `Risk:` marker is parsed and escalates that issue's rigor, escalate-only.
+
+
+def test_build_plan_risk_high_marker_escalates_lenses() -> None:
+    plan = _plan("Agent Brief (Risk: high): do the risky thing.", level="M")
+    assert len(_lenses(plan)) == 3
+
+
+def test_build_plan_risk_medium_marker_escalates_lenses() -> None:
+    plan = _plan("Risk: medium\n\nBuild it.", level="M")
+    assert len(_lenses(plan)) == 2
+
+
+def test_build_plan_risk_high_marker_is_a_floor_even_at_xs() -> None:
+    # An explicit high is a floor the level can never undercut: XS + Risk: high
+    # yields the XL-tier rigor (three lenses), not the XS baseline of one.
+    plan = _plan("Risk: high — irreversible delete path.", level="XS")
+    assert len(_lenses(plan)) == 3
+
+
+def test_build_plan_risk_high_marker_escalates_run_level_fix_rounds() -> None:
+    # Rigor is the whole §5 row: a high-risk issue lifts the run-level cap to 2.
+    plan = _plan("Risk: high.", level="XS")
+    assert plan["maxFixRounds"] == 2
+
+
+def test_build_plan_bold_wrapped_risk_marker_is_parsed() -> None:
+    plan = _plan("**Risk:** high\n\nSensitive.", level="XS")
+    assert len(_lenses(plan)) == 3
+
+
+def test_build_plan_risk_marker_in_agent_brief_comment_is_parsed() -> None:
+    # The marker lives in the Agent Brief comment, not the body.
+    raw = (
+        '[{"number":1,"title":"A","labels":[],"body":"Context only.",'
+        '"comments":[{"body":"## Agent Brief\\n\\nRisk: high\\n\\nBuild it."}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent", level="XS")
+    assert len(_lenses(plan)) == 3
+
+
+def test_build_plan_risk_low_marker_does_not_lower_below_level_baseline() -> None:
+    # An explicit low never pulls rigor below the level's own baseline floor.
+    plan = _plan("Risk: low\n\nRoutine.", level="L")
+    assert len(_lenses(plan)) == 2
+    assert plan["maxFixRounds"] == 2
+
+
+def test_build_plan_risk_high_label_escalates_lenses() -> None:
+    # The optional `risk:*` label is an explicit hazard channel too, escalate-only.
+    plan = _plan("Standalone.", labels=["risk:high"], level="XS")
+    assert len(_lenses(plan)) == 3
+
+
+# AC-3: the inviolable floor -- >=1 lens even at XS, fix-round floor 1, `0` only
+# via an explicit override.
+
+
+def test_build_plan_xs_still_emits_at_least_one_lens() -> None:
+    plan = _plan("Trivial.", level="XS")
+    assert len(_lenses(plan)) >= 1
+
+
+@pytest.mark.parametrize("level", ["XS", "S", "M", "L", "XL"])
+def test_build_plan_no_level_defaults_to_zero_fix_rounds(level: str) -> None:
+    plan = _plan("Standalone.", level=level)
+    assert plan["maxFixRounds"] >= 1
+
+
+def test_build_plan_zero_fix_rounds_only_via_explicit_override() -> None:
+    plan = _plan("Standalone.", level="XS", max_fix_rounds=0)
+    assert plan["maxFixRounds"] == 0
+
+
+def test_build_plan_explicit_override_replaces_the_derived_cap() -> None:
+    # An explicit cap wins over the level-derived one (here below the XL default).
+    plan = _plan("Standalone.", level="XL", max_fix_rounds=1)
+    assert plan["maxFixRounds"] == 1
+
+
+def test_plan_cli_rejects_a_negative_max_fix_rounds() -> None:
+    raw = '[{"number":1,"title":"A","labels":[],"body":"x"}]'
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "plan", "--max-fix-rounds=-1"],
+        input=raw,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+
+
+# AC-4: an explicit low that disagrees with a planner-seen hazard (a `risk:*`
+# label) is surfaced via the warnings channel and never silently applied.
+
+
+def test_build_plan_warns_when_low_marker_disagrees_with_hazard_label() -> None:
+    plan = _plan("Risk: low\n\nLooks routine.", labels=["risk:high"], level="XS")
+    assert any("1" in warning and "low" in warning for warning in plan["warnings"])
+
+
+def test_build_plan_low_marker_vs_hazard_label_escalates_not_downgrades() -> None:
+    # The disagreement is not silently applied: the hazard escalates the rigor.
+    plan = _plan("Risk: low\n\nLooks routine.", labels=["risk:high"], level="XS")
+    assert len(_lenses(plan)) == 3
+
+
+def test_build_plan_no_disagreement_warning_when_low_marker_stands_alone() -> None:
+    plan = _plan("Risk: low\n\nRoutine.", level="M")
+    assert plan["warnings"] == []
+
+
+# AC-5: round up on uncertainty -- absent or ambiguous risk resolves to the level
+# baseline, never below it.
+
+
+def test_build_plan_absent_risk_resolves_to_level_baseline() -> None:
+    plan = _plan("No marker here at all.", level="L")
+    assert len(_lenses(plan)) == 2
+
+
+def test_build_plan_ambiguous_risk_marker_resolves_to_baseline() -> None:
+    # A `Risk:` word that is not one of high/medium/low is not a signal: the issue
+    # rounds up to the level baseline rather than below it.
+    plan = _plan("Risk: elevated maybe\n\nUnclear.", level="M")
+    assert len(_lenses(plan)) == 1
+    assert plan["maxFixRounds"] == 1
+
+
+def test_build_plan_run_level_cap_is_the_max_across_issues() -> None:
+    # The run-level cap accommodates the riskiest issue: a single Risk: high issue
+    # at XS lifts the shared cap to 2 even though the other issue stays baseline.
+    raw = (
+        '[{"number":1,"title":"A","labels":[],"body":"Routine."},'
+        '{"number":2,"title":"B","labels":[],"body":"Risk: high — delete path."}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent", level="XS")
+    assert plan["maxFixRounds"] == 2
+    assert len(_lenses(plan, 1)) == 1
+    assert len(_lenses(plan, 2)) == 3
