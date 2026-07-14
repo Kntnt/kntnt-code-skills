@@ -120,8 +120,11 @@ const INTEGRATE_SCHEMA = {
  *
  * @param {string|object|undefined} raw The harness-delivered run config: a JSON
  *   string, an already-parsed object, or nothing.
- * @returns {object} The normalized config the engine consumes:
- *   `{ waves, issues, merge, maxFixRounds, standardsPath, budgetFloor }`.
+ * @returns {object} The normalized config the engine reads every field off — the
+ *   full `args` shape: `waves`, `issues` (each with an optional per-issue `plan`
+ *   overlay), `merge`, `maxFixRounds`, `maxIntegrationRounds`, `standardsPath`,
+ *   `budgetFloor`, `implementerMode`, and `roles`. `normalizeArgs` is a pass-through,
+ *   so it neither adds nor drops fields.
  */
 const normalizeArgs = (raw) => {
 
@@ -381,14 +384,27 @@ const IMPLEMENTER_MODE_FRAMINGS = {
 // bind to the acceptance criteria, never to this plan. Called from `implement` ONLY.
 const planOverlay = (mode, plan) => {
 
-  // Select the fixed stance framing by the EXPLICIT run-level marker; an absent or
-  // unrecognized mode selects nothing, so no framing reaches the prompt.
-  const framing = IMPLEMENTER_MODE_FRAMINGS[mode]
-  const framingLine = framing ? `How to treat the plan below: ${framing}\n` : ''
-
-  // Layer the per-issue plan as HOW-only guidance; an absent or blank plan adds
-  // nothing, so the plan half degrades on its own.
+  // Resolve the plan half first: an absent or blank plan contributes no plan text,
+  // so the plan half degrades on its own. Computed before the framing line because
+  // the framing's "plan below" pointer is emitted only when a plan block follows.
   const hasPlan = typeof plan === 'string' && plan.trim().length > 0
+
+  // Select the fixed stance framing by the EXPLICIT run-level marker, hardened against
+  // prototype-key collisions: a `mode` colliding with an Object.prototype member
+  // ('constructor', 'toString', '__proto__', …) resolves to a truthy INHERITED
+  // non-string on this plain object, so require an actual framing STRING before it can
+  // reach the prompt — an absent, unrecognized, or colliding mode adds no framing.
+  const framing = IMPLEMENTER_MODE_FRAMINGS[mode]
+  const hasFraming = typeof framing === 'string'
+
+  // Emit the stance framing (ADR-0002 §4). The "plan below" pointer is added ONLY when
+  // a plan block follows; with a mode but no plan (autonomous at XL) the framing stands
+  // alone and never dangles a reference to a plan that was not emitted.
+  const framingPrefix = hasPlan ? 'How to treat the plan below: ' : ''
+  const framingLine = hasFraming ? `${framingPrefix}${framing}\n` : ''
+
+  // Layer the per-issue plan as HOW-only guidance; the Agent Brief (or issue body)
+  // stays the authoritative WHAT and the tests bind to the acceptance criteria.
   const planBlock = hasPlan
     ? `Implementation plan — level-scaled guidance on HOW to build this, authored up front. The Agent Brief (or issue body) above remains the authoritative WHAT, and your tests bind to the acceptance criteria, never to this plan:\n${plan}\n`
     : ''

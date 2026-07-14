@@ -1764,11 +1764,12 @@ def _extract_braced_const(source: str, name: str) -> str:
     object ``{ … }`` or a block-bodied arrow ``(…) => { … }``.
 
     Walks balanced ``{}`` from the first ``{`` after the ``const``, skipping string
-    literals (single, double, backtick, with backslash escapes) so a brace inside a
-    quoted string or a ``${…}`` template interpolation can never end the scan
-    early. Handles what ``_extract_def`` (which does not skip strings) and
+    literals (single, double, backtick, with backslash escapes) AND ``//`` line /
+    ``/* */`` block comments, so a brace — or a stray apostrophe or quote — inside a
+    quoted string, a ``${…}`` template interpolation, or a comment can never end the
+    scan early. Handles what ``_extract_def`` (no string/comment skip) and
     ``_extract_arrow_object_def`` (parenthesised object body) do not: a
-    template-literal-bearing arrow body and an object-literal const."""
+    template-literal-and-comment-bearing arrow body and an object-literal const."""
 
     match = re.search(rf"^const {re.escape(name)} = ", source, flags=re.MULTILINE)
     assert match is not None, f"`const {name} =` not found"
@@ -1785,7 +1786,16 @@ def _extract_braced_const(source: str, name: str) -> str:
                 continue
             if char == in_string:
                 in_string = None
-        elif char in "'\"`":
+            index += 1
+            continue
+        pair = source[index : index + 2]
+        if pair == "//":
+            index = source.index("\n", index) + 1
+            continue
+        if pair == "/*":
+            index = source.index("*/", index) + 2
+            continue
+        if char in "'\"`":
             in_string = char
         elif char == "{":
             depth += 1
