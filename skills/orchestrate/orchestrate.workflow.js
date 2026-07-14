@@ -20,12 +20,13 @@
  * `args` shape:
  *   {
  *     waves:   number[][],                       // dispatch order; one wave runs concurrently
- *     issues:  { number, title, blocked_by }[],  // from orchestrate.py plan
+ *     issues:  { number, title, blocked_by, plan? }[],  // from orchestrate.py plan; plan = ADR-0002 per-issue "how" overlay, absent at XL / in a pre-plan run
  *     standardsPath?: string,                    // coding-standard directory the agents read
  *     maxFixRounds?: number,                     // fix<->verify cap per issue (default 1)
  *     maxIntegrationRounds?: number,             // integration-review hotfix cap (default maxFixRounds)
  *     merge?:  boolean,                          // integrate to the default branch, else open PRs
  *     budgetFloor?: number,                      // stop opening waves below this many tokens left
+ *     implementerMode?: 'execute'|'balanced'|'autonomous', // ADR-0002 §4 run-level marker; absent → engine adds no mode framing (today's behaviour)
  *     roles?:  {                                 // per-role (model, effort) the orchestrator
  *       judgment?:    { model?, effort? },       //   resolved from --level; absent → session model
  *       implementer?: { model?, effort? },
@@ -281,6 +282,14 @@ const budgetFloor = config.budgetFloor ?? 60000
 // agent inherits the session model — the run is unchanged.
 const roles = config.roles || {}
 
+// The run-level sliding-implementer marker the orchestrator resolved from the
+// `--level` dial (ADR-0002 §4): `execute` at XS/S, `balanced` at M, `autonomous` at
+// L/XL. It is EXPLICIT, never inferred from whether a plan string is present, and it
+// selects the fixed framing the `implement` agent is told to treat its plan with.
+// Absent (a pre-ADR-0002 or hand-launched plan) leaves it undefined, so no framing
+// is added and the implement prompt degrades to exactly today's behaviour.
+const implementerMode = config.implementerMode
+
 // Title lookup for logging and report records.
 const titleOf = (number) => issuesByNumber.get(number)?.title || `issue ${number}`
 
@@ -347,13 +356,58 @@ const AGENT_CONSTRAINTS = `Shared-state rules — these bind you; obey them with
   `- NEVER run \`git reset --hard <ref>\` while HEAD is on a feature branch — it silently discards that branch's commits.\n` +
   `- The ONE safe way to reach a clean state: if a rebase or merge is in progress, abort it (\`git rebase --abort\` / \`git merge --abort\`); then \`git checkout -f <the integration base>\` and discard only working-tree changes to TRACKED files with \`git checkout -- .\`. Never delete untracked files.`
 
-// Dispatch one implementer on its own worktree-isolated branch, test-first.
+// The three fixed prompt framings that slide how the `implement` agent is told to
+// TREAT its plan — from mechanical execution of a settled recipe at the low end of
+// the `--level` dial to autonomous problem-solving at the high end (ADR-0002 §4).
+// Fixed engine text keyed by the run-level `implementerMode` marker the orchestrator
+// resolves and passes in (`XS, S → execute`, `M → balanced`, `L, XL → autonomous`),
+// modeled the way DEFAULT_LENSES and AGENT_CONSTRAINTS are — inline, so a structural
+// test can assert each mode selects its own framing. The marker is EXPLICIT, never
+// inferred from a plan string's presence; the framing applies to `implement` ONLY,
+// since `fix` is finding-driven and `integrationHotfix` is cross-issue.
+const IMPLEMENTER_MODE_FRAMINGS = {
+  execute: 'This plan is the settled *how*. Follow it test-first. Deviate only if it is demonstrably wrong, and record why. Do not re-derive the approach.',
+  balanced: 'Follow the spec\'s shape, fill in the routine *how* yourself, and respect the decisions it calls out.',
+  autonomous: 'Here are the goals and constraints (or, at `XL`, the brief). Reason out the *how* yourself, test-first; the tests are your guide. You own the approach.',
+}
+
+// Compose ADR-0002's additive "how" overlay for the `implement` prompt: the plan's
+// stance framing (selected from the fixed IMPLEMENTER_MODE_FRAMINGS by the run-level
+// marker) and the per-issue plan text, each degrading cleanly and INDEPENDENTLY to
+// nothing when its field is absent. An absent or unrecognized mode contributes no
+// framing; an absent or blank plan contributes no plan text; so a legacy or
+// hand-launched run (neither field) yields the empty string and the implement prompt
+// is byte-for-byte today's. The brief stays the authoritative WHAT and the tests
+// bind to the acceptance criteria, never to this plan. Called from `implement` ONLY.
+const planOverlay = (mode, plan) => {
+
+  // Select the fixed stance framing by the EXPLICIT run-level marker; an absent or
+  // unrecognized mode selects nothing, so no framing reaches the prompt.
+  const framing = IMPLEMENTER_MODE_FRAMINGS[mode]
+  const framingLine = framing ? `How to treat the plan below: ${framing}\n` : ''
+
+  // Layer the per-issue plan as HOW-only guidance; an absent or blank plan adds
+  // nothing, so the plan half degrades on its own.
+  const hasPlan = typeof plan === 'string' && plan.trim().length > 0
+  const planBlock = hasPlan
+    ? `Implementation plan — level-scaled guidance on HOW to build this, authored up front. The Agent Brief (or issue body) above remains the authoritative WHAT, and your tests bind to the acceptance criteria, never to this plan:\n${plan}\n`
+    : ''
+
+  return framingLine + planBlock
+
+}
+
+// Dispatch one implementer on its own worktree-isolated branch, test-first. It
+// consumes ADR-0002's additive "how" overlay — the run-level mode framing plus the
+// per-issue plan — layered onto the contract; when neither field is present the
+// overlay is empty and this is exactly today's prompt.
 const implement = (number) =>
   agent(
     `Implement GitHub issue #${number} ("${titleOf(number)}") test-first.\n` +
       `Read its contract first: run \`gh issue view ${number} --comments\`. If an Agent Brief comment exists it is authoritative; OTHERWISE the issue body and its acceptance criteria ARE the contract — build from them and never stall for a missing brief.\n` +
       `Read and obey ${standardInstruction}.\n` +
       `${AGENT_CONSTRAINTS}\n` +
+      `${planOverlay(implementerMode, issuesByNumber.get(number)?.plan)}` +
       `Work on a fresh branch off the current integration base. Demonstrate the red — a failing-test commit — before the green, because a test never seen to fail is of unknown value. Refactor only once green.\n` +
       `Automate everything meaningfully automatable, then run the project's full gate suite (discover it from the project) and report the REAL result.\n` +
       `Resolve genuine ambiguity by the most reasonable assumption and record it; never pause to ask. The one exception is work that cannot proceed without contradicting a settled decision (an ADR or design doc): set status "blocked", record the blocker, and stop only this issue.`,
