@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.11.0] – 2026-07-14
+
 ### Added
 
 - **`/orchestrate` gains the `--level` ambition dial, and every sub-agent's model and reasoning effort now derives from it instead of inheriting the session tier.** The first real runs were slow and expensive because the engine set no model or effort per agent, so even purely mechanical leaves ran on the strongest tier — this ends "everything runs on Opus" (ADR-0001 §1–§4). The dial has the fixed vocabulary `XS | S | M | L | XL` (default `M`). Because the engine is a deterministic Workflow script with no primitive to enumerate live models, the **orchestrator** (the session-model planning pass) resolves `--level` into a per-role `(model, effort)` against the harness's live model list and passes it to the engine as `args.roles = { judgment, implementer, mechanical }`; the engine stores no model-name table and only applies what it is handed. In `skills/orchestrate/orchestrate.workflow.js` a new pure `roleTuning` helper (tested source of truth in `lib/orchestrate/engine-helpers.mjs`, byte-identical inline copy drift-guarded) turns one role's resolution into an `agent()` opts fragment — only the fields the orchestrator set are copied, and an absent role or field yields an empty fragment, so the agent inherits the session model and a plan produced before the dial existed still runs unchanged. The engine reads `config.roles` (default `{}`) and spreads the fragment into each sub-agent: judgment onto `verify` / `reverifyFindings` / `integrationReview`, implementer onto `implement` / `fix` / `integrationHotfix`, and mechanical onto `integrate` and the teardown agent. `skills/orchestrate/SKILL.md` documents the dial in §Arguments and, in §Model and effort, the orchestrator's per-role derivation against the live model list, the illustrative non-durable ladder (ADR §4), and the two guardrails (only dispatchable models; judgment roles never below the session tier unless the maintainer dialed down). `tests/test_orchestrate_workflow.py` guards the exported/drift-guarded helper, the `config.roles` read, each role's spread, and the absence of any hardcoded model/effort literal, plus a behavioural node run of `roleTuning` over a table; `tests/test_orchestrate_skill.py` guards the §Arguments dial and the §Model-and-effort derivation, ladder, and guardrails structurally.
@@ -207,7 +209,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.11.0
 [0.10.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.10.0
 [0.9.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.9.0
 [0.8.3]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.8.3
