@@ -1738,3 +1738,303 @@ def test_role_tuning_behaviour() -> None:
     # A resolution carrying extra keys (e.g. an advisory `mode`) contributes only
     # the two opts the harness understands — model and effort, nothing else.
     assert out["extra_ignored"] == {"model": "haiku", "effort": "low"}
+
+
+# --- implementation-planning overlay + sliding implementer (issue #29) --------
+
+# ADR-0002 settles the sliding implementer and the per-issue implementation plan.
+# The PLANNING pass that authors the plan lives in the orchestrator, not here — on
+# the ENGINE side (issue #29) the job is CONSUMPTION. The engine reads a run-level
+# `implementerMode ∈ { execute, balanced, autonomous }` marker and a per-issue
+# `issues[].plan` string, and layers an additive "how" overlay onto the `implement`
+# prompt ONLY: the fixed mode framing (three inline templates, modeled the way
+# DEFAULT_LENSES / AGENT_CONSTRAINTS are — inline fixed text, so no top-level export
+# is added) plus the plan text. Both degrade cleanly and INDEPENDENTLY: an absent
+# marker adds NO framing and an absent/blank plan adds NO plan text, so a legacy or
+# hand-launched run (neither field) yields exactly today's prompt. `fix` and
+# `integrationHotfix` keep their finding-driven prompts unchanged. The composition
+# is the inline-only `planOverlay` helper (the `toRecord` pattern: workflow-local,
+# not an engine-helpers extraction, exercised through node), so the drift guard and
+# the single-top-level-export invariant are untouched. These are structural +
+# behavioural, read off the workflow source.
+
+
+def _extract_braced_const(source: str, name: str) -> str:
+    """Extract a ``const <name> = …`` whose value is a brace-delimited literal — an
+    object ``{ … }`` or a block-bodied arrow ``(…) => { … }``.
+
+    Walks balanced ``{}`` from the first ``{`` after the ``const``, skipping string
+    literals (single, double, backtick, with backslash escapes) so a brace inside a
+    quoted string or a ``${…}`` template interpolation can never end the scan
+    early. Handles what ``_extract_def`` (which does not skip strings) and
+    ``_extract_arrow_object_def`` (parenthesised object body) do not: a
+    template-literal-bearing arrow body and an object-literal const."""
+
+    match = re.search(rf"^const {re.escape(name)} = ", source, flags=re.MULTILINE)
+    assert match is not None, f"`const {name} =` not found"
+    start = match.start()
+    index = source.index("{", start)
+
+    depth = 0
+    in_string: str | None = None
+    while index < len(source):
+        char = source[index]
+        if in_string is not None:
+            if char == "\\":
+                index += 2
+                continue
+            if char == in_string:
+                in_string = None
+        elif char in "'\"`":
+            in_string = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : index + 1]
+        index += 1
+    raise AssertionError(f"unbalanced braces while extracting `{name}`")
+
+
+def test_engine_reads_implementer_mode_from_config() -> None:
+    # AC: the run-level mode marker is CONSUMED off the NORMALIZED config (never the
+    # raw args), so an absent field is simply undefined and selects no framing —
+    # today's behaviour. This is the engine consuming, not authoring, the marker.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert "const implementerMode = config.implementerMode" in source, (
+        "the engine must read the run-level `config.implementerMode` marker off the "
+        "normalized config so it can select the mode framing"
+    )
+
+
+def test_implementer_mode_framings_are_one_inline_const() -> None:
+    # AC: the three mode framings live in the engine as ONE fixed inline const,
+    # modeled the way DEFAULT_LENSES / AGENT_CONSTRAINTS are — not an extracted or
+    # imported helper, which would add a top-level export/import the harness rejects.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    decls = re.findall(
+        r"^const IMPLEMENTER_MODE_FRAMINGS = ", source, flags=re.MULTILINE
+    )
+    assert len(decls) == 1, (
+        "the three mode framings must be exactly one inline "
+        "`const IMPLEMENTER_MODE_FRAMINGS =` (fixed template text), like DEFAULT_LENSES"
+    )
+
+
+# The fixed framing table, exercised through node: the three ADR-0002 §4 modes,
+# each carrying its wording verbatim, and an absent/unrecognized marker selecting
+# nothing (the degradation the no-mode path relies on).
+_FRAMINGS_HARNESS = """
+__FRAMINGS_DEF__;
+process.stdout.write(JSON.stringify({
+  keys: Object.keys(IMPLEMENTER_MODE_FRAMINGS).sort(),
+  execute: IMPLEMENTER_MODE_FRAMINGS.execute,
+  balanced: IMPLEMENTER_MODE_FRAMINGS.balanced,
+  autonomous: IMPLEMENTER_MODE_FRAMINGS.autonomous,
+  absent: IMPLEMENTER_MODE_FRAMINGS[undefined] ?? null,
+  unknown: IMPLEMENTER_MODE_FRAMINGS['bogus'] ?? null,
+}));
+"""
+
+
+def test_implementer_mode_framings_carry_the_adr_text() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    source = WORKFLOW.read_text(encoding="utf-8")
+    harness = _FRAMINGS_HARNESS.replace(
+        "__FRAMINGS_DEF__",
+        _extract_braced_const(source, "IMPLEMENTER_MODE_FRAMINGS"),
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+
+    # Exactly the three ADR-0002 §4 modes, keyed by the marker.
+    assert out["keys"] == ["autonomous", "balanced", "execute"]
+
+    # Each framing carries ADR-0002 §4's wording verbatim.
+    assert out["execute"] == (
+        "This plan is the settled *how*. Follow it test-first. Deviate only if it "
+        "is demonstrably wrong, and record why. Do not re-derive the approach."
+    )
+    assert out["balanced"] == (
+        "Follow the spec's shape, fill in the routine *how* yourself, and respect "
+        "the decisions it calls out."
+    )
+    assert out["autonomous"] == (
+        "Here are the goals and constraints (or, at `XL`, the brief). Reason out "
+        "the *how* yourself, test-first; the tests are your guide. You own the "
+        "approach."
+    )
+
+    # An absent or unrecognized marker selects NO framing — the degradation the
+    # no-mode path relies on.
+    assert out["absent"] is None
+    assert out["unknown"] is None
+
+
+def test_plan_overlay_selects_framing_and_interpolates_the_plan() -> None:
+    # AC: the overlay is where the framing is mode-selected and the per-issue plan
+    # is interpolated. It reads the framing from the fixed table by the marker and
+    # interpolates the plan string.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "planOverlay")
+    assert "IMPLEMENTER_MODE_FRAMINGS[mode]" in block, (
+        "planOverlay must select the framing from the fixed table by the mode marker"
+    )
+    assert "${plan}" in block, (
+        "planOverlay must interpolate the per-issue plan string into the overlay"
+    )
+
+
+# The overlay composition, exercised through node over a table. Distinct plan
+# tokens make interpolation visible; the two halves must degrade independently.
+_PLAN_OVERLAY_HARNESS = """
+__FRAMINGS_DEF__;
+__OVERLAY_DEF__;
+const out = {
+  none: planOverlay(undefined, undefined),
+  mode_only_autonomous: planOverlay('autonomous', undefined),
+  plan_only: planOverlay(undefined, 'PLANBODY_ALPHA'),
+  execute_with_plan: planOverlay('execute', 'PLANBODY_BETA'),
+  balanced_with_plan: planOverlay('balanced', 'PLANBODY_GAMMA'),
+  autonomous_with_plan: planOverlay('autonomous', 'PLANBODY_DELTA'),
+  unknown_mode: planOverlay('bogus', 'PLANBODY_EPSILON'),
+  blank_plan: planOverlay('execute', '   '),
+};
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_plan_overlay_composition_and_clean_degradation() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    source = WORKFLOW.read_text(encoding="utf-8")
+    harness = _PLAN_OVERLAY_HARNESS.replace(
+        "__FRAMINGS_DEF__",
+        _extract_braced_const(source, "IMPLEMENTER_MODE_FRAMINGS"),
+    ).replace("__OVERLAY_DEF__", _extract_braced_const(source, "planOverlay"))
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+
+    execute_text = "This plan is the settled *how*."
+    balanced_text = "Follow the spec's shape"
+    autonomous_text = "Reason out the *how* yourself"
+
+    # Clean degradation: neither field present → empty overlay → the implement
+    # prompt degrades byte-for-byte to today's behaviour.
+    assert out["none"] == "", (
+        "with no mode and no plan the overlay must be empty, so the implement "
+        "prompt degrades byte-for-byte to today's behaviour"
+    )
+
+    # A mode with no plan (the XL-like case: autonomous carries no plan) adds the
+    # framing but NO plan block.
+    assert autonomous_text in out["mode_only_autonomous"]
+    assert "PLANBODY" not in out["mode_only_autonomous"]
+    assert "Implementation plan" not in out["mode_only_autonomous"], (
+        "with no plan there must be no plan block header"
+    )
+
+    # A plan with no mode adds the plan but NO framing — each half degrades
+    # independently, never inferring the mode from the plan's presence.
+    assert "PLANBODY_ALPHA" in out["plan_only"]
+    assert execute_text not in out["plan_only"]
+    assert balanced_text not in out["plan_only"]
+    assert autonomous_text not in out["plan_only"]
+
+    # Each mode selects its OWN framing, and the plan text is interpolated.
+    assert execute_text in out["execute_with_plan"]
+    assert "PLANBODY_BETA" in out["execute_with_plan"]
+    assert balanced_text in out["balanced_with_plan"]
+    assert "PLANBODY_GAMMA" in out["balanced_with_plan"]
+    assert autonomous_text in out["autonomous_with_plan"]
+    assert "PLANBODY_DELTA" in out["autonomous_with_plan"]
+
+    # An unrecognized mode selects no framing (degrades); the plan still shows.
+    assert execute_text not in out["unknown_mode"]
+    assert balanced_text not in out["unknown_mode"]
+    assert autonomous_text not in out["unknown_mode"]
+    assert "PLANBODY_EPSILON" in out["unknown_mode"]
+
+    # A blank/whitespace plan adds no plan block, but the framing still applies.
+    assert execute_text in out["blank_plan"]
+    assert "Implementation plan" not in out["blank_plan"]
+
+
+def test_implement_consumes_the_plan_and_mode_via_overlay() -> None:
+    # AC: the `implement` prompt builds its overlay from the run-level marker and
+    # the per-issue `issues[].plan`, and interpolates the result into the prompt.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "implement")
+    assert "planOverlay(implementerMode," in block, (
+        "the implement prompt must build its overlay from the run-level mode marker"
+    )
+    assert "?.plan" in block, (
+        "the implement prompt must pass the per-issue issues[].plan to the overlay"
+    )
+    assert "${planOverlay(" in block, (
+        "the composed overlay must be interpolated into the implement prompt"
+    )
+
+
+def test_plan_overlay_is_consumed_only_by_implement() -> None:
+    # AC: the plan + framing apply to `implement` ONLY. The overlay is invoked
+    # exactly once in the whole engine, and that sole call sits in the implement
+    # block (between it and the following `fix` const).
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert source.count("planOverlay(implementerMode") == 1, (
+        "the plan overlay must be consumed in exactly one place — the implement agent"
+    )
+    call_idx = source.index("planOverlay(implementerMode")
+    impl_idx = source.index("const implement = ")
+    fix_idx = source.index("const fix = ")
+    assert impl_idx < call_idx < fix_idx, (
+        "the sole plan-overlay call must live inside the implement agent block"
+    )
+
+
+def test_fix_prompt_is_unchanged_by_the_plan_overlay() -> None:
+    # ADR-0002 §4: `fix` is targeted at specific findings regardless of mode, so it
+    # must NOT consume the plan or the mode framing — its prompt stays unchanged.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "fix")
+    assert "planOverlay" not in block, "the `fix` prompt must not consume the overlay"
+    assert "implementerMode" not in block, (
+        "the `fix` prompt must not consume the run-level mode marker"
+    )
+    assert "IMPLEMENTER_MODE_FRAMINGS" not in block, (
+        "the `fix` prompt must not consume the mode framing"
+    )
+
+
+def test_integration_hotfix_prompt_is_unchanged_by_the_plan_overlay() -> None:
+    # ADR-0002 §4: `integrationHotfix` is cross-issue, so no single issue's plan
+    # applies — it must NOT consume the plan or the mode framing.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrationHotfix")
+    assert "planOverlay" not in block, (
+        "the `integrationHotfix` prompt must not consume the overlay"
+    )
+    assert "implementerMode" not in block, (
+        "the `integrationHotfix` prompt must not consume the run-level mode marker"
+    )
+    assert "IMPLEMENTER_MODE_FRAMINGS" not in block, (
+        "the `integrationHotfix` prompt must not consume the mode framing"
+    )
