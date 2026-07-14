@@ -64,7 +64,9 @@ def _max_lenses_argument_line(text: str) -> str:
 
 
 def _rigor_floor_line(text: str) -> str:
-    section = text[text.index("## Model and effort") : text.index("## Running it unattended")]
+    section = text[
+        text.index("## Model and effort") : text.index("## Running it unattended")
+    ]
     for line in section.splitlines():
         if "inviolable floor holds under everything" in line:
             return line
@@ -134,7 +136,10 @@ def test_skill_spine_paragraph_does_not_claim_redgreen_is_wired_in() -> None:
     text = _text(SKILL_MD)
     idx = text.index("The spine itself stays")
     paragraph = text[idx : idx + 1400]
-    assert "is there a red-before-green commit (`orchestrate.py redgreen`)" not in paragraph, (
+    assert (
+        "is there a red-before-green commit (`orchestrate.py redgreen`)"
+        not in paragraph
+    ), (
         "the spine paragraph must not present orchestrate.py redgreen as "
         "something the deterministic spine already runs per issue"
     )

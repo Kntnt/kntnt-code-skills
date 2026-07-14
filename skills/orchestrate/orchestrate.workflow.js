@@ -582,9 +582,13 @@ const buildAndVerify = async (number) => {
   // EXPLICITLY empty when the plan produced 0 (--max-lenses=0). An explicitly
   // empty panel skips the per-issue verify stage entirely — implement ->
   // integrate — UNLESS the implementer's in-situ report just earned the one
-  // sanctioned automatic escalation (§5). This never suppresses red-before-green
-  // (checked deterministically, not by a lens) or the mandatory integration
-  // review (not a lens either) — both still run exactly as for any other issue.
+  // sanctioned automatic escalation (§5). The mandatory integration review
+  // still runs exactly as for any other issue (not a lens, so this never
+  // touches it) — but red-before-green itself is NOT independently re-checked
+  // here: the implementer's redCommit/greenCommit are self-reported, no lens
+  // runs to read the history back, and nothing in this lifecycle calls the
+  // deterministic `orchestrate.py redgreen` helper either, so on an empty
+  // panel red-before-green is self-attested only.
   const panel = lensesFor(issuesByNumber.get(number))
   if (panel.length === 0 && !shouldEscalateInSitu(impl, panel)) {
     return toRecord(number, impl, 'done', 'no independent verify: empty panel (--max-lenses=0)')
