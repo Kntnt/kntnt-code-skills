@@ -727,6 +727,244 @@ def test_verifier_agent_count_is_lower_under_lean_defaults() -> None:
     )
 
 
+# --- empty verifier panel (--max-lenses=0) + in-situ hazard escalation -------
+# (ADR-0003 §2/§5, issue #32)
+
+# The planner (#31) can produce an EXPLICITLY empty `issues[].lenses` array
+# (`--max-lenses=0`). That is distinct from an ABSENT `lenses` field: absent
+# falls back to the single broad DEFAULT_LENSES reviewer (unchanged), but
+# explicitly empty means "skip the per-issue verify stage entirely" — implement
+# -> integrate, no independent adversarial lens for that one issue. Neither
+# red-before-green (checked deterministically, not by a lens) nor the mandatory
+# integration review (not a lens) is ever suppressed by this. The ONE sanctioned
+# exception is in-situ escalation: when the implementer's three-bucket report
+# flags a genuine, previously-unseen hazard (a write path, a permission gate, an
+# irreversible delete) on a zero-panel issue, the engine dispatches exactly ONE
+# verify lens for that issue and folds its verdict in normally. The escalation
+# decision itself is a pure helper, `shouldEscalateInSitu`, tested here in its
+# `lib/orchestrate/engine-helpers.mjs` source of truth and drift-guarded against
+# its inline workflow copy exactly like the other extracted helpers.
+
+
+def test_engine_helpers_exports_should_escalate_in_situ() -> None:
+    # The escalation decision is a pure predicate, so it lives in the tested
+    # source of truth alongside the other engine helpers — the drift guard then
+    # holds its inline workflow copy byte-identical automatically.
+    helpers = ENGINE_HELPERS.read_text(encoding="utf-8")
+    names = _exported_const_names(helpers)
+    assert "shouldEscalateInSitu" in names, (
+        "engine-helpers.mjs must export `shouldEscalateInSitu` as the tested "
+        "source of truth for the ADR-0003 §5 in-situ hazard escalation decision"
+    )
+
+
+_ESCALATE_HARNESS = """
+import { shouldEscalateInSitu } from "__MODULE_URL__";
+const out = {
+  hazard_empty_panel: shouldEscalateInSitu({ inSituHazard: 'found a live write path to /etc' }, []),
+  no_hazard_empty_panel: shouldEscalateInSitu({ inSituHazard: '' }, []),
+  absent_hazard_empty_panel: shouldEscalateInSitu({}, []),
+  whitespace_hazard_empty_panel: shouldEscalateInSitu({ inSituHazard: '   ' }, []),
+  null_report_empty_panel: shouldEscalateInSitu(null, []),
+  hazard_nonempty_panel: shouldEscalateInSitu({ inSituHazard: 'found a write path' }, ['some lens']),
+  hazard_multi_lens_panel: shouldEscalateInSitu({ inSituHazard: 'found a write path' }, ['a', 'b']),
+};
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_should_escalate_in_situ_behaviour() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    harness = _ESCALATE_HARNESS.replace(
+        "__MODULE_URL__", ENGINE_HELPERS.resolve().as_uri()
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    out = json.loads(result.stdout)
+
+    # AC: a hazard-flagged report on a zero panel escalates one lens.
+    assert out["hazard_empty_panel"] is True, (
+        "a hazard-flagged report on a zero panel must escalate one lens"
+    )
+
+    # AC: a non-hazard report on a zero panel escalates none.
+    assert out["no_hazard_empty_panel"] is False, (
+        "a blank `inSituHazard` on a zero panel must NOT escalate"
+    )
+    assert out["absent_hazard_empty_panel"] is False, (
+        "an absent `inSituHazard` on a zero panel must NOT escalate"
+    )
+    assert out["whitespace_hazard_empty_panel"] is False, (
+        "a whitespace-only `inSituHazard` is not a real hazard flag"
+    )
+    assert out["null_report_empty_panel"] is False, (
+        "a null/missing report must never escalate"
+    )
+
+    # AC: a non-zero panel is untouched by this decision, whatever the report says.
+    assert out["hazard_nonempty_panel"] is False, (
+        "a non-empty (already-reviewed) panel must never be escalated further "
+        "by this decision"
+    )
+    assert out["hazard_multi_lens_panel"] is False, (
+        "a multi-lens panel must never be escalated further by this decision"
+    )
+
+
+_LENSES_FOR_HARNESS = """
+const DEFAULT_LENSES = ['DEFAULT_LENS'];
+__LENSES_FOR_DEF__;
+const out = {
+  absent: lensesFor({}),
+  no_issue: lensesFor(undefined),
+  explicit_empty: lensesFor({ lenses: [] }),
+  explicit_override: lensesFor({ lenses: ['a', 'b'] }),
+};
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_lenses_for_treats_explicit_empty_array_as_skip_not_default() -> None:
+    # AC: an EXPLICITLY empty `lenses` array (the plan produced 0) must be
+    # distinguished from an ABSENT one — only the absent case falls back to
+    # DEFAULT_LENSES; the explicit empty case passes through as empty, the
+    # signal buildAndVerify reads to skip the per-issue verify stage.
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    source = WORKFLOW.read_text(encoding="utf-8")
+    harness = _LENSES_FOR_HARNESS.replace(
+        "__LENSES_FOR_DEF__", _extract_braced_const(source, "lensesFor")
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    out = json.loads(result.stdout)
+    assert out["absent"] == ["DEFAULT_LENS"], (
+        "an absent `lenses` field must fall back to DEFAULT_LENSES"
+    )
+    assert out["no_issue"] == ["DEFAULT_LENS"], (
+        "a missing issue lookup must fall back to DEFAULT_LENSES"
+    )
+    assert out["explicit_empty"] == [], (
+        "an EXPLICITLY empty `lenses` array (--max-lenses=0) must pass through "
+        "empty, NOT fall back to DEFAULT_LENSES"
+    )
+    assert out["explicit_override"] == ["a", "b"], (
+        "a non-empty per-issue override must still pass through unchanged"
+    )
+
+
+def test_build_and_verify_consults_the_panel_and_the_escalation_helper() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "buildAndVerify")
+    assert "lensesFor(issuesByNumber.get(number))" in block, (
+        "buildAndVerify must resolve the issue's panel via lensesFor before "
+        "deciding whether to skip the per-issue verify stage"
+    )
+    assert "shouldEscalateInSitu(" in block, (
+        "buildAndVerify must consult the pure shouldEscalateInSitu helper to "
+        "decide the one sanctioned in-situ escalation"
+    )
+
+
+def test_empty_panel_skips_verify_unless_escalated() -> None:
+    # AC: an issue whose `lenses` is empty runs implement -> integrate with NO
+    # per-issue verify sub-agent dispatched, UNLESS the in-situ escalation fires.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "buildAndVerify")
+
+    escalate_idx = block.index("shouldEscalateInSitu(")
+    verify_idx = block.index("await verify(")
+    assert escalate_idx < verify_idx, (
+        "the escalation decision must be made BEFORE verify() is ever dispatched"
+    )
+
+    # The guarded early return must land the issue as 'done' (implement ->
+    # integrate), never parked or blocked, so a zero-panel non-hazard issue
+    # still proceeds to integration and the mandatory integration review.
+    region = block[escalate_idx:verify_idx]
+    assert "panel.length === 0" in region, (
+        "the skip must be guarded on the panel being EXPLICITLY empty (length "
+        "0), not merely falsy"
+    )
+    assert "return toRecord(number, impl, 'done'" in region, (
+        "an explicitly empty, non-escalated panel must return a 'done' record "
+        "so the issue still proceeds to integrate — never parked or blocked"
+    )
+
+
+def test_escalation_dispatches_exactly_one_lens_and_a_normal_panel_is_unaffected() -> None:
+    # AC: on escalation the engine dispatches exactly ONE verify lens — never
+    # the still-empty plan panel itself. AC: absent the ADR-0003 fields (a
+    # normal >= 1 panel) the lifecycle is unchanged — the panel passes straight
+    # through to verify().
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "buildAndVerify")
+    match = re.search(r"await verify\(number, impl, ([^)]*)\)", block)
+    assert match is not None, (
+        "buildAndVerify must call verify(number, impl, <lenses>) with an "
+        "explicit lenses argument"
+    )
+    lenses_arg = match.group(1).strip()
+    assert lenses_arg == "panel.length > 0 ? panel : DEFAULT_LENSES", (
+        f"expected the lenses argument to pass the plan's own panel through "
+        f"unchanged when non-empty and fall back to the single DEFAULT_LENSES "
+        f"lens only on escalation, got: {lenses_arg!r}"
+    )
+
+
+def test_implement_prompt_asks_the_agent_to_flag_an_in_situ_hazard() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "implement")
+    assert "inSituHazard" in block, (
+        "the implement prompt must ask the agent to flag a genuine, "
+        "previously-unseen in-situ hazard in `inSituHazard`, the field "
+        "shouldEscalateInSitu reads"
+    )
+
+
+def test_fix_and_integration_hotfix_prompts_stay_unchanged_by_the_hazard_field() -> None:
+    # AC: fix and integrationHotfix prompts stay unchanged — the change is
+    # confined to the verify-stage selection.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    for name in ("fix", "integrationHotfix"):
+        block = _agent_block(source, name)
+        assert "inSituHazard" not in block, (
+            f"the `{name}` prompt must NOT mention inSituHazard — only "
+            f"`implement` reports it"
+        )
+        assert "shouldEscalateInSitu" not in block, (
+            f"the `{name}` agent must not itself decide escalation"
+        )
+
+
+def test_implement_schema_carries_the_in_situ_hazard_field() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    schema_start = source.index("const IMPLEMENT_SCHEMA")
+    schema_end = source.index("const VERDICT_SCHEMA")
+    schema = source[schema_start:schema_end]
+    assert "inSituHazard" in schema, (
+        "IMPLEMENT_SCHEMA must carry the optional `inSituHazard` field so the "
+        "implementer can flag a genuine in-situ hazard for shouldEscalateInSitu"
+    )
+
+
 # --- mandatory adversarial integration review + hotfix loop (issue #18) ------
 
 # After the wave loop and inside the teardown try, whenever the run integrated at
