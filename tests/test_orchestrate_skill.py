@@ -432,3 +432,122 @@ def test_build_step_launch_args_include_roles() -> None:
         "threads it into the engine; without it config.roles is undefined and every "
         "sub-agent reverts to the session model"
     )
+
+
+# --- #28: --yes != merge authority; per-project merge policy; safety floor ----
+
+# ADR-0001 §7 separates `--yes` (yes to the single confirm gate, and nothing more)
+# from merge authority (`--merge` OR a once-per-project/global policy; plugin
+# default = PR), and §8's decision-boundary map surfaces merge-vs-PR at the single
+# gate while `--yes` waives only the go/no-go. SKILL.md must carry that separation,
+# name where the project merge policy is recorded and read, and restate the
+# inviolable safety floor. These tests are structural over that prose.
+
+
+def _operating_contract_section() -> str:
+    """The '## The operating contract' section, up to '## Flow'."""
+
+    return _section(_skill_text(), r"^##\s+The operating contract", r"^##\s+Flow")
+
+
+def _argument_line(flag: str) -> str:
+    """The single physical line for an argument bullet — the repo markdown rule
+    keeps each list item on one physical line, so the whole bullet is one line."""
+
+    for line in _arguments_section().splitlines():
+        if line.lstrip().startswith(f"- `{flag}`"):
+            return line
+    raise AssertionError(f"no argument bullet found for {flag}")
+
+
+def test_yes_argument_waives_only_the_gate_not_merge() -> None:
+    line = _argument_line("--yes").lower()
+    # --yes is scoped to the single confirm gate and nothing more.
+    assert "nothing more" in line, (
+        "the --yes argument must be scoped to the confirm gate and nothing more"
+    )
+    # It explicitly does NOT grant merge authority.
+    assert "merge authority" in line and re.search(
+        r"\b(not|never|does not|doesn't)\b", line
+    ), "the --yes argument must state it does NOT grant merge authority"
+
+
+def test_merge_argument_names_authority_sources_and_pr_default() -> None:
+    line = _argument_line("--merge").lower()
+    # --merge grants merge authority ...
+    assert "merge authority" in line
+    # ... the other source being a once-per-project (or global) policy ...
+    assert "policy" in line
+    assert "project" in line or "global" in line
+    # ... and the plugin default is PR.
+    assert "default" in line and ("pr" in line or "pull request" in line)
+
+
+def test_operating_contract_separates_yes_from_merge_authority() -> None:
+    section = _operating_contract_section().lower()
+    # The contract binds --yes to the gate only, not to writing the default branch.
+    assert "--yes" in section
+    assert "merge authority" in section
+    assert (
+        "nothing more" in section
+        or "go/no-go" in section
+        or "default branch" in section
+    )
+    # Merge authority = --merge OR a once-per-project/global policy; default PR.
+    assert "--merge" in section
+    assert "policy" in section
+    assert "pr" in section or "pull request" in section
+
+
+def test_operating_contract_specifies_where_merge_policy_lives() -> None:
+    section = _operating_contract_section().lower()
+    # The policy is a marker in the project's own agent config ...
+    assert "merge-policy" in section or "merge policy" in section
+    assert "agents.md" in section or "claude.md" in section
+    # ... read by the orchestrator at plan time, not a deterministic code path.
+    assert (
+        "plan time" in section
+        or "profile and gather" in section
+        or "step 1" in section
+    )
+
+
+def test_operating_contract_restates_the_inviolable_safety_floor() -> None:
+    section = _operating_contract_section().lower()
+    assert "safety floor" in section or "inviolable" in section
+    # Never force-push; a push needing force is refused and reported.
+    assert "force-push" in section or "force push" in section
+    assert "refus" in section
+    # Never merge to the default branch without --merge/policy.
+    assert "default branch" in section
+    # Close an issue only after verification AND integration, via gh issue view.
+    assert "gh issue view" in section
+    assert "verif" in section and "integrat" in section
+    # The rigor floor and the budget bound are always on.
+    assert "rigor" in section
+    assert "budget" in section
+    # Never override an ADR — park and report.
+    assert "adr" in section and "park" in section
+    # Never bump, tag, or release.
+    assert "bump" in section or "tag" in section or "release" in section
+
+
+def test_confirm_gate_surfaces_the_merge_vs_pr_decision() -> None:
+    section = _confirm_section().lower()
+    assert "merge" in section
+    assert "pr" in section or "pull request" in section
+    # The gate SHOWS the merge decision — settled before it by --merge or policy.
+    assert "policy" in section
+    assert "decision" in section
+
+
+def test_confirm_gate_yes_waives_only_the_go_no_go() -> None:
+    lines = [
+        ln.lower() for ln in _confirm_section().splitlines() if "--yes" in ln.lower()
+    ]
+    assert lines, "the confirm gate must mention --yes"
+    joined = " ".join(lines)
+    # --yes waives ONLY the go/no-go, not the merge decision.
+    assert "go/no-go" in joined or "go / no-go" in joined
+    assert "only" in joined
+    assert "merge" in joined
