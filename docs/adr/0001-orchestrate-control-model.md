@@ -4,6 +4,8 @@
 - **Date:** 2026-07-13
 - **Deciders:** Thomas Barregren
 
+> **Amended by [ADR-0003](0003-decoupling-rigor-from-the-level-dial.md).** §1 ("one ambition dial, nothing else — no separate rigor knobs"), §5 (the inviolable per-issue-lens floor), and §7/§8 (the merge surface) are updated by that ADR's decoupling of per-issue rigor from this dial (`--max-lenses`) and its `--pr` flag. This document is left as originally decided and cross-referenced, not rewritten; ADR-0003 holds the amendment's detail.
+
 ## Context
 
 `/orchestrate` shipped working in v0.10.0, but the first real runs were slow and expensive for three reasons: (a) the engine set no model or effort per agent — everything inherited the session model, so even purely mechanical agents ran on the strongest tier; (b) rigor was uniform regardless of a change's size or risk — a one-line change got the same heavy pipeline (test-first + independent reviewer + fix round + integration review) as a complex logic change; (c) it ran mostly sequentially.
