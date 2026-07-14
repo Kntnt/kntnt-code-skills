@@ -46,10 +46,10 @@ When the project carries no such pipeline, fall back to whatever `CLAUDE.md` / `
 
 - `[scope]` — which issues to take on: a label (`--label=…`), a milestone (`--milestone=…`), an explicit list (`#42,#43,#48`), or nothing. With no scope, default to the open `ready-for-agent` issues. Resolve scope **without asking** (see the operating contract); if it genuinely cannot be resolved, stop with a one-line report rather than pausing mid-run.
 - `--level=XS|S|M|L|XL` — the single **ambition dial**, default `M`. It sets how much model and reasoning effort every sub-agent gets: the orchestrator derives a per-role `(model, effort)` from the level (see *Model and effort*), sliding from a quick, cheap posture at `XS` to a strongest-tier, most-thorough posture at `XL`. This is the one knob for "how hard to try" — you set the ambition, and the model and effort of the judgment, implementer, and mechanical roles all follow from it, rather than every agent inheriting the session tier. Omit it (or omit the resolution entirely, as an older plan does) and every agent simply inherits the session model.
-- `--merge` — integrate finished issues into the default branch automatically. The default is conservative: open one pull request per issue and leave the merge to you, unless the project's own policy already authorizes merging away from the keyboard.
+- `--merge` — grant **merge authority** for this run, integrating finished issues into the default branch automatically. Merge authority comes from exactly two sources — this per-run `--merge`, **or** a once-per-project (or global) merge policy — and nothing else grants it (`--yes` does not). The **plugin default is PR**: with neither `--merge` nor a merge-granting policy, the run opens one pull request per issue and leaves the merge to you. Where the project policy already makes merge the default, `--yes` alone walks straight to the default branch. The operating contract says where that project policy is recorded and read.
 - `--max-fix-rounds=N` — cap on the fix↔verify loop per issue (default 1). After the cap, the issue is parked in the report rather than looping.
 - `--plan` / `--dry-run` — produce the plan (scope, dependency graph, waves, merge-or-PR decision) and stop, so you can review before the real run.
-- `--yes` — skip the single pre-run confirmation gate.
+- `--yes` — **yes to the single pre-run confirmation gate, and nothing more.** It waives only the go/no-go; it does **not** grant merge authority and does **not** decide merge-vs-PR (that is settled before the gate by `--merge` or the project policy — see the operating contract). `--yes` alone still opens pull requests unless merge authority was granted separately.
 
 ## The operating contract
 
@@ -59,6 +59,15 @@ If the project defines its own autonomous-agent and reporting model, follow it. 
 - **The one exception is a true design blocker** — work that cannot proceed without contradicting a settled decision (an ADR, a design doc, a load-bearing invariant). Triage should already have routed most of these to `ready-for-human`; this is the safety net for what it missed. The sub-agent neither guesses past the decision nor waits: it parks that one unit, records the blocker, and continues with everything else.
 - **Every sub-agent reports in three buckets** to its caller: *Automatically tested* (what, at which layer), *Remaining for a human* (the irreducibly subjective checks automation cannot meaningfully make), and *Assumptions & blockers*.
 - **No sub-agent closes the issue, pushes, or merges.** Those are the orchestrator's and the integrate step's actions alone; the issue is closed only after independent verification, never by a sub-agent — a prohibition the engine hard-codes into every implement, fix, and verify prompt.
+- **`--yes` is not merge authority.** `--yes` means *yes to the single pre-run confirmation gate, and nothing more* (ADR-0001 §7): it waives the go/no-go and grants no authority to write to the default branch. Merge-vs-PR is a **policy decided before the gate**, not something `--yes` toggles. Merge authority comes from exactly two sources — the per-run `--merge`, **or** a once-per-project (or global) merge policy — and absent both the **plugin default is PR**, so the run opens one pull request per issue and `--yes` alone walks away to per-issue PRs, never to `main`.
+- **Where the merge policy is recorded and read.** The once-per-project policy is an `orchestrate: merge-policy: merge|pr` marker in the project's own agent config — a line in the repo's `AGENTS.md` / `CLAUDE.md` (a repo-local override), with the maintainer's global `~/.claude/CLAUDE.md` marker as the once-per-maintainer fallback a repo-local marker overrides. The orchestrator reads it **at plan time**, in step 1 (*Profile and gather* — the same pass that reads the standard and the ADRs), and surfaces the resulting merge-vs-PR decision at the single gate. It is documentation the orchestrator reads as prose, not a deterministic `orchestrate.py` code path; a missing or unrecognised marker means the conservative PR default.
+- **The inviolable safety floor** (ADR-0001 §7) holds even under `--yes --merge`, and no assumption, policy, or level may lower it:
+    - **Never force-push.** A push that would require force is refused and reported, never forced.
+    - **Never merge to the default branch without merge authority** (`--merge` or policy); PR mode merges nothing.
+    - **Close an issue only after independent verification *and* integration**, each confirmed individually via `gh issue view`; PR mode leaves issues open.
+    - **The rigor floor and the budget bound are always on** — at least one independent adversarial lens plus the mandatory integration review per §5, and the run's token budget (`budgetFloor` + the session target), so full-auto is never truly unbounded.
+    - **Never override an ADR or design blocker** — park that unit and report it.
+    - **Never bump, tag, or release** — that is the `release` skill.
 
 ## Flow
 
@@ -87,7 +96,7 @@ The plan also carries a `merge_required` flag (with a human-readable `merge_note
 
 ### 3. Confirm (single gate)
 
-Show the plan from step 2 — scope, graph, waves, and whether the run will merge or open pull requests — and wait for one confirmation. `--yes`, or a `--plan` you have already reviewed, skips it. Beyond this gate the run does not stop, with one exception: integrating into the default branch happens only under `--merge` or an explicit project authorization; otherwise the work lands as pull requests.
+Show the plan from step 2 — scope, graph, waves, and whether the run will merge or open pull requests — and wait for one confirmation. Per ADR-0001 §8's decision-boundary map, exactly three things surface at this single gate — **merge authority, the cost cap, and the go/no-go** — and everything else stays silent. The **merge-vs-PR decision is shown here** but was *settled before* the gate by `--merge` or the project merge policy (see the operating contract); the gate displays it, it does not re-decide it. `--yes`, or a `--plan` you have already reviewed, skips the gate — and it waives **only the go/no-go**, never the merge decision: `--yes` alone still opens pull requests unless merge authority was granted separately. Beyond this gate the run does not stop, with one exception: integrating into the default branch happens only under `--merge` or a merge-granting project policy; otherwise the work lands as pull requests.
 
 #### Cost and chunking
 

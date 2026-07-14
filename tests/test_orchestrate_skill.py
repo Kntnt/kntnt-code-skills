@@ -506,9 +506,7 @@ def test_operating_contract_specifies_where_merge_policy_lives() -> None:
     assert "agents.md" in section or "claude.md" in section
     # ... read by the orchestrator at plan time, not a deterministic code path.
     assert (
-        "plan time" in section
-        or "profile and gather" in section
-        or "step 1" in section
+        "plan time" in section or "profile and gather" in section or "step 1" in section
     )
 
 
