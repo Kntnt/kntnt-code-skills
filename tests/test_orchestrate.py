@@ -1234,10 +1234,11 @@ def test_build_plan_run_level_cap_is_the_max_across_issues() -> None:
 # applied AFTER the level+risk derivation above, so it can only ever lower a
 # panel, never raise one. `N=0` is the floor-breaching value: it empties the
 # panel outright, except that an issue carrying a plan-time risk escalation
-# (a `Risk:` marker or `risk:*` label that pushed its panel above the level's
-# own baseline) still lands at 0 lenses (the flag holds) but is named in
-# `warnings` for gate visibility. Omitting the flag must reproduce today's
-# level+risk baseline exactly.
+# (a `Risk:` marker or `risk:*` label at medium/high — checked independent of
+# the level, so the warning fires at every level, not only where the hazard
+# happens to out-rank the level baseline) still lands at 0 lenses (the flag
+# holds) but is named in `warnings` for gate visibility. Omitting the flag
+# must reproduce today's level+risk baseline exactly.
 
 
 def test_plan_cli_rejects_a_negative_max_lenses() -> None:
@@ -1300,6 +1301,32 @@ def test_build_plan_max_lenses_zero_with_risk_stays_zero_and_warns() -> None:
 def test_build_plan_max_lenses_zero_with_risk_label_stays_zero_and_warns() -> None:
     # Same escalation source, via the risk:* label channel instead of the marker.
     plan = _plan("Standalone.", labels=["risk:high"], level="XS", max_lenses=0)
+    assert _lenses(plan) == []
+    assert any("#1" in warning for warning in plan["warnings"])
+
+
+def test_build_plan_max_lenses_zero_with_risk_medium_at_level_l_warns() -> None:
+    # At L, Risk: medium derives the same 2-lens panel the L baseline already
+    # has -- the hazard never out-ranks the level, so a level-relative proxy
+    # for "was this risk-escalated?" would miss it. The raw marker is still a
+    # plan-time hazard and must be named regardless.
+    plan = _plan("Risk: medium — needs a careful look.", level="L", max_lenses=0)
+    assert _lenses(plan) == []
+    assert any("#1" in warning for warning in plan["warnings"])
+
+
+def test_build_plan_max_lenses_zero_with_risk_high_at_level_xl_warns() -> None:
+    # The ADR-0003 canonical idiom is --level=XL --max-lenses=0. At XL, Risk:
+    # high derives the same 3-lens panel the XL baseline already has, so the
+    # warning must not depend on the panel exceeding that baseline.
+    plan = _plan("Risk: high — irreversible delete path.", level="XL", max_lenses=0)
+    assert _lenses(plan) == []
+    assert any("#1" in warning for warning in plan["warnings"])
+
+
+def test_build_plan_max_lenses_zero_with_risk_high_label_at_level_xl_warns() -> None:
+    # Same XL+high case, via the risk:* label channel instead of the marker.
+    plan = _plan("Standalone.", labels=["risk:high"], level="XL", max_lenses=0)
     assert _lenses(plan) == []
     assert any("#1" in warning for warning in plan["warnings"])
 

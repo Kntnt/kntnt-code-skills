@@ -889,31 +889,34 @@ def derive_rigor(
 
 
 def cap_lenses(
-    rigor: dict[int, RigorResult], level: str, max_lenses: int | None
+    rigor: dict[int, RigorResult],
+    risk_escalated: dict[int, bool],
+    max_lenses: int | None,
 ) -> tuple[dict[int, list[str]], list[int]]:
     """Cap each issue's verifier panel to at most `max_lenses`, ADR-0003 §2.
 
     A pure post-step applied AFTER the level+risk derivation in `rigor`, so it
     can only ever lower a panel (via truncation), never raise one; passing
-    `None` leaves every panel exactly as derived. Returns the capped `lenses`
-    per issue number, plus the numbers of any issue whose panel was plan-time
-    risk-escalated (its derived panel exceeds the level's own baseline size —
-    a `Risk:` marker or `risk:*` label pushed it up) yet still lands at 0
-    lenses under `max_lenses=0` — the flag holds, never silently
-    re-escalated, but the caller surfaces these in `warnings` for gate
-    visibility (ADR-0003 §5).
+    `None` leaves every panel exactly as derived. `risk_escalated` maps each
+    issue number to whether it carries an explicit plan-time hazard signal (a
+    `Risk:` marker or `risk:*` label at medium/high) — the raw signal, checked
+    independent of the run level, so a hazard is never missed merely because
+    the level baseline already happened to match the derived panel size.
+    Returns the capped `lenses` per issue number, plus the numbers of any
+    risk-escalated issue that still lands at 0 lenses under `max_lenses=0` —
+    the flag holds, never silently re-escalated, but the caller surfaces
+    these in `warnings` for gate visibility (ADR-0003 §5).
     """
 
     if max_lenses is None:
         return {number: result.lenses for number, result in rigor.items()}, []
 
-    baseline_lenses = RIGOR_TIERS[LEVEL_RANK[level]]["lenses"]
-    capped: dict[int, list[str]] = {}
-    floor_breached_with_risk: list[int] = []
-    for number, result in rigor.items():
-        capped[number] = result.lenses[:max_lenses]
-        if max_lenses == 0 and len(result.lenses) > baseline_lenses:
-            floor_breached_with_risk.append(number)
+    capped = {number: result.lenses[:max_lenses] for number, result in rigor.items()}
+    floor_breached_with_risk = (
+        [number for number in rigor if risk_escalated.get(number, False)]
+        if max_lenses == 0
+        else []
+    )
 
     return capped, floor_breached_with_risk
 
@@ -993,10 +996,21 @@ def build_plan(
 
     # Apply the --max-lenses cap as a pure post-step over the level+risk-derived
     # panels above (ADR-0003 §2): it can only ever lower a panel, never raise
-    # one. `floor_breached_with_risk` names the issues where a plan-time risk
-    # escalation still lands at 0 lenses under --max-lenses=0 — reported below,
-    # never silently re-escalated.
-    capped_lenses, floor_breached_with_risk = cap_lenses(rigor, level, max_lenses)
+    # one. `risk_escalated` is the raw plan-time hazard signal per issue — a
+    # `Risk:` marker or `risk:*` label at medium/high — checked independent of
+    # the level, so `floor_breached_with_risk` (issues where that hazard still
+    # lands at 0 lenses under --max-lenses=0) is never missed merely because
+    # the level baseline already matched the derived panel size.
+    risk_escalated = {
+        issue.number: (
+            issue.risk_marker in ("medium", "high")
+            or risk_label(issue.labels) in ("medium", "high")
+        )
+        for issue in kept
+    }
+    capped_lenses, floor_breached_with_risk = cap_lenses(
+        rigor, risk_escalated, max_lenses
+    )
 
     # Surface every unresolved-dependency warning, every risk disagreement, and
     # every risk-escalated issue the lens cap floored to 0, prefixed with the
