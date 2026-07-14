@@ -1,14 +1,15 @@
-"""Structural tests for the orchestrate SKILL.md guidance (issues #19, #24, #25, #28).
+"""Structural tests for the orchestrate SKILL.md guidance (issues #19, #24, #25, #28, #30).
 
 These read ``skills/orchestrate/SKILL.md`` as text and assert several things the
 skill's prose must carry — among them (issues #19/#24):
 
 1. The single confirm gate sizes the run to its cost — an agent/token estimate
-   *formula* (issue count folded over the default panel, fix rounds, and the
-   integrator), a chunking recommendation naming a slice size, and a required
-   explicit cap above a stated run size. The estimate is pinned to the engine's
-   LEAN defaults (one broad reviewer, one fix round) so it reflects real cost,
-   not the heavier defaults it replaced.
+   *formula* (issue count folded over the verifier panel, the fix-round cap, and
+   the integrator), a chunking recommendation naming a slice size, and a required
+   explicit cap above a stated run size. Since #30 the estimate is **level-aware**:
+   the per-issue factor scales with the level's panel size and fix-round cap
+   (ADR-0001 §5), reducing to the lean ``N × 4 + 3`` at the default M level rather
+   than a fixed ``× 4``.
 
 2. The closing/reporting guidance confirms each closure by querying that issue's
    own state with ``gh issue view <n>``, and explicitly does NOT trust a
@@ -174,6 +175,38 @@ def test_estimate_distinguishes_typical_from_worst_case() -> None:
     # Per-run overhead is stated for both modes (PR ≈2, merge up to ≈5).
     assert "pr mode" in section
     assert "merge mode" in section
+
+
+# --- #30: the cost estimate is level-aware -----------------------------------
+
+# Since #30 the per-issue cost is no longer a fixed × 4: the `--level` dial sets
+# both the verifier panel size and the fix-round cap (ADR-0001 §5), so a higher
+# level raises the per-issue sub-agent count. The estimate must scale with the
+# level's panel size `P` and fix-round cap `F`, reducing to the lean `N × 4 + 3`
+# at the default M level.
+
+
+def test_estimate_is_level_aware() -> None:
+    section = _confirm_section().lower()
+    # The estimate is explicitly level-aware, keyed on the panel size and cap.
+    assert "level-aware" in section
+    assert "panel size" in section
+    assert "fix-round cap" in section
+    # The closed form is parameterized by the panel size (a factor the level sets),
+    # e.g. N × (P + F + 2), not a bare N × 4.
+    assert re.search(r"n\s*[×x*]\s*\(", section), (
+        "the level-aware form must parameterize the per-issue factor, e.g. N × (P + F + 2)"
+    )
+    # The honest per-issue worst case folds the re-verify agent: P + 2F + 2.
+    assert re.search(r"p\s*\+\s*2f", section), (
+        "the per-issue worst case must be P + 2F + 2 (panel once, then fix + re-verify each round)"
+    )
+    # A higher level raises the per-issue sub-agent count.
+    assert "higher level" in section
+    # The default M level still reduces to the lean N × 4.
+    assert re.search(r"n\s*[×x*]\s*4", section), (
+        "the M-level instance must reduce to the lean N × 4"
+    )
 
 
 # --- closing: verify each issue individually with `gh issue view` ------------
@@ -401,6 +434,70 @@ def test_model_effort_states_the_two_guardrails() -> None:
     )
 
 
+# --- #30: rigor baseline + sliding implementer folded into §Model and effort --
+
+# ADR-0001 §1 says the `--level` dial carries BOTH halves of ambition — the
+# per-role (model, effort) AND the verification-rigor baseline. ADR-0002 adds the
+# sliding implementer: a per-issue implementation plan whose detail scales
+# inversely with the level, and a run-level `implementerMode` framing. §Model and
+# effort must document both, so the section matches the IMPLEMENTED derivation
+# rather than the old flat "single reviewer, one fix round".
+
+
+def test_model_effort_documents_the_level_derived_rigor_baseline() -> None:
+    section = _model_effort_section()
+    lowered = section.lower()
+    # The dial carries the rigor baseline alongside model/effort ...
+    assert "rigor" in lowered
+    assert "lens" in lowered and "fix round" in lowered
+    # ... the panel scales with the level (1 broad at the low end, focused higher) ...
+    assert "broad" in lowered and "focused" in lowered
+    # ... per-issue risk escalates it, escalate-only ...
+    assert "risk" in lowered and "escalat" in lowered
+    # ... and an inviolable floor holds, with 0 rounds reachable only via the flag.
+    assert "floor" in lowered
+    assert "--max-fix-rounds" in section, (
+        "§Model and effort must state 0 fix rounds is reachable only via --max-fix-rounds=0"
+    )
+
+
+def test_model_effort_documents_the_sliding_implementer_and_plan_pass() -> None:
+    section = _model_effort_section()
+    lowered = section.lower()
+    # ADR-0002 is cited and its two mechanisms described.
+    assert "adr-0002" in lowered, (
+        "§Model and effort must cite ADR-0002 for the sliding implementer + plan pass"
+    )
+    # The per-issue implementation plan whose detail scales inversely with the level.
+    assert "plan" in lowered
+    assert "recipe" in lowered, "the XS/S plan shape (a recipe) must be named"
+    # The run-level implementerMode framing marker and its three values.
+    assert "implementermode" in lowered
+    assert "execute" in lowered and "balanced" in lowered and "autonomous" in lowered, (
+        "the three implementerMode framings must be named"
+    )
+
+
+def test_build_step_launch_args_include_implementer_mode_and_plan() -> None:
+    # ADR-0002's two new engine args — the run-level `implementerMode` framing
+    # marker and each issue's per-issue `plan` overlay — must ride the same launch
+    # instruction as #25's `roles`, or a session assembling the payload from this
+    # list ships neither and the sliding implementer silently reverts to today's
+    # flat implement prompt.
+    build = _build_section()
+    launch_lines = [ln for ln in build.splitlines() if "as `args`" in ln]
+    assert launch_lines, (
+        "the Build step must carry a launch instruction passing the plan `as args`"
+    )
+    launch = " ".join(launch_lines).lower()
+    assert "implementermode" in launch, (
+        "the launch args must list `implementerMode` (ADR-0002 §4)"
+    )
+    assert "plan" in launch, (
+        "the launch args must list each issue's per-issue implementation `plan` (ADR-0002 §5)"
+    )
+
+
 def test_build_step_launch_args_include_roles() -> None:
     # Step 4's launch instruction is the closed enumeration of what the orchestrator
     # passes to the engine as `args` — the natural procedural checklist a session
@@ -445,9 +542,20 @@ def test_build_step_launch_args_include_roles() -> None:
 
 
 def _operating_contract_section() -> str:
-    """The '## The operating contract' section, up to '## Flow'."""
+    """The '## The operating contract' section, up to the decision-boundary map
+    (or '## Flow' when the map is absent)."""
 
-    return _section(_skill_text(), r"^##\s+The operating contract", r"^##\s+Flow")
+    return _section(
+        _skill_text(),
+        r"^##\s+The operating contract",
+        r"^##\s+(?:The decision-boundary map|Flow)",
+    )
+
+
+def _decision_map_section() -> str:
+    """The '## The decision-boundary map' section, up to '## Flow'."""
+
+    return _section(_skill_text(), r"^##\s+The decision-boundary map", r"^##\s+Flow")
 
 
 def _argument_line(flag: str) -> str:
@@ -596,3 +704,42 @@ def test_confirm_gate_yes_waives_only_the_go_no_go() -> None:
     assert "go/no-go" in joined or "go / no-go" in joined
     assert "only" in joined
     assert "merge" in joined
+
+
+# --- #30: the decision-boundary map (ADR-0001 §8) ----------------------------
+
+# ADR-0001 §8 collapses the whole run to one map: almost every decision is silent
+# (autonomous), and only THREE surface at the single gate — merge authority, the
+# cost cap, and the go/no-go — with the per-issue `Risk:` marker as the one
+# optional human lever. SKILL.md must carry that map end-to-end.
+
+
+def test_decision_boundary_map_exists_and_names_the_three_gate_decisions() -> None:
+    section = _decision_map_section()
+    lowered = section.lower()
+    # The map cites ADR-0001 §8.
+    assert "§8" in section or "adr-0001" in lowered, (
+        "the decision-boundary map must cite ADR-0001 §8"
+    )
+    # Almost everything is silent / autonomous.
+    assert "silent" in lowered or "autonomous" in lowered
+    # The three gate-surfaced decisions.
+    assert "merge authority" in lowered, (
+        "the map must surface merge authority at the gate"
+    )
+    assert "cost cap" in lowered, "the map must surface the cost cap at the gate"
+    assert "go/no-go" in lowered or "whether to run" in lowered, (
+        "the map must surface the go/no-go at the gate"
+    )
+
+
+def test_decision_boundary_map_marks_defaults_silent_and_risk_optional() -> None:
+    section = _decision_map_section().lower()
+    # The silent-by-default decisions the map must list.
+    for decision in ("scope", "model/effort", "rigor", "fix"):
+        assert decision in section, f"the map must list the silent decision: {decision}"
+    # The per-issue `Risk:` marker is the one OPTIONAL human lever, never required.
+    assert "risk" in section
+    assert "optional" in section or "never required" in section, (
+        "the map must mark the per-issue Risk marker as optional / never required"
+    )
