@@ -1,7 +1,7 @@
-"""Structural tests for the orchestrate SKILL.md guidance (issues #19, #24).
+"""Structural tests for the orchestrate SKILL.md guidance (issues #19, #24, #25, #28).
 
-These read ``skills/orchestrate/SKILL.md`` as text and assert three things the
-skill's prose must carry:
+These read ``skills/orchestrate/SKILL.md`` as text and assert several things the
+skill's prose must carry — among them (issues #19/#24):
 
 1. The single confirm gate sizes the run to its cost — an agent/token estimate
    *formula* (issue count folded over the default panel, fix rounds, and the
@@ -510,24 +510,71 @@ def test_operating_contract_specifies_where_merge_policy_lives() -> None:
     )
 
 
+def _safety_floor_bullets() -> list[str]:
+    """The nested sub-bullets under 'The inviolable safety floor'.
+
+    Each ADR-0001 §7 floor element is its own physical sub-bullet, so a dropped
+    element leaves its whole line absent — not merely its tokens, several of which
+    (``default branch``, ``verif``/``integrat``, ``adr``+``park``, ``budget``)
+    recur in other bullets of the section. Pinning each element to the floor
+    sub-bullets is what lets a dropped floor element turn the test red."""
+
+    bullets: list[str] = []
+    collecting = False
+    for line in _operating_contract_section().splitlines():
+        if "inviolable safety floor" in line.lower():
+            collecting = True
+            continue
+        if not collecting:
+            continue
+        stripped = line.lstrip()
+        # An indented list item is a floor sub-bullet; a blank line is skipped;
+        # anything else (a top-level bullet, prose) ends the floor list.
+        if line != stripped and stripped.startswith("- "):
+            bullets.append(stripped.lower())
+        elif stripped:
+            break
+    return bullets
+
+
 def test_operating_contract_restates_the_inviolable_safety_floor() -> None:
     section = _operating_contract_section().lower()
     assert "safety floor" in section or "inviolable" in section
-    # Never force-push; a push needing force is refused and reported.
-    assert "force-push" in section or "force push" in section
-    assert "refus" in section
-    # Never merge to the default branch without --merge/policy.
-    assert "default branch" in section
-    # Close an issue only after verification AND integration, via gh issue view.
-    assert "gh issue view" in section
-    assert "verif" in section and "integrat" in section
-    # The rigor floor and the budget bound are always on.
-    assert "rigor" in section
-    assert "budget" in section
-    # Never override an ADR — park and report.
-    assert "adr" in section and "park" in section
-    # Never bump, tag, or release.
-    assert "bump" in section or "tag" in section or "release" in section
+
+    floor = _safety_floor_bullets()
+    assert floor, "the safety floor must be a nested list of per-element bullets"
+
+    def has(*needles: str) -> bool:
+        """True when one floor sub-bullet carries every needle."""
+
+        return any(all(n in bullet for n in needles) for bullet in floor)
+
+    # Each ADR-0001 §7 floor element is pinned to its OWN sub-bullet, so dropping
+    # any single element turns this red even when its tokens recur elsewhere.
+    assert has("force-push", "refus") or has("force push", "refus"), (
+        "floor must carry the never-force-push element (a force push is refused)"
+    )
+    assert has("default branch"), (
+        "floor must carry the never-merge-to-default-without-authority element"
+    )
+    assert has("gh issue view", "verif", "integrat"), (
+        "floor must carry the close-only-after-verify-and-integrate element"
+    )
+    assert has("rigor", "budget"), (
+        "floor must carry the rigor-floor + budget-bound element"
+    )
+    assert has("adr", "park"), (
+        "floor must carry the never-override-an-ADR (park + report) element"
+    )
+    assert has("bump") or has("tag") or has("release"), (
+        "floor must carry the never-bump/tag/release element"
+    )
+    # The run-scoped scaffolding-branch prune confinement (ADR §7's last floor
+    # bullet): confined to worktree-<runId>-* and skipped when runId is unresolved.
+    assert has("worktree-", "runid"), (
+        "floor must restate the run-scoped scaffolding-branch prune confinement "
+        "(worktree-<runId>-*), completing the ADR §7 restatement"
+    )
 
 
 def test_confirm_gate_surfaces_the_merge_vs_pr_decision() -> None:
