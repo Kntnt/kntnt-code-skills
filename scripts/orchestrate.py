@@ -173,6 +173,77 @@ TEST_FILE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The ambition levels and the default, mirroring the `--level` dial documented in
+# skills/orchestrate/SKILL.md. The level sets the verification-rigor baseline
+# below; the derivation of a per-role (model, effort) from it is the
+# orchestrator's job, not this deterministic helper's.
+LEVELS = ("XS", "S", "M", "L", "XL")
+DEFAULT_LEVEL = "M"
+
+# The fixed, model-agnostic rigor ladder (ADR-0001 §5). Each rank is one
+# (lens count, fix-round cap) tier: rank 0 is the XS/S/M baseline, rank 1 the L
+# tier, rank 2 the XL tier. Per-issue risk escalates a lower rank UP this same
+# ladder (§6, escalate-only) and never below it — rank 0 is the inviolable floor
+# (≥ 1 adversarial lens, 1 fix round). Only an explicit `--max-fix-rounds=0`
+# reaches zero rounds; no level defaults to it.
+RIGOR_TIERS = (
+    {"lenses": 1, "fix_rounds": 1},
+    {"lenses": 2, "fix_rounds": 2},
+    {"lenses": 3, "fix_rounds": 2},
+)
+
+# Each ambition level's baseline rank on RIGOR_TIERS (ADR-0001 §5).
+LEVEL_RANK = {"XS": 0, "S": 0, "M": 0, "L": 1, "XL": 2}
+
+# An explicit risk signal's rank on the same ladder — the escalate-only mapping
+# from a `Risk:` marker or a `risk:*` label to rigor (ADR-0001 §6). `low` adds no
+# escalation (baseline); `medium` escalates to the L tier; `high` to the XL tier
+# and, because rigor is the highest signal, is a floor the result never undercuts.
+RISK_RANK = {"low": 0, "medium": 1, "high": 2}
+
+# The verifier focus each lens carries at a given tier, mirroring ADR-0001 §5's
+# C(orrectness) / T(est-quality) / S(ecurity) grouping: one broad lens folds all
+# three, two split [C+T] from [S], three separate them. These are the
+# deterministic skeleton the engine's `lensesFor` consumes unchanged; the
+# orchestrator tailors each brief's prose to the issue (the specific hazard to
+# hunt, the L second lens's T-vs-S swap) — lens-content tailoring is its job, the
+# lens COUNT is settled here.
+LENS_BROAD = (
+    "broad adversarial review: correctness against the issue intent and its "
+    "acceptance criteria, test quality, and any security or data-safety hazard "
+    "the issue touches"
+)
+LENS_CORRECTNESS_AND_TESTS = (
+    "correctness against the issue intent and its acceptance criteria, and the "
+    "quality of the tests"
+)
+LENS_SECURITY = "any security or data-safety hazard the issue touches"
+LENS_CORRECTNESS = "correctness against the issue intent and its acceptance criteria"
+LENS_TESTS = (
+    "test quality: the red is demonstrated, the tests are load-bearing, and every "
+    "acceptance criterion maps to a test"
+)
+LENSES_BY_RANK = (
+    [LENS_BROAD],
+    [LENS_CORRECTNESS_AND_TESTS, LENS_SECURITY],
+    [LENS_CORRECTNESS, LENS_TESTS, LENS_SECURITY],
+)
+
+# A deliberate `Risk: high | medium | low` marker in an issue body or its Agent
+# Brief. Matched anywhere, because the brief writes it inline (`Agent Brief
+# (Risk: medium):`), tolerating a bold wrapper (`**Risk:** high`, `**Risk**:
+# high`); the immediately following level word is required, so ordinary prose
+# ("the risk: it might fail") is not a marker. Case-insensitive.
+RISK_MARKER_RE = re.compile(
+    r"\bRisk\b[^\S\n]*\*{0,2}[^\S\n]*:[^\S\n]*\*{0,2}[^\S\n]*(high|medium|low)\b",
+    re.IGNORECASE,
+)
+
+# The optional `risk:high|medium|low` label — the board-visibility convenience
+# channel (ADR-0001 §6), an explicit hazard signal that feeds the escalate-only
+# max alongside the marker. Matched against the whole label name.
+RISK_LABEL_RE = re.compile(r"^risk:(high|medium|low)$", re.IGNORECASE)
+
 
 @dataclass
 class DependencySignals:
@@ -203,6 +274,9 @@ class Issue:
     than a posted brief. It defaults to True — an issue with no detectable brief
     — so a record built without comment data is flagged rather than silently
     assumed to have one; the engine's fallback still builds it either way.
+    `risk_marker` is the explicit `Risk:` signal read from the body or the Agent
+    Brief (`high`/`medium`/`low`, or None when absent), one input to the rigor
+    derivation; the `risk:*` label is read from `labels` at plan time.
     """
 
     number: int
@@ -213,6 +287,7 @@ class Issue:
     soft_notes: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     no_brief: bool = True
+    risk_marker: str | None = None
 
 
 @dataclass
@@ -565,6 +640,20 @@ def _has_agent_brief(comments: Any) -> bool:
     return False
 
 
+def _comment_texts(comments: Any) -> list[str]:
+    """The text of every comment body, tolerating bare-string comments; a missing
+    or non-list `comments` yields nothing. Lets the risk-marker scan reach the
+    Agent Brief comment, where the `Risk:` marker usually lives, alongside the
+    issue body."""
+
+    if not isinstance(comments, list):
+        return []
+    return [
+        str(comment.get("body", "")) if isinstance(comment, dict) else str(comment)
+        for comment in comments
+    ]
+
+
 def load_issues(raw: str) -> list[Issue]:
     """Parse a `gh issue list --json number,title,labels,body,comments` payload
     into Issue records. Raises ValueError on malformed JSON or a missing number.
@@ -605,6 +694,13 @@ def load_issues(raw: str) -> list[Issue]:
             entry.get("body", ""), self_number=number, title_index=title_index
         )
 
+        # Read the explicit `Risk:` marker from the body and the Agent Brief
+        # comment together — the deterministic risk input to the rigor derivation
+        # at plan time (prose risk inference is the orchestrator's job, not ours).
+        risk_source = "\n".join(
+            [str(entry.get("body", "") or ""), *_comment_texts(entry.get("comments"))]
+        )
+
         issues.append(
             Issue(
                 number=number,
@@ -615,6 +711,7 @@ def load_issues(raw: str) -> list[Issue]:
                 soft_notes=signals.soft_notes,
                 warnings=signals.warnings,
                 no_brief=not _has_agent_brief(entry.get("comments")),
+                risk_marker=parse_risk_marker(risk_source),
             )
         )
 
@@ -710,8 +807,93 @@ def dependency_edges(issues: list[Issue]) -> list[dict[str, Any]]:
     return edges
 
 
+def parse_risk_marker(text: str) -> str | None:
+    """Return the risk level named by a `Risk:` marker in `text` — the highest if
+    several appear (escalate-only) — or None when there is no deliberate marker.
+
+    A `Risk:` word not followed by `high`/`medium`/`low` is not a signal; the
+    caller then rounds up to the level baseline rather than below it (ADR-0001
+    §6, "round up on uncertainty")."""
+
+    found = [match.group(1).lower() for match in RISK_MARKER_RE.finditer(text or "")]
+    if not found:
+        return None
+    return max(found, key=lambda level: RISK_RANK[level])
+
+
+def risk_label(labels: Iterable[str]) -> str | None:
+    """Return the risk level named by a `risk:*` label — the highest if several —
+    or None. The label is the optional convenience hazard channel of ADR-0001
+    §6, an explicit signal that feeds the escalate-only max alongside the marker."""
+
+    found = [
+        match.group(1).lower()
+        for label in labels
+        if (match := RISK_LABEL_RE.match(label.strip()))
+    ]
+    if not found:
+        return None
+    return max(found, key=lambda level: RISK_RANK[level])
+
+
+@dataclass
+class RigorResult:
+    """The verification rigor derived for one issue: the `lenses` its verifier
+    panel runs (the engine consumes this array unchanged), the `fix_rounds` cap
+    its risk tier warrants, and any `warnings` — an explicit low marker
+    contradicted by a hazard label, surfaced rather than silently applied."""
+
+    lenses: list[str]
+    fix_rounds: int
+    warnings: list[str] = field(default_factory=list)
+
+
+def derive_rigor(
+    level: str, marker_risk: str | None, label_risk: str | None
+) -> RigorResult:
+    """Derive an issue's verification rigor from the run `level` and its explicit
+    risk signals, per ADR-0001 §5–§6.
+
+    Escalate-only: the rigor rank is the highest of the level baseline, the
+    `Risk:` marker, and the `risk:*` label. An explicit `high` is therefore a
+    floor the result never undercuts; an absent or ambiguous signal contributes
+    nothing, so the result rounds up to the level baseline and never below the
+    inviolable floor (rank 0 — one adversarial lens, one fix round). When an
+    explicit `Risk: low` marker is contradicted by a hazard label (`risk:medium`
+    or `risk:high`), the low is NOT silently applied: the hazard still escalates
+    the rigor and the disagreement is reported for the maintainer (ADR-0001 §6,
+    "never silently if the planner still sees a hazard")."""
+
+    rank = max(
+        LEVEL_RANK[level],
+        RISK_RANK[marker_risk] if marker_risk else 0,
+        RISK_RANK[label_risk] if label_risk else 0,
+    )
+
+    # An explicit low marker that clashes with a hazard label is a genuine
+    # disagreement: the hazard wins (above), but the maintainer is told rather
+    # than the low being silently honoured.
+    warnings: list[str] = []
+    if marker_risk == "low" and label_risk in ("medium", "high"):
+        warnings.append(
+            f"explicit 'Risk: low' marker disagrees with a 'risk:{label_risk}' "
+            "hazard label; escalating to the hazard rather than silently applying "
+            "the low marker"
+        )
+
+    return RigorResult(
+        lenses=list(LENSES_BY_RANK[rank]),
+        fix_rounds=RIGOR_TIERS[rank]["fix_rounds"],
+        warnings=warnings,
+    )
+
+
 def build_plan(
-    kept: list[Issue], excluded: list[Issue], scope_label: str
+    kept: list[Issue],
+    excluded: list[Issue],
+    scope_label: str,
+    level: str = DEFAULT_LEVEL,
+    max_fix_rounds: int | None = None,
 ) -> dict[str, Any]:
     """Assemble the plan the orchestrator dispatches from. The existing fields
     (`scope_label`, `issues`, `waves`, `external_dependencies`, `excluded`) are
@@ -721,6 +903,16 @@ def build_plan(
     entry carries a `no_brief` boolean, and `issues_without_brief` lists the
     numbers lacking a brief for convenience — those issues are still built, from
     their body + acceptance criteria.
+
+    `level` (the `--level` ambition dial) and each issue's explicit risk drive
+    the verification rigor per ADR-0001 §5–§6: every `issues[]` entry gains a
+    `lenses` array (its verifier panel, consumed by the engine's `lensesFor`
+    unchanged), and the plan carries the derived run-level `maxFixRounds` cap and
+    the echoed `level`. `max_fix_rounds`, when given, overrides the derived cap —
+    the only way to reach `0` rounds (a scan/triage run); otherwise the cap is
+    the highest an in-scope issue's risk tier warrants, floored at 1. An explicit
+    `Risk: low` marker contradicted by a `risk:*` hazard label is surfaced in
+    `warnings` rather than silently applied.
 
     Raises ValueError (via `build_waves`) when the in-scope graph has a cycle.
     """
@@ -743,21 +935,45 @@ def build_plan(
         for note in issue.soft_notes
     ]
 
-    # Surface every unresolved-dependency warning at the top level, prefixed with
-    # the issue it came from, so a section whose prose named a prerequisite that
-    # matched nothing is loud rather than a silently-empty graph.
+    # Derive each issue's verification rigor from the level baseline and its
+    # explicit risk signals (marker + label), escalate-only per ADR-0001 §5–§6.
+    # The lens panel is per-issue; the fix-round cap is one run-level number, so
+    # it takes the highest cap any issue's tier warrants (a risk-escalated issue
+    # gets its rounds; the loop still exits early for the calmer ones). The level
+    # baseline seeds the max so an empty run still floors at the level's rounds.
+    rigor = {
+        issue.number: derive_rigor(level, issue.risk_marker, risk_label(issue.labels))
+        for issue in kept
+    }
+    derived_fix_rounds = max(
+        [RIGOR_TIERS[LEVEL_RANK[level]]["fix_rounds"]]
+        + [result.fix_rounds for result in rigor.values()]
+    )
+    resolved_fix_rounds = (
+        max_fix_rounds if max_fix_rounds is not None else derived_fix_rounds
+    )
+
+    # Surface every unresolved-dependency warning and every risk disagreement at
+    # the top level, prefixed with the issue it came from, so a section whose
+    # prose named a prerequisite that matched nothing — or an explicit low that
+    # clashes with a hazard label — is loud rather than silently swallowed.
     warnings = [
-        f"#{issue.number}: {warning}" for issue in kept for warning in issue.warnings
+        f"#{issue.number}: {warning}"
+        for issue in kept
+        for warning in (*issue.warnings, *rigor[issue.number].warnings)
     ]
 
     return {
         "scope_label": scope_label,
+        "level": level,
+        "maxFixRounds": resolved_fix_rounds,
         "issues": [
             {
                 "number": i.number,
                 "title": i.title,
                 "blocked_by": sorted(i.blocked_by),
                 "no_brief": i.no_brief,
+                "lenses": rigor[i.number].lenses,
             }
             for i in kept
         ],
@@ -999,6 +1215,11 @@ def cmd_plan(args: argparse.Namespace) -> int:
     """Run the `plan` subcommand — read issues JSON from stdin, build the
     dependency graph and dispatch waves, and print the plan as JSON."""
 
+    # `0` fix rounds is a deliberate scan/triage choice; a negative cap is not a
+    # meaningful rigor and would silently disable the fix loop, so reject it.
+    if args.max_fix_rounds is not None and args.max_fix_rounds < 0:
+        fail("--max-fix-rounds must be zero or greater")
+
     try:
         issues = load_issues(sys.stdin.read())
     except ValueError as exc:
@@ -1007,7 +1228,13 @@ def cmd_plan(args: argparse.Namespace) -> int:
     kept, excluded = exclude_by_label(issues, args.exclude_label or [])
 
     try:
-        plan = build_plan(kept, excluded, args.scope_label)
+        plan = build_plan(
+            kept,
+            excluded,
+            args.scope_label,
+            level=args.level,
+            max_fix_rounds=args.max_fix_rounds,
+        )
     except ValueError as exc:
         fail(str(exc))
 
@@ -1055,6 +1282,23 @@ def main() -> int:
         "--scope-label",
         default=DEFAULT_SCOPE_LABEL,
         help=f"Label the scope was resolved from (default: {DEFAULT_SCOPE_LABEL}).",
+    )
+    plan_parser.add_argument(
+        "--level",
+        type=str.upper,
+        choices=LEVELS,
+        default=DEFAULT_LEVEL,
+        help=f"Ambition dial (default: {DEFAULT_LEVEL}); sets the verify-rigor "
+        "baseline — the per-issue lens count and the run-level fix-round cap "
+        "(ADR-0001 §5).",
+    )
+    plan_parser.add_argument(
+        "--max-fix-rounds",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Override the derived run-level fix-round cap. `0` (a scan/triage "
+        "run) is reachable ONLY here — no level defaults to it.",
     )
     plan_parser.add_argument(
         "--exclude-label",
