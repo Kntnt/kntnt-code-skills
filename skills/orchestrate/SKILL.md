@@ -68,6 +68,7 @@ If the project defines its own autonomous-agent and reporting model, follow it. 
     - **The rigor floor and the budget bound are always on** — at least one independent adversarial lens plus the mandatory integration review per §5, and the run's token budget (`budgetFloor` + the session target), so full-auto is never truly unbounded.
     - **Never override an ADR or design blocker** — park that unit and report it.
     - **Never bump, tag, or release** — that is the `release` skill.
+    - **The run's scaffolding-branch prune is confined to `worktree-<runId>-*`**, and is skipped entirely if `runId` is unresolved — never a loose glob, never another run's branches (the full guarantee is in §Finalize).
 
 ## Flow
 
