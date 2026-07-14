@@ -895,10 +895,12 @@ def test_empty_panel_skips_verify_unless_escalated() -> None:
         "the escalation decision must be made BEFORE verify() is ever dispatched"
     )
 
-    # The guarded early return must land the issue as 'done' (implement ->
-    # integrate), never parked or blocked, so a zero-panel non-hazard issue
-    # still proceeds to integration and the mandatory integration review.
-    region = block[escalate_idx:verify_idx]
+    # The guard and its early return must both sit BEFORE the verify() dispatch,
+    # so an empty, non-escalated panel never reaches the agent call. The guarded
+    # early return must land the issue as 'done' (implement -> integrate), never
+    # parked or blocked, so a zero-panel non-hazard issue still proceeds to
+    # integration and the mandatory integration review.
+    region = block[:verify_idx]
     assert "panel.length === 0" in region, (
         "the skip must be guarded on the panel being EXPLICITLY empty (length "
         "0), not merely falsy"
@@ -909,7 +911,7 @@ def test_empty_panel_skips_verify_unless_escalated() -> None:
     )
 
 
-def test_escalation_dispatches_exactly_one_lens_and_a_normal_panel_is_unaffected() -> None:
+def test_escalation_dispatches_one_lens_normal_panel_unaffected() -> None:
     # AC: on escalation the engine dispatches exactly ONE verify lens — never
     # the still-empty plan panel itself. AC: absent the ADR-0003 fields (a
     # normal >= 1 panel) the lifecycle is unchanged — the panel passes straight
@@ -939,7 +941,7 @@ def test_implement_prompt_asks_the_agent_to_flag_an_in_situ_hazard() -> None:
     )
 
 
-def test_fix_and_integration_hotfix_prompts_stay_unchanged_by_the_hazard_field() -> None:
+def test_fix_and_hotfix_prompts_unchanged_by_the_hazard_field() -> None:
     # AC: fix and integrationHotfix prompts stay unchanged — the change is
     # confined to the verify-stage selection.
     source = WORKFLOW.read_text(encoding="utf-8")

@@ -64,6 +64,7 @@ const IMPLEMENT_SCHEMA = {
     remainingForHuman: { type: 'array', items: { type: 'string' } },
     assumptions: { type: 'array', items: { type: 'string' } },
     blockers: { type: 'array', items: { type: 'string' } },
+    inSituHazard: { type: 'string', description: 'A genuine, previously-unseen danger surface discovered DURING the work — a write path, a permission gate, an irreversible delete — that the brief or plan did not anticipate. Present only when found; absent otherwise. Independent of `status`: it does not block progress, but on an empty verifier panel it triggers the one sanctioned automatic verify-lens escalation (ADR-0003 §5, shouldEscalateInSitu).' },
     status: { type: 'string', enum: ['green', 'blocked'] },
   },
 }
@@ -104,12 +105,12 @@ const INTEGRATE_SCHEMA = {
   },
 }
 
-// `normalizeArgs`, `planIsEmpty`, `blockingFindings`, `unlandedPrerequisites`, and
-// `roleTuning` are kept inline as plain internal `const`s because the Workflow
-// harness rejects any top-level `export` beyond the single leading `export const
-// meta` and forbids a top-level `import` — so this script cannot import them. Their
-// tested source of truth is the byte-for-byte identical
-// `lib/orchestrate/engine-helpers.mjs`; keep the two in sync.
+// `normalizeArgs`, `planIsEmpty`, `blockingFindings`, `unlandedPrerequisites`,
+// `roleTuning`, and `shouldEscalateInSitu` are kept inline as plain internal
+// `const`s because the Workflow harness rejects any top-level `export` beyond the
+// single leading `export const meta` and forbids a top-level `import` — so this
+// script cannot import them. Their tested source of truth is the byte-for-byte
+// identical `lib/orchestrate/engine-helpers.mjs`; keep the two in sync.
 
 /**
  * Normalize the raw `args` the Workflow harness delivers into the single config
@@ -252,6 +253,37 @@ const roleTuning = (role) => {
 
 }
 
+/**
+ * The ADR-0003 §5 in-situ hazard escalation decision: true only when an
+ * EXPLICITLY empty per-issue verifier panel (the plan produced `0`, from
+ * `--max-lenses=0`) meets a genuine, previously-unseen danger surface the
+ * implementer discovered DURING the work — a write path, a permission gate, an
+ * irreversible delete — and flagged in its three-bucket report's
+ * `inSituHazard` field. This is the rare, sanctioned automatic override: on
+ * `true` the engine dispatches exactly ONE verify lens for that one issue and
+ * folds its verdict in normally, never the whole panel. A plan-time hazard
+ * (surfaced at the planner's gate, ADR-0003 §5) never reaches this helper —
+ * only what the implementer itself discovers in flight does.
+ *
+ * @param {{inSituHazard?: string}|null|undefined} report The implementer's
+ *   IMPLEMENT_SCHEMA-shaped report for this issue.
+ * @param {unknown[]} panel The issue's resolved verifier panel (from
+ *   `lensesFor`) — escalation only ever applies when this is explicitly empty.
+ * @returns {boolean} Whether to dispatch the one sanctioned escalation lens.
+ */
+const shouldEscalateInSitu = (report, panel) => {
+
+  // Escalation exists ONLY to fill the gap an explicitly empty panel leaves; a
+  // panel that already carries at least one lens got its independent review
+  // and is untouched by this decision, whatever the report says.
+  if (!Array.isArray(panel) || panel.length > 0) return false
+
+  // A non-blank `inSituHazard` is the implementer's own flag of a genuine,
+  // previously-unseen danger surface — never inferred from any other field.
+  return typeof report?.inSituHazard === 'string' && report.inSituHazard.trim().length > 0
+
+}
+
 // Run options, with the conservative defaults the skill documents. Every field
 // is read off the normalized config, never off the raw `args` the harness
 // delivers as a JSON string.
@@ -312,10 +344,13 @@ const DEFAULT_LENSES = [
 // issue (a write path, a permission gate, an irreversible delete) to 2–3 focused
 // lenses. A lens is a plain brief string, or a { brief, agentType } object to
 // route to one of the project's own review agents (a silent-failure hunter, a
-// test-coverage analyzer, …).
+// test-coverage analyzer, …). An ABSENT `lenses` field (a non-array, the normal
+// case) falls back to DEFAULT_LENSES; an EXPLICITLY empty array (the plan
+// produced 0, from --max-lenses=0, ADR-0003 §2) passes through as empty — the
+// signal buildAndVerify reads to skip the per-issue verify stage entirely.
 const lensesFor = (issue) => {
   const lenses = issue?.lenses
-  return Array.isArray(lenses) && lenses.length > 0 ? lenses : DEFAULT_LENSES
+  return Array.isArray(lenses) ? lenses : DEFAULT_LENSES
 }
 
 // Shape an implementer result plus its verify outcome into the record that
@@ -426,7 +461,8 @@ const implement = (number) =>
       `${planOverlay(implementerMode, issuesByNumber.get(number)?.plan)}` +
       `Work on a fresh branch off the current integration base. Demonstrate the red — a failing-test commit — before the green, because a test never seen to fail is of unknown value. Refactor only once green.\n` +
       `Automate everything meaningfully automatable, then run the project's full gate suite (discover it from the project) and report the REAL result.\n` +
-      `Resolve genuine ambiguity by the most reasonable assumption and record it; never pause to ask. The one exception is work that cannot proceed without contradicting a settled decision (an ADR or design doc): set status "blocked", record the blocker, and stop only this issue.`,
+      `Resolve genuine ambiguity by the most reasonable assumption and record it; never pause to ask. The one exception is work that cannot proceed without contradicting a settled decision (an ADR or design doc): set status "blocked", record the blocker, and stop only this issue.\n` +
+      `If, during the work, you discover a genuine, previously-unseen danger surface the brief and plan did not anticipate — a write path, a permission gate, an irreversible delete — record it in \`inSituHazard\`; this does not block your progress or change your status, it only flags the surface for independent review.`,
     { label: `implement:#${number}`, phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree', ...roleTuning(roles.implementer) },
   )
 
@@ -447,9 +483,11 @@ const fix = (number, impl, findings) =>
   )
 
 // Run the adversarial panel concurrently; each reviewer gets one lens and only
-// what the gates cannot prove.
-const verify = async (number, impl) => {
-  const lenses = lensesFor(issuesByNumber.get(number))
+// what the gates cannot prove. `lenses` is the panel to run — buildAndVerify
+// passes the issue's own plan panel in the ordinary case, or the single
+// escalated lens when an explicitly empty panel's in-situ hazard just
+// triggered the one sanctioned automatic override (ADR-0003 §5).
+const verify = async (number, impl, lenses) => {
   const verdicts = await parallel(
     lenses.map((lens) => () => {
       // A lens is a brief string, or { brief, agentType } to use a named agent.
@@ -505,11 +543,26 @@ const buildAndVerify = async (number) => {
 
   if (impl.status === 'blocked') return toRecord(number, impl, 'blocked', 'design blocker')
 
-  // Initial verification: the full verifier panel runs EXACTLY ONCE, after green.
+  // The plan's own verifier panel for this issue (ADR-0003 §2): DEFAULT_LENSES
+  // when the plan set none, a risk-scaled override when it named one, or
+  // EXPLICITLY empty when the plan produced 0 (--max-lenses=0). An explicitly
+  // empty panel skips the per-issue verify stage entirely — implement ->
+  // integrate — UNLESS the implementer's in-situ report just earned the one
+  // sanctioned automatic escalation (§5). This never suppresses red-before-green
+  // (checked deterministically, not by a lens) or the mandatory integration
+  // review (not a lens either) — both still run exactly as for any other issue.
+  const panel = lensesFor(issuesByNumber.get(number))
+  if (panel.length === 0 && !shouldEscalateInSitu(impl, panel)) {
+    return toRecord(number, impl, 'done', 'no independent verify: empty panel (--max-lenses=0)')
+  }
+
+  // Initial verification: the full verifier panel runs EXACTLY ONCE, after green
+  // — the plan's own panel, or the single escalated lens (DEFAULT_LENSES) when
+  // an explicitly empty panel just triggered the in-situ override above.
   // Integration proceeds ONLY when the panel explicitly cleared — blockingFindings
   // treats an empty panel (a dead verifier) and a not-clear-without-findings verdict
   // as blocking, so a change never integrates unverified on either escape.
-  const verdicts = await verify(number, impl)
+  const verdicts = await verify(number, impl, panel.length > 0 ? panel : DEFAULT_LENSES)
   let summary = verdicts.map((verdict) => verdict.summary).join(' | ')
   let findings = blockingFindings(verdicts)
   if (findings.length === 0) return toRecord(number, impl, 'done', summary)
