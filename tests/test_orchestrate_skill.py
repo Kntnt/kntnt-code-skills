@@ -1,4 +1,4 @@
-"""Structural tests for the orchestrate SKILL.md guidance (issues #19, #24, #25, #28, #30).
+"""Structural tests for the orchestrate SKILL.md guidance (issues #19, #24, #25, #28, #30, #33).
 
 These read ``skills/orchestrate/SKILL.md`` as text and assert several things the
 skill's prose must carry — among them (issues #19/#24):
@@ -21,6 +21,21 @@ skill's prose must carry — among them (issues #19/#24):
    a scoped ``git branch -D`` — so it never deletes a feature branch or touches
    another run's scaffolding, and leaves #14's worktree teardown and its
    feature-branch ref preservation unchanged.
+
+4. Since #33, the skill is reconciled with ADR-0003 (decoupling per-issue rigor
+   from the ``--level`` dial): ``--max-lenses=N`` in §Arguments, mirroring
+   ``--max-fix-rounds``, with ``N = 0`` as the sole route to a zero per-issue
+   verifier panel while test-first, red-before-green, and the mandatory
+   integration review still hold; ``--pr`` as the explicit conservative partner
+   of ``--merge`` (precedence explicit flag > policy > PR default, ``--pr`` +
+   ``--merge`` together an error, merge authority never inferred); the ADR-0003
+   §5 risk precedence (plan-time hazard → gate, in-situ hazard → one automatic
+   lens, no mid-run pause, ``--yes`` stays gate-only); the ``--max-lenses=0``
+   use-case (a large homogeneous-trivial batch) and non-use-case (a small
+   trivial task calls for a lighter tool); the decision-boundary map rows for
+   both flags; and the amended §5 floor prose — the per-issue-lens floor is
+   breachable only by an explicit ``--max-lenses=0``, never by a level, a
+   policy, or ``--yes``.
 
 Run with: `uv run --with pytest pytest -q`
 """
@@ -742,4 +757,131 @@ def test_decision_boundary_map_marks_defaults_silent_and_risk_optional() -> None
     assert "risk" in section
     assert "optional" in section or "never required" in section, (
         "the map must mark the per-issue Risk marker as optional / never required"
+    )
+
+
+# --- #33: reconcile SKILL.md with ADR-0003 (--max-lenses, --pr) --------------
+
+# ADR-0003 decouples per-issue rigor from the `--level` dial: a new per-run
+# `--max-lenses=N` override (mirroring `--max-fix-rounds`) caps the per-issue
+# verifier panel, and `N = 0` is the sole, explicit route to a zero panel —
+# the only amendment to ADR-0001 §5's inviolable lens floor. A new `--pr` flag
+# is the explicit conservative partner of `--merge`. §5 also defines the risk
+# precedence under `--max-lenses=0`: a plan-time hazard surfaces at the gate
+# (the flag still holds), an in-situ hazard escalates exactly one automatic
+# lens, and there is never a mid-run pause. These tests are structural over
+# SKILL.md's §Arguments, §Model and effort (which folds in the rigor-baseline
+# subsection), and the decision-boundary map.
+
+
+def test_arguments_documents_max_lenses_override() -> None:
+    line = _argument_line("--max-lenses=N").lower()
+    # Mirrors --max-fix-rounds exactly, as a per-run override only.
+    assert "--max-fix-rounds" in line, (
+        "the --max-lenses argument must state it mirrors --max-fix-rounds"
+    )
+    assert "per-run" in line, (
+        "the --max-lenses argument must state it is a per-run override, never "
+        "a policy default"
+    )
+    # N = 0 is the only route to a zero panel.
+    assert re.search(r"n\s*=\s*0", line), (
+        "the --max-lenses argument must document N = 0 as the zero-panel case"
+    )
+    # What a zero panel still keeps: test-first, red-before-green, integration review.
+    assert "test-first" in line, (
+        "the --max-lenses=0 case must state test-first still holds"
+    )
+    assert "red-before-green" in line, (
+        "the --max-lenses=0 case must state red-before-green still holds"
+    )
+    assert "integration review" in line and "mandatory" in line, (
+        "the --max-lenses=0 case must state the mandatory integration review still holds"
+    )
+
+
+def test_arguments_documents_pr_flag() -> None:
+    line = _argument_line("--pr").lower()
+    # The explicit conservative partner of --merge.
+    assert "--merge" in line
+    assert "conservative" in line, (
+        "the --pr argument must be framed as the conservative partner of --merge"
+    )
+    # Precedence: explicit flag > policy > PR default.
+    assert "precedence" in line
+    assert "policy" in line
+    # --pr and --merge together is an error.
+    assert "error" in line, (
+        "the --pr argument must state --pr + --merge together is an error"
+    )
+    # Merge authority is never inferred.
+    assert "never" in line and "infer" in line, (
+        "the --pr argument must state merge authority is never inferred"
+    )
+
+
+def test_rigor_baseline_documents_adr0003_risk_precedence() -> None:
+    section = _model_effort_section().lower()
+    assert "adr-0003" in section, (
+        "the rigor section must cite ADR-0003 for the risk-precedence amendment"
+    )
+    assert "plan-time" in section, (
+        "the risk precedence must name the plan-time-hazard channel (surfaced at the gate)"
+    )
+    assert "in-situ" in section, (
+        "the risk precedence must name the in-situ-hazard channel (one automatic lens)"
+    )
+    assert re.search(r"\bone\b[^.]*\blens\b", section), (
+        "the in-situ channel must escalate exactly ONE automatic lens"
+    )
+    assert "mid-run pause" in section, (
+        "the risk precedence must state there is no mid-run pause"
+    )
+    assert "--yes" in section, (
+        "the risk precedence must restate --yes stays gate-only under --max-lenses=0"
+    )
+
+
+def test_rigor_baseline_states_max_lenses_zero_use_case_and_non_use_case() -> None:
+    section = _model_effort_section().lower()
+    # The use-case: a large, homogeneous, low-risk batch.
+    assert "batch" in section
+    assert "homogeneous" in section or "homogeneous-trivial" in section
+    # The non-use-case: a small trivial task reaches for a lighter tool, not a
+    # verification-off orchestrate run.
+    assert "lighter tool" in section, (
+        "the non-use-case must point a small trivial task at a lighter tool"
+    )
+
+
+def test_rigor_floor_prose_reflects_max_lenses_zero_amendment() -> None:
+    section = _model_effort_section().lower()
+    # The floor is now breachable, but only by the explicit flag.
+    assert "breachable only" in section, (
+        "the §5 floor prose must state the per-issue-lens floor is breachable ONLY"
+    )
+    assert "--max-lenses=0" in section, (
+        "the floor amendment must name the exact breaching flag --max-lenses=0"
+    )
+    # Never by a level, a policy, or --yes.
+    assert "never" in section
+    assert "policy" in section
+    assert "--yes" in section
+
+
+def test_decision_boundary_map_has_max_lenses_row() -> None:
+    section = _decision_map_section().lower()
+    assert "--max-lenses" in section, (
+        "the decision-boundary map must gain a row for --max-lenses"
+    )
+    assert "=0" in section or "= 0" in section, (
+        "the --max-lenses row must name 0 as the floor-breaching value"
+    )
+
+
+def test_decision_boundary_map_has_pr_row_and_never_inferred_note() -> None:
+    section = _decision_map_section().lower()
+    assert "--pr" in section, "the decision-boundary map must gain a row for --pr"
+    assert "never" in section and "infer" in section, (
+        "the decision-boundary map must note merge authority is never inferred"
     )
