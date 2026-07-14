@@ -106,11 +106,12 @@ const INTEGRATE_SCHEMA = {
 }
 
 // `normalizeArgs`, `planIsEmpty`, `blockingFindings`, `unlandedPrerequisites`,
-// `roleTuning`, and `shouldEscalateInSitu` are kept inline as plain internal
-// `const`s because the Workflow harness rejects any top-level `export` beyond the
-// single leading `export const meta` and forbids a top-level `import` — so this
-// script cannot import them. Their tested source of truth is the byte-for-byte
-// identical `lib/orchestrate/engine-helpers.mjs`; keep the two in sync.
+// `roleTuning`, `shouldEscalateInSitu`, and `withInSituHazard` are kept inline as
+// plain internal `const`s because the Workflow harness rejects any top-level
+// `export` beyond the single leading `export const meta` and forbids a top-level
+// `import` — so this script cannot import them. Their tested source of truth is
+// the byte-for-byte identical `lib/orchestrate/engine-helpers.mjs`; keep the two
+// in sync.
 
 /**
  * Normalize the raw `args` the Workflow harness delivers into the single config
@@ -281,6 +282,39 @@ const shouldEscalateInSitu = (report, panel) => {
   // A non-blank `inSituHazard` is the implementer's own flag of a genuine,
   // previously-unseen danger surface — never inferred from any other field.
   return typeof report?.inSituHazard === 'string' && report.inSituHazard.trim().length > 0
+
+}
+
+/**
+ * Fold the implementer's own in-situ hazard (ADR-0003 §5) into a lens panel's
+ * brief(s), so the ONE sanctioned reviewer dispatched on an escalated empty
+ * panel is pointed at the exact danger surface the implementer flagged during
+ * the work, rather than reviewing through the generic brief alone. Used ONLY
+ * for the escalated `DEFAULT_LENSES` dispatch in `buildAndVerify` — an
+ * ordinary, non-empty panel already carries its own risk-scaled framing from
+ * planning and passes straight through to `verify`, never through this helper.
+ *
+ * @param {Array<string|{brief: string, agentType?: string}>} lenses The panel
+ *   to fold the hazard into — each entry a plain brief string or a
+ *   `{brief, agentType}` object routing to a named review agent.
+ * @param {string} hazard The implementer's own `inSituHazard` text. The only
+ *   caller (`buildAndVerify`) reaches this helper exclusively through a panel
+ *   `shouldEscalateInSitu` already confirmed true, so `hazard` is guaranteed a
+ *   non-blank string.
+ * @returns {Array<string|{brief: string, agentType?: string}>} The same shape
+ *   each lens came in as, with its brief appended by a pointer at the flagged
+ *   surface.
+ */
+const withInSituHazard = (lenses, hazard) => {
+
+  // Append the flagged surface to each lens's OWN brief rather than replacing
+  // it, so the escalated reviewer keeps the broad DEFAULT_LENSES framing AND
+  // the specific pointer, and a `{ brief, agentType }` lens keeps its routing.
+  return lenses.map((lens) => {
+    const brief = typeof lens === 'string' ? lens : lens.brief
+    const hazardBrief = `${brief} The implementer flagged this specific in-situ hazard discovered during the work — scrutinize it directly: ${hazard}`
+    return typeof lens === 'string' ? hazardBrief : { ...lens, brief: hazardBrief }
+  })
 
 }
 
@@ -558,11 +592,17 @@ const buildAndVerify = async (number) => {
 
   // Initial verification: the full verifier panel runs EXACTLY ONCE, after green
   // — the plan's own panel, or the single escalated lens (DEFAULT_LENSES) when
-  // an explicitly empty panel just triggered the in-situ override above.
+  // an explicitly empty panel just triggered the in-situ override above. The
+  // escalated lens's brief is folded with the implementer's own `inSituHazard`
+  // text (ADR-0003 §5) via `withInSituHazard`, so the one sanctioned reviewer is
+  // pointed at the exact surface flagged rather than reviewing generically; an
+  // ordinary, non-empty panel already has its own risk-scaled framing from
+  // planning and is passed straight through, untouched by this fold.
   // Integration proceeds ONLY when the panel explicitly cleared — blockingFindings
   // treats an empty panel (a dead verifier) and a not-clear-without-findings verdict
   // as blocking, so a change never integrates unverified on either escape.
-  const verdicts = await verify(number, impl, panel.length > 0 ? panel : DEFAULT_LENSES)
+  const lenses = panel.length > 0 ? panel : withInSituHazard(DEFAULT_LENSES, impl.inSituHazard)
+  const verdicts = await verify(number, impl, lenses)
   let summary = verdicts.map((verdict) => verdict.summary).join(' | ')
   let findings = blockingFindings(verdicts)
   if (findings.length === 0) return toRecord(number, impl, 'done', summary)

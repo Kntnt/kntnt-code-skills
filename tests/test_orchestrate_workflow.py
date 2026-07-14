@@ -820,6 +820,88 @@ def test_should_escalate_in_situ_behaviour() -> None:
     )
 
 
+def test_engine_helpers_exports_with_in_situ_hazard() -> None:
+    # The hazard fold is a pure mapper over a lens panel, so it lives in the
+    # tested source of truth alongside the other engine helpers — the drift
+    # guard then holds its inline workflow copy byte-identical automatically.
+    helpers = ENGINE_HELPERS.read_text(encoding="utf-8")
+    names = _exported_const_names(helpers)
+    assert "withInSituHazard" in names, (
+        "engine-helpers.mjs must export `withInSituHazard` as the tested "
+        "source of truth for folding the implementer's flagged in-situ hazard "
+        "into the escalated lens's brief (ADR-0003 §5)"
+    )
+
+
+_HAZARD_FOLD_HARNESS = """
+import { withInSituHazard } from "__MODULE_URL__";
+const out = {
+  string_lens: withInSituHazard(
+    ['review for correctness'],
+    'discovered live write to /etc/passwd',
+  ),
+  object_lens: withInSituHazard(
+    [{ brief: 'review for correctness', agentType: 'security-reviewer' }],
+    'discovered live write to /etc/passwd',
+  ),
+  multi_lens: withInSituHazard(['lens one', 'lens two'], 'a flagged surface'),
+};
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_with_in_situ_hazard_behaviour() -> None:
+    # AC: the escalated lens's own reviewer is told the SPECIFIC surface the
+    # implementer flagged, not left with only the generic broad brief.
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    harness = _HAZARD_FOLD_HARNESS.replace(
+        "__MODULE_URL__", ENGINE_HELPERS.resolve().as_uri()
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    out = json.loads(result.stdout)
+
+    # AC: a plain string lens comes back as a string still carrying its own
+    # original brief, with the flagged hazard appended.
+    [folded_string] = out["string_lens"]
+    assert isinstance(folded_string, str), "a string lens must fold to a string"
+    assert "review for correctness" in folded_string, (
+        "the fold must keep the lens's own original brief"
+    )
+    assert "discovered live write to /etc/passwd" in folded_string, (
+        "the fold must append the implementer's specific flagged hazard"
+    )
+
+    # AC: an { brief, agentType } lens keeps its routing and its own brief,
+    # with the hazard appended to `brief` only.
+    [folded_object] = out["object_lens"]
+    assert folded_object["agentType"] == "security-reviewer", (
+        "the fold must preserve a named lens's `agentType` routing untouched"
+    )
+    assert "review for correctness" in folded_object["brief"], (
+        "the fold must keep the named lens's own original brief"
+    )
+    assert "discovered live write to /etc/passwd" in folded_object["brief"], (
+        "the fold must append the implementer's specific flagged hazard to "
+        "the named lens's brief"
+    )
+
+    # AC: every lens in a multi-lens panel gets the same hazard folded in, each
+    # keeping its own distinct original brief.
+    first, second = out["multi_lens"]
+    assert "lens one" in first and "a flagged surface" in first
+    assert "lens two" in second and "a flagged surface" in second
+
+
 _LENSES_FOR_HARNESS = """
 const DEFAULT_LENSES = ['DEFAULT_LENS'];
 __LENSES_FOR_DEF__;
@@ -915,19 +997,27 @@ def test_escalation_dispatches_one_lens_normal_panel_unaffected() -> None:
     # AC: on escalation the engine dispatches exactly ONE verify lens — never
     # the still-empty plan panel itself. AC: absent the ADR-0003 fields (a
     # normal >= 1 panel) the lifecycle is unchanged — the panel passes straight
-    # through to verify().
+    # through to verify(), untouched by the hazard fold.
     source = WORKFLOW.read_text(encoding="utf-8")
     block = _agent_block(source, "buildAndVerify")
-    match = re.search(r"await verify\(number, impl, ([^)]*)\)", block)
+    match = re.search(r"^\s*const lenses = (.*)$", block, flags=re.MULTILINE)
     assert match is not None, (
-        "buildAndVerify must call verify(number, impl, <lenses>) with an "
-        "explicit lenses argument"
+        "buildAndVerify must resolve the dispatched lenses into a `lenses` "
+        "variable before calling verify(number, impl, lenses)"
     )
-    lenses_arg = match.group(1).strip()
-    assert lenses_arg == "panel.length > 0 ? panel : DEFAULT_LENSES", (
-        f"expected the lenses argument to pass the plan's own panel through "
-        f"unchanged when non-empty and fall back to the single DEFAULT_LENSES "
-        f"lens only on escalation, got: {lenses_arg!r}"
+    lenses_expr = match.group(1).strip()
+    assert (
+        lenses_expr
+        == "panel.length > 0 ? panel : withInSituHazard(DEFAULT_LENSES, impl.inSituHazard)"
+    ), (
+        f"expected the plan's own panel to pass through unchanged when "
+        f"non-empty, and fall back to the single DEFAULT_LENSES lens folded "
+        f"with the implementer's flagged in-situ hazard only on escalation, "
+        f"got: {lenses_expr!r}"
+    )
+    assert "await verify(number, impl, lenses)" in block, (
+        "buildAndVerify must call verify(number, impl, lenses) with the "
+        "resolved lenses variable"
     )
 
 
