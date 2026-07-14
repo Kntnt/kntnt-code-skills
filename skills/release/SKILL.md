@@ -29,9 +29,10 @@ machine, so even a bare-word trigger only ever reaches a plan and waits.
 
 The plugin root holds the shared pieces this skill uses. This skill lives
 at `skills/release/`; the plugin root is two levels up (also available as
-`${CLAUDE_PLUGIN_ROOT}`). Reach them there: the shared procedure
-`lib/changelog.md`, the baseline `lib/gitignore/base.txt`, and the helper
-`scripts/release.py` (run with `uv run`).
+`${CLAUDE_PLUGIN_ROOT}`). Reach them there: the shared procedures
+`lib/changelog.md` and `lib/commit.md`, the baseline
+`lib/gitignore/base.txt`, and the helper `scripts/release.py` (run with
+`uv run`).
 
 ## Arguments
 
@@ -153,9 +154,10 @@ branch's HEAD.
   `--no-build` is given, then ensure the artifact is named exactly
   `<repo>.zip` (rename if the build emits another name — this keeps a README
   link to the latest release's archive stable).
-- **`.gitignore`**: if the project has none, plan to add one (baseline from
-  `lib/gitignore/base.txt` + stack-specific entries) — `git add -A` in
-  step 8 stages everything. Never touch an existing `.gitignore`.
+- **`.gitignore`** (via `lib/commit.md` step 2): if the project has none,
+  plan to add one (baseline from `lib/gitignore/base.txt` + stack-specific
+  entries) — `git add -A` in step 8 stages everything. Never touch an
+  existing `.gitignore`.
 
 ### 7. Confirmation gate (single)
 
@@ -169,13 +171,16 @@ confirmation in step 2).
 
 Apply everything, stopping and reporting on any failure:
 
-1. Write the `.gitignore` if planned; apply the surgical version edits.
+1. Write the `.gitignore` if planned (`lib/commit.md` step 2); apply the
+   surgical version edits.
 2. Promote the changelog (same command as step 6, without `--dry-run`); it
    rewrites `CHANGELOG.md` and prints the body.
-3. `git add -A` and commit: `Release X.Y.Z: <short comma-separated summary>`
-   drawn from the changelog highlights. Never `--no-verify` — let any
-   configured pre-commit checks run (in this plugin, for example, the commit
-   triggers a version-consistency audit that catches a half-applied bump).
+3. Stage and commit via `lib/commit.md` step 3, supplying release's own
+   message `Release X.Y.Z: <short comma-separated summary>` drawn from the
+   changelog highlights (its message rule uses that verbatim rather than
+   drafting one). Never `--no-verify` — let any configured pre-commit checks
+   run (in this plugin, for example, the commit triggers a version-consistency
+   audit that catches a half-applied bump).
 4. Build the archive if planned (after the commit, so it reflects the
    released code), and rename it to `<repo>.zip`.
 5. Tag: `git tag -a vX.Y.Z -m "vX.Y.Z"` on the main branch's HEAD.
@@ -212,6 +217,8 @@ rather than redoing finished work:
 ## Files this skill uses
 
 - `lib/changelog.md` — shared changelog-reconciliation procedure (also used
-  by `push`).
+  by `commit` and `push`).
+- `lib/commit.md` — shared stage-and-commit mechanic (also used by `commit`
+  and `push`).
 - `lib/gitignore/base.txt` — universal `.gitignore` baseline.
 - `scripts/release.py` — `promote` (CHANGELOG surgery + body) and `extract`.

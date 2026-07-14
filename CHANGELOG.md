@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.13.0] – 2026-07-14
+
+### Added
+
+- **New `/commit` skill — commit the working tree without pushing.** The routine save operation, factored out as the innermost of the three release-workflow skills. It reconciles `CHANGELOG.md`'s `[Unreleased]` section against the real changes since the last release (via `lib/changelog.md`), then stages and commits the current branch (via the new `lib/commit.md`) behind a single confirmation gate, and stops — no push, no version bump, no tag, no branch integration, no platform release. Unlike `/push` and `/release`, it does **not** stop when `[Unreleased]` comes out empty: a pure refactor, a formatting pass or a test-only change carries no user-facing changelog line yet is still worth committing, so `/commit` stops only when the working tree is genuinely clean. Its arguments mirror `/push` — `"message"` for an exact commit message, `--yes` to skip the gate. It triggers on `/commit` or an obvious commit-without-push request in any language; `commit and push` and a bare `push` route to `/push`, and an ambiguous bare `commit` (which might mean a raw `git commit`) asks first.
+
+### Changed
+
+- **`/push` and `/release` now share one commit spine with `/commit`.** The stage-and-commit mechanic — the `.gitignore` safety net, `git add -A && git commit`, never bypassing commit hooks (`--no-verify`), and the commit-message default — was duplicated as prose in both `/push` and `/release`. It is now factored into `lib/commit.md`, the sibling of `lib/changelog.md`, and all three release-workflow skills reference it: `/release` supplies its own `Release X.Y.Z:` message and keeps its bump / rebase / promote ordering *before* the shared commit, so its behaviour is unchanged. As a side effect, `/push`'s stop condition is corrected — it no longer stops when `[Unreleased]` is empty (which wrongly refused to push a non-changelog-worthy change), stopping only when there is nothing to commit and nothing unpushed. `tests/test_commit_push_release_docs.py` guards the shared spine: that `lib/commit.md` exists and all three skills reference it, that `/commit` never runs `git push`, and that the README's spelled-out skill counts track the actual `skills/` directories.
+
 ## [0.12.0] – 2026-07-14
 
 ### Added
@@ -215,7 +225,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.13.0
 [0.12.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.12.0
 [0.11.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.11.0
 [0.10.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.10.0
