@@ -2038,3 +2038,69 @@ def test_integration_hotfix_prompt_is_unchanged_by_the_plan_overlay() -> None:
     assert "IMPLEMENTER_MODE_FRAMINGS" not in block, (
         "the `integrationHotfix` prompt must not consume the mode framing"
     )
+
+
+# The framing lookup is a bracket access on a plain object literal, so a `mode`
+# string that collides with an Object.prototype member ('constructor', 'toString',
+# '__proto__', 'hasOwnProperty', 'valueOf', …) resolves to a truthy INHERITED
+# non-string — a function, or the prototype object — not `undefined`. A bare
+# `framing ?` guard would treat that as a real framing and coerce it into a garbage
+# line ("function Object() { [native code] }" / "[object Object]") injected into the
+# implement prompt. Unreachable through the real contract (the orchestrator emits the
+# closed execute|balanced|autonomous enum or omits the field), so it is minor — but
+# the lookup must require an actual framing STRING before anything reaches the prompt.
+_PLAN_OVERLAY_PROTO_HARNESS = """
+__FRAMINGS_DEF__;
+__OVERLAY_DEF__;
+const out = {
+  constructor_no_plan: planOverlay('constructor', undefined),
+  tostring_no_plan: planOverlay('toString', undefined),
+  proto_no_plan: planOverlay('__proto__', undefined),
+  hasownproperty_no_plan: planOverlay('hasOwnProperty', undefined),
+  valueof_no_plan: planOverlay('valueOf', undefined),
+  tostring_with_plan: planOverlay('toString', 'PLANBODY_ZETA'),
+};
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_plan_overlay_hardens_against_prototype_key_collision() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    source = WORKFLOW.read_text(encoding="utf-8")
+    harness = _PLAN_OVERLAY_PROTO_HARNESS.replace(
+        "__FRAMINGS_DEF__",
+        _extract_braced_const(source, "IMPLEMENTER_MODE_FRAMINGS"),
+    ).replace("__OVERLAY_DEF__", _extract_braced_const(source, "planOverlay"))
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+
+    # A prototype-colliding mode with no plan must select NO framing, so the whole
+    # overlay is empty — never a coerced inherited-member framing line.
+    for key in (
+        "constructor_no_plan",
+        "tostring_no_plan",
+        "proto_no_plan",
+        "hasownproperty_no_plan",
+        "valueof_no_plan",
+    ):
+        assert out[key] == "", (
+            f"a prototype-colliding mode ({key}) with no plan must yield an empty "
+            f"overlay, never a coerced inherited-member framing line"
+        )
+
+    # With a plan the plan block still shows, but the colliding mode contributes no
+    # framing and no coerced-member text ("[native code]" / "[object Object]" /
+    # "function") leaks into the prompt.
+    assert "PLANBODY_ZETA" in out["tostring_with_plan"]
+    assert "native code" not in out["tostring_with_plan"]
+    assert "[object Object]" not in out["tostring_with_plan"]
+    assert "function" not in out["tostring_with_plan"]
