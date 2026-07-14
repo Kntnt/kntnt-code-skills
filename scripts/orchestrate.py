@@ -888,12 +888,43 @@ def derive_rigor(
     )
 
 
+def cap_lenses(
+    rigor: dict[int, RigorResult], level: str, max_lenses: int | None
+) -> tuple[dict[int, list[str]], list[int]]:
+    """Cap each issue's verifier panel to at most `max_lenses`, ADR-0003 §2.
+
+    A pure post-step applied AFTER the level+risk derivation in `rigor`, so it
+    can only ever lower a panel (via truncation), never raise one; passing
+    `None` leaves every panel exactly as derived. Returns the capped `lenses`
+    per issue number, plus the numbers of any issue whose panel was plan-time
+    risk-escalated (its derived panel exceeds the level's own baseline size —
+    a `Risk:` marker or `risk:*` label pushed it up) yet still lands at 0
+    lenses under `max_lenses=0` — the flag holds, never silently
+    re-escalated, but the caller surfaces these in `warnings` for gate
+    visibility (ADR-0003 §5).
+    """
+
+    if max_lenses is None:
+        return {number: result.lenses for number, result in rigor.items()}, []
+
+    baseline_lenses = RIGOR_TIERS[LEVEL_RANK[level]]["lenses"]
+    capped: dict[int, list[str]] = {}
+    floor_breached_with_risk: list[int] = []
+    for number, result in rigor.items():
+        capped[number] = result.lenses[:max_lenses]
+        if max_lenses == 0 and len(result.lenses) > baseline_lenses:
+            floor_breached_with_risk.append(number)
+
+    return capped, floor_breached_with_risk
+
+
 def build_plan(
     kept: list[Issue],
     excluded: list[Issue],
     scope_label: str,
     level: str = DEFAULT_LEVEL,
     max_fix_rounds: int | None = None,
+    max_lenses: int | None = None,
 ) -> dict[str, Any]:
     """Assemble the plan the orchestrator dispatches from. The existing fields
     (`scope_label`, `issues`, `waves`, `external_dependencies`, `excluded`) are
@@ -913,6 +944,13 @@ def build_plan(
     the highest an in-scope issue's risk tier warrants, floored at 1. An explicit
     `Risk: low` marker contradicted by a `risk:*` hazard label is surfaced in
     `warnings` rather than silently applied.
+
+    `max_lenses`, when given, caps every issue's `lenses` panel to at most that
+    many entries (ADR-0003 §2) — a pure post-step over the level+risk-derived
+    panel above, so it only ever lowers a panel, never raises one. `0` empties
+    the panel outright; when that meets an issue whose panel had been
+    plan-time risk-escalated, the panel still lands at `0` (the flag holds)
+    but `warnings` names the issue (ADR-0003 §5).
 
     Raises ValueError (via `build_waves`) when the in-scope graph has a cycle.
     """
@@ -953,14 +991,27 @@ def build_plan(
         max_fix_rounds if max_fix_rounds is not None else derived_fix_rounds
     )
 
-    # Surface every unresolved-dependency warning and every risk disagreement at
-    # the top level, prefixed with the issue it came from, so a section whose
-    # prose named a prerequisite that matched nothing — or an explicit low that
-    # clashes with a hazard label — is loud rather than silently swallowed.
+    # Apply the --max-lenses cap as a pure post-step over the level+risk-derived
+    # panels above (ADR-0003 §2): it can only ever lower a panel, never raise
+    # one. `floor_breached_with_risk` names the issues where a plan-time risk
+    # escalation still lands at 0 lenses under --max-lenses=0 — reported below,
+    # never silently re-escalated.
+    capped_lenses, floor_breached_with_risk = cap_lenses(rigor, level, max_lenses)
+
+    # Surface every unresolved-dependency warning, every risk disagreement, and
+    # every risk-escalated issue the lens cap floored to 0, prefixed with the
+    # issue it came from, so a section whose prose named a prerequisite that
+    # matched nothing — or a hazard the cap still zeroed out — is loud rather
+    # than silently swallowed.
     warnings = [
         f"#{issue.number}: {warning}"
         for issue in kept
         for warning in (*issue.warnings, *rigor[issue.number].warnings)
+    ] + [
+        f"#{number}: --max-lenses=0 holds despite this issue's plan-time risk "
+        "escalation; independent per-issue verification is skipped "
+        "(ADR-0003 §5)"
+        for number in floor_breached_with_risk
     ]
 
     return {
@@ -973,7 +1024,7 @@ def build_plan(
                 "title": i.title,
                 "blocked_by": sorted(i.blocked_by),
                 "no_brief": i.no_brief,
-                "lenses": rigor[i.number].lenses,
+                "lenses": capped_lenses[i.number],
             }
             for i in kept
         ],
@@ -1220,6 +1271,11 @@ def cmd_plan(args: argparse.Namespace) -> int:
     if args.max_fix_rounds is not None and args.max_fix_rounds < 0:
         fail("--max-fix-rounds must be zero or greater")
 
+    # `0` lenses is the deliberate ADR-0003 floor-breach; a negative cap is not a
+    # meaningful panel size and would silently invert "cap", so reject it.
+    if args.max_lenses is not None and args.max_lenses < 0:
+        fail("--max-lenses must be zero or greater")
+
     try:
         issues = load_issues(sys.stdin.read())
     except ValueError as exc:
@@ -1234,6 +1290,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
             args.scope_label,
             level=args.level,
             max_fix_rounds=args.max_fix_rounds,
+            max_lenses=args.max_lenses,
         )
     except ValueError as exc:
         fail(str(exc))
@@ -1299,6 +1356,15 @@ def main() -> int:
         metavar="N",
         help="Override the derived run-level fix-round cap. `0` (a scan/triage "
         "run) is reachable ONLY here — no level defaults to it.",
+    )
+    plan_parser.add_argument(
+        "--max-lenses",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Cap every issue's verifier panel (issues[].lenses) to at most N "
+        "lenses, applied after the level+risk derivation so it only ever "
+        "lowers a panel (ADR-0003 §2). `0` empties the panel outright.",
     )
     plan_parser.add_argument(
         "--exclude-label",

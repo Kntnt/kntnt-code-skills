@@ -1299,9 +1299,7 @@ def test_build_plan_max_lenses_zero_with_risk_stays_zero_and_warns() -> None:
 
 def test_build_plan_max_lenses_zero_with_risk_label_stays_zero_and_warns() -> None:
     # Same escalation source, via the risk:* label channel instead of the marker.
-    plan = _plan(
-        "Standalone.", labels=["risk:high"], level="XS", max_lenses=0
-    )
+    plan = _plan("Standalone.", labels=["risk:high"], level="XS", max_lenses=0)
     assert _lenses(plan) == []
     assert any("#1" in warning for warning in plan["warnings"])
 
