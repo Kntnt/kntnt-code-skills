@@ -1011,9 +1011,11 @@ def _plan(
     labels: list[str] | None = None,
     level: str = "M",
     max_fix_rounds: int | None = None,
+    max_lenses: int | None = None,
 ) -> dict[str, Any]:
     """Load a single-issue plan from a body and return the built plan JSON. The
-    level and fix-round override thread straight through to build_plan."""
+    level, fix-round override, and lens-cap override thread straight through to
+    build_plan."""
 
     entry = {
         "number": number,
@@ -1023,7 +1025,12 @@ def _plan(
     }
     issues = orchestrate.load_issues(json.dumps([entry]))
     return orchestrate.build_plan(
-        issues, [], "ready-for-agent", level=level, max_fix_rounds=max_fix_rounds
+        issues,
+        [],
+        "ready-for-agent",
+        level=level,
+        max_fix_rounds=max_fix_rounds,
+        max_lenses=max_lenses,
     )
 
 
@@ -1219,3 +1226,88 @@ def test_build_plan_run_level_cap_is_the_max_across_issues() -> None:
     assert plan["maxFixRounds"] == 2
     assert len(_lenses(plan, 1)) == 1
     assert len(_lenses(plan, 2)) == 3
+
+
+# --- --max-lenses rigor override (issue #31, ADR-0003 §2/§5) -------------------
+#
+# `--max-lenses=N` caps each in-scope issue's verifier panel to at most N,
+# applied AFTER the level+risk derivation above, so it can only ever lower a
+# panel, never raise one. `N=0` is the floor-breaching value: it empties the
+# panel outright, except that an issue carrying a plan-time risk escalation
+# (a `Risk:` marker or `risk:*` label that pushed its panel above the level's
+# own baseline) still lands at 0 lenses (the flag holds) but is named in
+# `warnings` for gate visibility. Omitting the flag must reproduce today's
+# level+risk baseline exactly.
+
+
+def test_plan_cli_rejects_a_negative_max_lenses() -> None:
+    raw = '[{"number":1,"title":"A","labels":[],"body":"x"}]'
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "plan", "--max-lenses=-1"],
+        input=raw,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+
+
+def test_plan_cli_accepts_max_lenses_and_caps_the_panel() -> None:
+    # The real CLI accepts --max-lenses and the cap reaches the emitted plan.
+    raw = '[{"number":7,"title":"A","labels":[],"body":"Standalone."}]'
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "plan", "--level=XL", "--max-lenses=1"],
+        input=raw,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    plan = json.loads(result.stdout)
+    assert len(plan["issues"][0]["lenses"]) == 1
+
+
+def test_build_plan_max_lenses_caps_a_level_derived_panel() -> None:
+    # XL alone derives a 3-lens panel; --max-lenses=1 pulls it down to 1.
+    plan = _plan("Standalone.", level="XL", max_lenses=1)
+    assert len(_lenses(plan)) == 1
+
+
+def test_build_plan_max_lenses_never_raises_a_smaller_panel() -> None:
+    # The cap only ever lowers a panel: an M-baseline (1 lens) issue stays at 1
+    # even though --max-lenses=5 permits up to five.
+    plan = _plan("Standalone.", level="M", max_lenses=5)
+    assert len(_lenses(plan)) == 1
+
+
+def test_build_plan_max_lenses_zero_empties_an_unremarkable_issue() -> None:
+    # No hazard signal at all: the panel empties outright, no warning, and every
+    # other plan field (here maxFixRounds) is unaffected by the lens cap.
+    capped = _plan("Standalone.", level="XL", max_lenses=0)
+    uncapped = _plan("Standalone.", level="XL")
+    assert _lenses(capped) == []
+    assert capped["warnings"] == []
+    assert capped["maxFixRounds"] == uncapped["maxFixRounds"]
+
+
+def test_build_plan_max_lenses_zero_with_risk_stays_zero_and_warns() -> None:
+    # A plan-time risk escalation (Risk: high pushes an XS issue's panel above
+    # the XS baseline) still lands at 0 lenses under --max-lenses=0 -- the flag
+    # holds -- but the issue is named in warnings for gate visibility.
+    plan = _plan("Risk: high — irreversible delete path.", level="XS", max_lenses=0)
+    assert _lenses(plan) == []
+    assert any("#1" in warning for warning in plan["warnings"])
+
+
+def test_build_plan_max_lenses_zero_with_risk_label_stays_zero_and_warns() -> None:
+    # Same escalation source, via the risk:* label channel instead of the marker.
+    plan = _plan(
+        "Standalone.", labels=["risk:high"], level="XS", max_lenses=0
+    )
+    assert _lenses(plan) == []
+    assert any("#1" in warning for warning in plan["warnings"])
+
+
+def test_build_plan_absent_max_lenses_reproduces_the_level_risk_baseline() -> None:
+    # No regression: omitting --max-lenses leaves the level+risk-derived panel
+    # exactly as it was before this cap existed.
+    plan = _plan("Risk: high.", level="XS")
+    assert len(_lenses(plan)) == 3
