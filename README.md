@@ -106,7 +106,7 @@ Pass the modules that match the project's profile; `general` and any prerequisit
 
 - `/release minor` / `major` / `1.4.0` – force the bump level or an exact version, overriding the changelog-derived proposal.
 - `/release --no-build` – skip rebuilding the user archive (when you just built it).
-- `/release --yes` – skip the confirmation gate (never the first-run detection of where the version lives).
+- `/release --yes` – suppress all interactive prompts, no exceptions: skips the confirmation gate and, on a first run, proceeds on the best-detected version locations instead of confirming them, reporting what it detected.
 - `/push "message"` / `/commit "message"` – use an exact commit message instead of an auto-drafted one.
 - `/push --yes` / `/commit --yes` – skip the confirmation gate.
 

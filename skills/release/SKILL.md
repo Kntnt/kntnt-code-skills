@@ -39,8 +39,10 @@ at `skills/release/`; the plugin root is two levels up (also available as
 - `minor` / `major` / `X.Y.Z` — force the bump level or an exact version,
   overriding the changelog-derived proposal.
 - `--no-build` — skip rebuilding the archive (use when it was just built).
-- `--yes` — skip the confirmation gate (never the first-run record
-  confirmation).
+- `--yes` — suppress all interactive prompts, no exceptions: skips the
+  confirmation gate (step 7) and, on a first run, step 2's project-record
+  confirmation as well — proceeding on the best-detected record and
+  reporting what it detected instead of asking.
 
 ## Project record (first-run setup)
 
@@ -78,10 +80,13 @@ conventional places, expecting several: a WordPress plugin's `Version:`
 header plus `readme.txt`'s `Stable tag:`; `package.json`; `composer.json`;
 `pyproject.toml`; a manifest's `version`; a skill's frontmatter `version:`;
 `CHANGELOG.md`'s latest heading; etc. — and whether a build produces an
-end-user zip. Confirm everything before recording it; this confirmation is
-**never** skipped, even with `--yes` (a wrong version location is the
-costliest error). Whenever a new location surfaces later, update the chosen
-home automatically.
+end-user zip. Confirm everything before recording it — unless `--yes` is
+given, in which case proceed straight on the best-detected record instead
+of asking (a wrong version location is the costliest error, which is
+exactly why step 2 below always **reports what it detected and recorded**
+rather than staying silent — the safety valve becomes visible reporting,
+not a blocking question). Whenever a new location surfaces later, update
+the chosen home automatically.
 
 ## Flow
 
@@ -94,7 +99,10 @@ meant, confirm first. Otherwise proceed.
 
 Determine the version locations and archive build per *Project record*
 above — read them from a verification script if one enforces them, else
-from an existing `CLAUDE.md`/`README.md`, else detect and confirm them.
+from an existing `CLAUDE.md`/`README.md`, else detect them. Confirm the
+detection before persisting it — unless `--yes` is given, in which case
+persist directly on the best detection and **report** it (the version
+locations found, the archive decision) as part of the run's output.
 Persist per that precedence (or rely on the script); never create a file
 solely for this.
 
@@ -164,8 +172,8 @@ branch's HEAD.
 Show the whole plan and wait for one confirmation: target version and bump,
 the changelog diff, every version-file edit, the promotion preview, the
 commit message, the tag, the branch integration, the build, and the release
-title/body/asset. `--yes` skips this gate (but never the first-run record
-confirmation in step 2).
+title/body/asset. `--yes` skips this gate — the same uniform, no-exceptions
+rule by which it also skips step 2's first-run record confirmation.
 
 ### 8. Execute
 
