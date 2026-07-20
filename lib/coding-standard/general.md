@@ -95,7 +95,7 @@ No sniff can express a comment-specific width, so rule 1 is enforced by review, 
 
 ### Whitespace
 
-- **No vertical alignment of `=` or `=>`.** Single-space the operator and move on; realignment churn on every edit costs more than the negligible visual benefit.
+- **No vertical alignment of `=` or `=>`.** Single-space the operator and move on; realignment churn on every edit costs more than the negligible visual benefit. No sniff enforces this — the phpcs sniffs that touch alignment (e.g. `Generic.Formatting.MultipleStatementAlignment`, `WordPress.Arrays.MultipleStatementAlignment`) can only ever demand alignment, never forbid it — so review catches violations, and a project ruleset excluding those sniffs is the expected, correct posture, not a gap.
 - **No padding inside short collections.** Short array literals stay on one line: `[1, 2, 3]`.
 - **No gratuitous line breaks** in parameter lists. One line unless it becomes hard to read or exceeds the formatter's max width.
 - **Motivated line breaks are fine.** Break an array literal across lines when its elements naturally form a list or matrix — lookup tables, observer thresholds, route definitions, fixture rows. Content-driven, not character-count-driven. Do not split a short call like `create_user( $name, $email, $role )`.

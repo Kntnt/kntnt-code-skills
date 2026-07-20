@@ -64,8 +64,7 @@ def _alignment_bullet(text: str) -> str:
 def test_alignment_bullet_states_no_tooling_enforces_it() -> None:
     bullet = _alignment_bullet(LIB_GENERAL.read_text(encoding="utf-8"))
     assert re.search(r"no sniff\b.*enforces", bullet, flags=re.IGNORECASE), (
-        "the no-alignment rule must state that no sniff enforces it — "
-        f"got: {bullet!r}"
+        f"the no-alignment rule must state that no sniff enforces it — got: {bullet!r}"
     )
 
 
