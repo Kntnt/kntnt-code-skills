@@ -14,7 +14,9 @@ The plugin exposes two coding-standard skills, two project-lifecycle skills, thr
 - **`/push`** – the routine companion: reconcile the changelog, commit and push the current branch – no bump, tag or release. Run it often so the changelog never falls behind.
 - **`/commit`** – `/push` without the push: reconcile the changelog, then commit the working tree on the current branch and stop, leaving the result on your machine. Everything `/push` does locally, for when you want work saved but not yet shared.
 - **`/orchestrate`** – an away-from-keyboard build that turns a project's open issues into finished code: it plans from the issues' dependency graph, dispatches one implementer sub-agent per issue (test-first), runs fresh independent sub-agents that adversarially verify what the gates cannot, integrates in dependency order and ends with one consolidated report. It stops short of releasing.
-- **`/help`** – a typed-only command (`/kntnt-code-skills:help [skill-name]`): a manpage-style overview of the plugin's skills, or one skill's details. Its output is rendered from the plugin's own `.claude-plugin/plugin.json` and `skills/<name>/SKILL.md` by `scripts/help.py`, so it never drifts from the actual skills.
+- **`/help`** – a typed-only command (`/kntnt-code-skills:help [skill-name]`): the plugin overview, or one skill's full manual page. `scripts/help.py` echoes it verbatim from the plugin's own `.claude-plugin/plugin.json` and `docs/man/*.md`, so the help text can never drift from the manual pages themselves; `--help`/`-h`/`help` on any skill reaches the same page.
+
+The full option reference for every skill lives in its manual page — [`coder`](docs/man/coder.md), [`coding-standard`](docs/man/coding-standard.md), [`init`](docs/man/init.md), [`doctor`](docs/man/doctor.md), [`release`](docs/man/release.md), [`push`](docs/man/push.md), [`commit`](docs/man/commit.md), and [`orchestrate`](docs/man/orchestrate.md) — also reachable as `/kntnt-code-skills:help <skill>` or `/<skill> --help`.
 
 ## Installation
 
@@ -90,7 +92,7 @@ the strongest implementer reasoning autonomously, no per-issue independent verif
 
 Most usage is just invoking the skills. Two things are available for going further, short of contributing to the plugin itself.
 
-**Running the engine directly.** `/coding-standard` calls `scripts/scaffold.py`, but it can also be run by hand. It is a `uv`-run Python script (it provisions Python from its PEP 723 metadata; standard-library only):
+**Running the engine directly.** `/coding-standard` calls `scripts/scaffold.py`, but it can also be run by hand. (For the skill itself, see its manual page: [`coding-standard`](docs/man/coding-standard.md).) The script is a `uv`-run Python script (it provisions Python from its PEP 723 metadata; standard-library only):
 
 ```bash
 uv run scripts/scaffold.py \
@@ -102,13 +104,7 @@ uv run scripts/scaffold.py \
 
 Pass the modules that match the project's profile; `general` and any prerequisites are always included automatically. The script picks its mode from the project's state: when `agents.d/coding-standard/` holds no module file it **creates** the files (one `agents.d/coding-standard/<module>.md` per module, the `AGENTS.md` References and the `CLAUDE.md` bridge); when it is already scaffolded and no `--update` is given it **investigates** and prints a read-only drift report (each module `up to date` or `differs (would be updated)`, plus modules that would be added or removed); with `--update` it **reconciles** the files to the given `--include`, rewriting every module whose content differs, adding new modules and removing dropped ones (and pruning their References). `--dry-run` previews any path; `--force` only overrides the project-root sanity check. Exit codes: `0` success; `1` bad arguments, missing module source or failed sanity check. Run `uv run scripts/scaffold.py --help` for the full set of options.
 
-**Release-skill arguments.** `/release`, `/push` and `/commit` take optional arguments:
-
-- `/release minor` / `major` / `1.4.0` – force the bump level or an exact version, overriding the changelog-derived proposal.
-- `/release --no-build` – skip rebuilding the user archive (when you just built it).
-- `/release --yes` – suppress all interactive prompts, no exceptions: skips the confirmation gate and, on a first run, proceeds on the best-detected version locations instead of confirming them, reporting what it detected.
-- `/push "message"` / `/commit "message"` – use an exact commit message instead of an auto-drafted one.
-- `/push --yes` / `/commit --yes` – skip the confirmation gate.
+**Release-skill arguments.** `/release`, `/push` and `/commit` take optional arguments; the full reference is each skill's own manual page — [`release`](docs/man/release.md), [`push`](docs/man/push.md), [`commit`](docs/man/commit.md) — also reachable as `/release --help`, `/push --help`, `/commit --help`, or `/kntnt-code-skills:help <skill>`.
 
 ## Contributing
 

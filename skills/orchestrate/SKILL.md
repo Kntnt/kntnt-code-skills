@@ -24,6 +24,10 @@ This is an outward-facing, autonomous run: it spawns many sub-agents and, when a
 
 The plugin root holds the pieces this skill uses. This skill lives at `skills/orchestrate/`; the plugin root is two levels up (also `${CLAUDE_PLUGIN_ROOT}`). Reach them there: the deterministic helper `scripts/orchestrate.py` (run with `uv run`) and the engine `skills/orchestrate/orchestrate.workflow.js` (run through the Workflow tool).
 
+## 0. Help gate
+
+If the arguments are `help`, `--help`, or `-h`, run `uv run "${CLAUDE_PLUGIN_ROOT}/scripts/help.py" orchestrate`, emit its output verbatim as Markdown, and stop. Do nothing else — no issue is read, no sub-agent is dispatched.
+
 ## Cost model — read this first
 
 The work must land in the **interactive subscription pool**, not the headless credit pool. So:

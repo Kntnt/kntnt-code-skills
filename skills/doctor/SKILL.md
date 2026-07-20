@@ -21,6 +21,10 @@ The cheap, deterministic checks run in `scripts/doctor.py` (JSON findings); the 
 
 It is explicit-only and it can rewrite files. Run it only when Thomas asks to diagnose or reconcile a project; when the intent is unclear, ask first.
 
+## 0. Help gate
+
+If the arguments are `help`, `--help`, or `-h`, run `uv run "${CLAUDE_PLUGIN_ROOT}/scripts/help.py" doctor`, emit its output verbatim as Markdown, and stop. Do nothing else — no check runs, no fix is applied.
+
 ## Arguments
 
 - `--yes` — apply every proposed fix without the selection prompt. It still **never commits** — doctor's fixes are left in the working tree for review.

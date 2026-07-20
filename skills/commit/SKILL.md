@@ -23,6 +23,10 @@ Because it stops at the commit, `commit` stays on your machine — nothing leave
 
 The plugin root holds the shared pieces this skill uses. This skill lives at `skills/commit/`; the plugin root is two levels up (also available as `${CLAUDE_PLUGIN_ROOT}`). Reach them there: `lib/changelog.md`, `lib/commit.md`, `lib/gitignore/base.txt`.
 
+## 0. Help gate
+
+If the arguments are `help`, `--help`, or `-h`, run `uv run "${CLAUDE_PLUGIN_ROOT}/scripts/help.py" commit`, emit its output verbatim as Markdown, and stop. Do nothing else — no changelog reconciliation, no git operation.
+
 ## Arguments
 
 - `"message"` — use this exact commit message instead of an auto-drafted one.

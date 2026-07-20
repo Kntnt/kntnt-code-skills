@@ -24,6 +24,10 @@ This skill applies Kntnt's coding standard to a code task. It is shipped as part
 
 The standard itself lives in topic modules under the plugin's `lib/coding-standard/`. This file is a **lazy bootstrap**: it never front-loads the standard. When the project already carries its own copy it loads nothing at all; otherwise it pulls in each module only at the moment the working context proves that one is needed.
 
+## 0. Help gate
+
+If the arguments are `help`, `--help`, or `-h`, run `uv run "${CLAUDE_PLUGIN_ROOT}/scripts/help.py" coder`, emit its output verbatim as Markdown, and stop. Do nothing else — no code is read, written, or reviewed.
+
 ## How loading works
 
 A skill trigger loads only this file. Before reaching for anything in the plugin, check whether the project already carries the standard — when it does, you load nothing more. Otherwise you load the router and pull modules in one at a time as the context reveals which ones apply, keeping this file and the router resident so you can keep pulling more in whenever a new language or framework surfaces — quietly, in the background. Either way, the context cost stays the minimum the situation allows.

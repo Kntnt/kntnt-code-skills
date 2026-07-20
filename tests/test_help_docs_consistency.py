@@ -224,7 +224,9 @@ def test_help_overview_carries_each_manpage_name_line(skill: str) -> None:
         f"{skill}.md NAME line is malformed: {name_line!r}"
     )
 
-    overview = help_module.render_overview(REPO_ROOT, help_module.skill_names(REPO_ROOT))
+    overview = help_module.render_overview(
+        REPO_ROOT, help_module.skill_names(REPO_ROOT)
+    )
     assert name_line in overview, f"overview omits the NAME line of {skill!r}"
 
 

@@ -2,15 +2,16 @@
 # requires-python = ">=3.12"
 # dependencies = []
 # ///
-"""Render the manpage-style ``/help`` output for the kntnt-code-skills plugin.
+"""Echo the manual-page ``/help`` output for the kntnt-code-skills plugin.
 
 The plugin's own files are the single source of truth:
-``.claude-plugin/plugin.json`` supplies the header fields and
-``skills/<name>/SKILL.md`` supplies each skill's intro paragraph. The script
-extracts that material and emits the fully formatted block — word wrapping,
-column alignment, and single-space separator lines all resolved here — so the
-slash command only has to print the result verbatim. Pass an optional skill
-name for the detail view; pass nothing for the overview.
+``.claude-plugin/plugin.json`` supplies the header and blurb, and each
+``docs/man/<skill>.md`` is a full manual page. This script does not render or
+re-align anything — Claude Code renders GitHub-flavoured Markdown in the
+terminal, so the manual pages are emitted verbatim. With no argument it prints
+the overview (the plugin blurb and every skill's NAME line); with a skill name
+it echoes that skill's manual page; with anything else it prints the
+unknown-skill line.
 """
 
 from __future__ import annotations
@@ -18,19 +19,13 @@ from __future__ import annotations
 import json
 import os
 import sys
-import textwrap
 from pathlib import Path
 
-# Hard line budget for wrapped prose. The header and closing lines are exempt —
-# a repository URL cannot be wrapped at a word boundary — so only intro
-# paragraphs and the plugin description are held to it.
-LINE_WIDTH: int = 80
-
-# Visual separators are emitted as a single space rather than a truly empty
-# line: Claude.app's fenced-code renderer collapses empty lines but keeps
-# single-space ones, and in a terminal the space is indistinguishable from
-# blank.
-BLANK: str = " "
+# Manual-page stems that document a command rather than a skill: echo-able by
+# name (so ``help help`` would work if such a page existed) but never listed
+# under the overview's Skills. This plugin ships no command page today, but
+# the deny-list keeps the mechanism ready for one without further changes.
+COMMAND_PAGES = frozenset({"help"})
 
 
 def plugin_root() -> Path:
@@ -41,134 +36,97 @@ def plugin_root() -> Path:
     return Path(env) if env else Path(__file__).resolve().parent.parent
 
 
-def intro_paragraph(skill_md: Path) -> str:
-    """Extract a skill's intro paragraph: the first non-empty paragraph after
-    the level-one heading and before the first ``## `` heading.
+def man_dir(root: Path) -> Path:
+    """Return the directory holding the per-skill manual pages."""
 
-    Physical line breaks inside the paragraph are normalised to single spaces
-    so the caller can re-wrap freely; the words themselves are preserved
-    verbatim.
-    """
+    return root / "docs" / "man"
 
-    lines = skill_md.read_text(encoding="utf-8").splitlines()
 
-    # Drop YAML frontmatter so its `---` fences and fields never leak into the
-    # body scan.
-    if lines and lines[0].strip() == "---":
-        closing = next(
-            (i for i in range(1, len(lines)) if lines[i].strip() == "---"), None
-        )
-        if closing is not None:
-            lines = lines[closing + 1 :]
+def man_names(root: Path) -> list[str]:
+    """List every manual-page stem, alphabetically — skills and commands alike."""
 
-    # Locate the level-one heading; the intro paragraph is the first prose block
-    # beneath it.
-    start = next((i for i in range(len(lines)) if lines[i].startswith("# ")), None)
+    pages = man_dir(root)
+    if not pages.is_dir():
+        return []
+    return sorted(p.stem for p in pages.glob("*.md"))
+
+
+def skill_names(root: Path) -> list[str]:
+    """List the skills that have a manual page — the command pages excluded."""
+
+    return [name for name in man_names(root) if name not in COMMAND_PAGES]
+
+
+def name_line(root: Path, skill: str) -> str:
+    """Extract a manual page's NAME line: the first non-empty line after the
+    ``## NAME`` heading. Returns an empty string when the page has none."""
+
+    lines = (man_dir(root) / f"{skill}.md").read_text(encoding="utf-8").splitlines()
+
+    # Find the NAME heading, then the first non-empty line beneath it.
+    start = next(
+        (i for i in range(len(lines)) if lines[i].strip().lower() == "## name"), None
+    )
     if start is None:
         return ""
-
-    # Collect consecutive non-blank lines, skipping leading blanks and stopping
-    # at the next section heading or the paragraph's trailing blank line.
-    paragraph: list[str] = []
     for line in lines[start + 1 :]:
-        if line.startswith("## "):
-            break
         if line.strip():
-            paragraph.append(line.strip())
-        elif paragraph:
-            break
-
-    return " ".join(paragraph)
-
-
-def wrap(
-    text: str,
-    width: int = LINE_WIDTH,
-    initial: str = "",
-    subsequent: str = "",
-) -> list[str]:
-    """Word-wrap prose to ``width`` with separate first-line and continuation
-    indents, leaving words and hyphens intact.
-
-    Both indents count toward ``width``, so a first line carrying an alignment
-    prefix still respects the line budget.
-    """
-
-    return textwrap.wrap(
-        text,
-        width=width,
-        initial_indent=initial,
-        subsequent_indent=subsequent,
-        break_long_words=False,
-        break_on_hyphens=False,
-    )
-
-
-def skill_dirs(root: Path) -> list[str]:
-    """List skill directory names that carry a SKILL.md, alphabetically."""
-
-    return sorted(
-        d.name for d in (root / "skills").iterdir() if (d / "SKILL.md").is_file()
-    )
+            return line.strip()
+    return ""
 
 
 def render_overview(root: Path, names: list[str]) -> str:
-    """Render the full overview block: header, wrapped plugin description, and
-    one aligned entry per skill."""
+    """Assemble the overview: the plugin header and blurb, then one bullet per
+    skill carrying its NAME line."""
 
     manifest = json.loads(
         (root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")
     )
 
-    # Header line plus the wrapped plugin description.
-    header = f"{manifest['name']} {manifest['version']}  ·  {manifest['repository']}"
-    out = [header, BLANK]
-    out += wrap(manifest["description"])
-    out += [BLANK, "Skills:", BLANK]
-
-    # Align every description to a shared column two spaces past the longest
-    # slash-name.
-    label_width = max(len(f"/{name}") for name in names) + 2
-    desc_indent = " " * (2 + label_width)
-    for name in names:
-        prefix = "  " + f"/{name}".ljust(label_width)
-        body = intro_paragraph(root / "skills" / name / "SKILL.md")
-        out += wrap(body, initial=prefix, subsequent=desc_indent) or [prefix.rstrip()]
-        out.append(BLANK)
-
-    out.append(f"For details on one skill:  /{manifest['name']}:help <skill-name>")
+    out = [
+        f"**{manifest['name']} {manifest['version']}** · {manifest['repository']}",
+        "",
+        manifest["description"],
+        "",
+        "## Skills",
+        "",
+    ]
+    out += [f"- {name_line(root, name)}" for name in names]
+    out += [
+        "",
+        f"For a skill's full manual page: `/{manifest['name']}:help <skill>`",
+    ]
     return "\n".join(out)
 
 
-def render_detail(root: Path, name: str) -> str:
-    """Render the single-skill detail block: the ``/<name>`` heading and its
-    wrapped intro paragraph."""
+def render_detail(root: Path, skill: str) -> str:
+    """Echo a skill's manual page verbatim."""
 
-    body = intro_paragraph(root / "skills" / name / "SKILL.md")
-    return "\n".join([f"/{name}", BLANK, *wrap(body)])
+    return (man_dir(root) / f"{skill}.md").read_text(encoding="utf-8").rstrip("\n")
 
 
 def render_unknown(arg: str, names: list[str]) -> str:
-    """Render the one-line error naming the unrecognised skill and listing the
-    known ones."""
+    """Render the one-line error naming the unrecognised skill and the known
+    ones."""
 
-    return f"Unknown skill: {arg}. Known: {', '.join(names)}"
+    return f"**Unknown skill:** `{arg}`. Known skills: {', '.join(names)}."
 
 
 def main() -> None:
     """Dispatch on the optional skill argument: empty → overview, known →
-    detail, otherwise → unknown."""
+    manual page, otherwise → unknown."""
 
     root = plugin_root()
-    names = skill_dirs(root)
+    skills = skill_names(root)
+    pages = man_names(root)
     arg = sys.argv[1].strip() if len(sys.argv) > 1 else ""
 
     if not arg:
-        print(render_overview(root, names))
-    elif arg in names:
+        print(render_overview(root, skills))
+    elif arg in pages:
         print(render_detail(root, arg))
     else:
-        print(render_unknown(arg, names))
+        print(render_unknown(arg, skills))
 
 
 if __name__ == "__main__":

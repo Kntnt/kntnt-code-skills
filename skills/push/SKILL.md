@@ -22,6 +22,10 @@ This is an outward-facing operation (it pushes). It is `release`'s sibling and s
 
 The plugin root holds the shared pieces this skill uses. This skill lives at `skills/push/`; the plugin root is two levels up (also available as `${CLAUDE_PLUGIN_ROOT}`). Reach them there: `lib/changelog.md`, `lib/commit.md`, `lib/gitignore/base.txt`.
 
+## 0. Help gate
+
+If the arguments are `help`, `--help`, or `-h`, run `uv run "${CLAUDE_PLUGIN_ROOT}/scripts/help.py" push`, emit its output verbatim as Markdown, and stop. Do nothing else — no changelog reconciliation, no git operation.
+
 ## Arguments
 
 - `"message"` — use this exact commit message instead of an auto-drafted one.

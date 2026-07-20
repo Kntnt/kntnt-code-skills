@@ -34,6 +34,10 @@ at `skills/release/`; the plugin root is two levels up (also available as
 `lib/gitignore/base.txt`, and the helper `scripts/release.py` (run with
 `uv run`).
 
+## 0. Help gate
+
+If the arguments are `help`, `--help`, or `-h`, run `uv run "${CLAUDE_PLUGIN_ROOT}/scripts/help.py" release`, emit its output verbatim as Markdown, and stop. Do nothing else — no changelog reconciliation, no version bump, no git operation.
+
 ## Arguments
 
 - `minor` / `major` / `X.Y.Z` — force the bump level or an exact version,

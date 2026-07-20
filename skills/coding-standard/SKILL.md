@@ -23,6 +23,10 @@ The plugin **owns** the scaffolded module files: they are canonical and verbatim
 
 It is an explicit, deliberate operation. Never run it because a code task happened to touch a project; run it only when Thomas asks for the coding standard to be set up or updated. When the intent is unclear, ask first.
 
+## 0. Help gate
+
+If the arguments are `help`, `--help`, or `-h`, run `uv run "${CLAUDE_PLUGIN_ROOT}/scripts/help.py" coding-standard`, emit its output verbatim as Markdown, and stop. Do nothing else — no file is written or investigated.
+
 ## What gets written
 
 Into the project root:

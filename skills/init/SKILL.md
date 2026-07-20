@@ -21,6 +21,10 @@ This skill orchestrates; the deterministic, error-prone file work lives in `scri
 
 It is explicit-only and it writes files, runs `git init`, and can create a GitHub repository. Never run it because a task happened to start a new project; run it only when Thomas asks to initialise one. When the intent is unclear, ask first.
 
+## 0. Help gate
+
+If the arguments are `help`, `--help`, or `-h`, run `uv run "${CLAUDE_PLUGIN_ROOT}/scripts/help.py" init`, emit its output verbatim as Markdown, and stop. Do nothing else — no file is written, no git command runs.
+
 ## Identity tokens
 
 Resolve the project's identity once, up front, the same way `plugin-maker` does, then confirm rather than assume silently:
