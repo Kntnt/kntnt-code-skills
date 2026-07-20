@@ -91,4 +91,4 @@ public function resolveUser( string $token ): ?User { … }
 - **pcov** for PHP code coverage.
 - **DDEV** for any PHP project needing a local server (PHP, database, web server). DDEV's project-local configuration is checked in for a reproducible environment.
 
-WordPress-specific PHP tooling — Brain Monkey, Mockery, the `szepeviktor/phpstan-wordpress` extension, WordPress Playground for integration tests — is described under the WordPress rules.
+WordPress-specific PHP tooling — Brain Monkey, Mockery, the `szepeviktor/phpstan-wordpress` extension, WordPress Playground for integration tests, **phpcs** + **WPCS** for static style checking — is described under the WordPress rules.

@@ -215,9 +215,9 @@ def test_ruleset_section_states_no_central_package_exists() -> None:
     assert "per project" in section or "per-project" in section, (
         "the ruleset section must state the ruleset lives per project"
     )
-    assert "no central" in section or "not exist" in section or "no package" in section, (
-        "the ruleset section must state no central package exists"
-    )
+    assert (
+        "no central" in section or "not exist" in section or "no package" in section
+    ), "the ruleset section must state no central package exists"
 
 
 # --- CHANGELOG documents the change ---------------------------------------

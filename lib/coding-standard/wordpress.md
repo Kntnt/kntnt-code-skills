@@ -99,3 +99,26 @@ Complement the general PHP tooling.
 - **WordPress Playground** (WASM PHP + SQLite) for end-to-end integration tests. Spins up in 1–2 seconds without a server. Default; use it whenever it suffices, the great majority of cases.
 
   Fall back to **DDEV-based** integration tests only when Playground cannot exercise the behaviour under test: MySQL-specific SQL, database-level concurrency, transaction or locking semantics, missing PHP extensions, or multi-process scenarios such as cron jobs and queue workers. DDEV-based tests are the exception, scoped narrowly to the case that requires them, and stay out of the fast PR-time test suite. Run Playground via `@wp-playground/cli`.
+- **phpcs** + **WPCS** (`wp-coding-standards/wpcs`) — recommended, not required: adopt it when the project's size justifies a mechanical style gate, same proportionality call as the rest of this section's tooling. Where it is adopted, it is the only mechanical enforcement of the WP surface style above (tabs, padded parens, `Pascal_Snake_Case`, `SCREAMING_SNAKE_CASE` constants) — see the dedicated section below for the ruleset it needs and what it cannot cover.
+
+### phpcs / WPCS ruleset
+
+At WPCS defaults, phpcs actively fights this standard rather than merely staying silent about it. Write a project's ruleset from this section, not by copy-pasting an older project's `phpcs.xml.dist` — copying carries forward whatever that project's ruleset happened to get wrong (a stray line-length cap, warnings that never fail the build) along with the exclusions it actually needed.
+
+**Required exclusions.** Six sniffs must be excluded: four to encode the *Deliberate deviations from WP-CS* above, two more because WPCS otherwise actively contradicts a universal rule from the general module.
+
+- `Universal.Arrays.DisallowShortArraySyntax` — WPCS demands `array(...)`; this standard's array literals are `[ ... ]`.
+- `WordPress.Files.FileName` — WPCS demands `class-user-repository.php`; this standard's PSR-4 filename is `User_Repository.php`, exact case.
+- `WordPress.NamingConventions.PrefixAllGlobals` — WPCS demands a `kntnt_` prefix on every global function and class; this standard uses namespaces instead (see *Naming and prefixes*, general module).
+- `WordPress.PHP.YodaConditions` — WPCS demands Yoda ordering; this standard uses natural order by default.
+- `WordPress.Arrays.MultipleStatementAlignment` — WPCS demands `=>` alignment in a multi-line array; the general module's *Whitespace* rules forbid vertical alignment of `=` / `=>` outright.
+- `PSR2.Methods.FunctionClosingBrace` — WPCS forbids a blank line before a function's closing `}`; the paragraphing rule (general module) requires exactly that blank line so a block's last paragraph sits flush against `}`.
+
+**What phpcs cannot enforce.** Excluding a sniff only stops phpcs from flagging the *opposite* of what it demands — it never becomes a check for the rule this standard actually wants. Two rules have no sniff on either side, so phpcs cannot check them at all:
+
+- The **comment-width** rule (*Line wrapping*, general module) — a standalone comment never passes column 80. phpcs's line-length sniffs (e.g. `Generic.Files.LineLength`) measure a physical line regardless of whether it holds code or a comment; there is no comment-specific width sniff, so this rule is enforced by review, not tooling.
+- The **no-alignment** rule (*Whitespace*, general module) — no vertical alignment of `=` / `=>`. `WordPress.Arrays.MultipleStatementAlignment` above, like every alignment-adjacent sniff, only ever demands alignment; excluding it silences the false positive but adds no check of its own. Nothing in phpcs flags code a developer manually aligned by hand. This rule, too, is enforced by review, not tooling.
+
+A green phpcs run therefore means the code conforms to the subset phpcs can see — never that it conforms outright. Treat the tick mark accordingly.
+
+**The ruleset lives per project.** No central `kntnt/coding-standard` Composer package exists; each project's own `phpcs.xml.dist` encodes the exclusions above directly, written from this section. Should the duplication across projects become expensive enough to justify a shared package, that is a separate decision for a future ticket, not one this section makes.
