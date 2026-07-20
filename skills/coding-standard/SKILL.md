@@ -27,6 +27,11 @@ It is an explicit, deliberate operation. Never run it because a code task happen
 
 If the arguments are `help`, `--help`, or `-h`, run `uv run "${CLAUDE_PLUGIN_ROOT}/scripts/help.py" coding-standard`, emit its output verbatim as Markdown, and stop. Do nothing else — no file is written or investigated.
 
+## Arguments
+
+- `--update` — reconcile the project's scaffolded files to the freshly profiled module set: rewrite every module that differs from the canonical source, add new ones, remove dropped ones. Without it, an already-scaffolded project is only investigated, never changed.
+- `--dry-run` — preview the create/investigate/update path without writing anything.
+
 ## What gets written
 
 Into the project root:

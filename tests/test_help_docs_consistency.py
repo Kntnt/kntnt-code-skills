@@ -94,6 +94,16 @@ def _options_tokens(manpage_text: str) -> list[str]:
     return tokens
 
 
+def _backtick_token_bases(text: str) -> set[str]:
+    """Every backtick-quoted token in ``text``, reduced to its comparable
+    base. Grounds a flag against real tokens only, never a raw substring
+    match — a documented base that happened to be a prefix of some unrelated
+    backticked token would otherwise pass as "grounded" even if it were
+    invented."""
+
+    return {_base(token) for token in re.findall(r"`([^`]+)`", text)}
+
+
 def _leading_argument_tokens(skill_md_text: str) -> list[str]:
     """Extract each ``## Arguments`` bullet's *leading* backtick token(s) —
     the flag(s) the bullet defines — never a backtick mentioned later in its
@@ -164,7 +174,8 @@ def test_manpage_options_are_grounded_in_the_skills_own_source(skill: str) -> No
     skill_md_text = _text(SKILLS_DIR / skill / "SKILL.md")
 
     documented = {_base(t) for t in _options_tokens(manpage_text)} - HELP_GATE_TOKENS
-    invented = {base for base in documented if f"`{base}" not in skill_md_text}
+    grounded = _backtick_token_bases(skill_md_text)
+    invented = documented - grounded
     assert not invented, (
         f"{skill}.md documents flags absent from skills/{skill}/SKILL.md: "
         f"{sorted(invented)}"
@@ -184,6 +195,29 @@ def test_manpage_options_omit_no_argument_the_skill_defines(skill: str) -> None:
         assert _base(token) in documented_bases, (
             f"skills/{skill}/SKILL.md's ## Arguments defines {token!r}, which "
             f"docs/man/{skill}.md's OPTIONS table omits"
+        )
+
+
+@pytest.mark.parametrize("skill", SKILLS)
+def test_manpage_flags_imply_an_arguments_section(skill: str) -> None:
+    """``_leading_argument_tokens`` reads only a skill's own ``## Arguments``
+    section, so it silently returns ``[]`` — and the reverse-omission guard
+    above silently no-ops — for a ``SKILL.md`` that documents its flags
+    elsewhere (e.g. bullet prose under a ``## Flow`` heading). Catch that
+    directly: a manual page that documents real flags (anything beyond the
+    universal help-gate tokens) commits its own ``SKILL.md`` to carrying an
+    ``## Arguments`` section, so the reverse-omission guard always has
+    something real to check."""
+
+    manpage_text = _text(MAN_DIR / f"{skill}.md")
+    skill_md_text = _text(SKILLS_DIR / skill / "SKILL.md")
+
+    real_flags = {_base(t) for t in _options_tokens(manpage_text)} - HELP_GATE_TOKENS
+    if real_flags:
+        assert "## Arguments" in skill_md_text, (
+            f"docs/man/{skill}.md documents real flags {sorted(real_flags)} but "
+            f"skills/{skill}/SKILL.md has no '## Arguments' section, so the "
+            f"reverse-omission guard cannot check it"
         )
 
 
