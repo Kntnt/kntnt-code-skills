@@ -30,7 +30,7 @@ Language-level preferences, regardless of project.
 - Trailing commas in multi-line arrays, parameter lists, and argument lists.
 - `?:` and `??` as appropriate; do not chain them into puzzles.
 - **Conditions: natural order by default.** Yoda conditions are acceptable when they make intent clearer for an experienced reader — e.g. idiomatic null-checks (`if ( null === $value )`) or where the test is fundamentally a boolean assertion rather than a comparison. The choice is purely about readability.
-- Code may go up to the project's max line width (default 120 cols). Comments wrap at column 80.
+- Line width for comments and code follows the universal *Line wrapping* rules in the general module.
 
 ### Surface style — PSR-12
 

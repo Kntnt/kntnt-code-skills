@@ -85,7 +85,13 @@ The example is PHP; the rule is identical in TypeScript and plain JavaScript.
 
 **Audience.** Comments are for an experienced developer reading the file for the first time. Don't restate what the code shows, write tutorials, address juniors, or narrate the obvious.
 
-**Line wrapping.** Comments wrap at column 80. Code may go wider where it improves readability — see formatter settings per language.
+**Line wrapping.** Comments and code follow different rules:
+
+1. A comment standing alone on its own line never passes column 80, no matter where in the file it sits.
+2. A comment trailing at the end of a code line is never wrapped, however long it runs.
+3. Code lines have no upper limit. This removes the *pressure* to break a line for its own sake — it is not an invitation to let one sprawl; *Motivated line breaks*, below, is what actually triggers a break.
+
+No sniff can express a comment-specific width, so rule 1 is enforced by review, not tooling.
 
 ### Whitespace
 
