@@ -232,16 +232,16 @@ def test_scaffold_canonical_order_is_unchanged() -> None:
 
 def test_changelog_unreleased_documents_the_rule_and_resync_note() -> None:
     text = CHANGELOG.read_text(encoding="utf-8")
-    # [Unreleased] holds this cycle's notes until a release moves them verbatim to
-    # the newest version section; fall back to that when this entry is no longer in
-    # Unreleased, so the test survives both a release and a later unrelated entry.
-    unreleased = _section(text, r"^##\s+\[Unreleased\]", r"^##\s+\[")
-    if "#35" not in unreleased:
-        unreleased = _section(text, r"^##\s+\[\d", r"^##\s+\[")
-    assert "#35" in unreleased, "CHANGELOG's latest entry must reference issue #35"
-    lowered = unreleased.lower()
+    # This entry is a permanent record: it starts under [Unreleased] and a release
+    # moves it verbatim into that version's section, where it stays as newer
+    # releases land above it. Find whichever section holds it by its issue marker,
+    # so the test survives any number of later releases, not just the first.
+    sections = re.split(r"(?m)^(?=## )", text)
+    entry = next((section for section in sections if "#35" in section), "")
+    assert "#35" in entry, "CHANGELOG must reference issue #35"
+    lowered = entry.lower()
     assert "refactoring completeness" in lowered, "CHANGELOG must name the new rule"
-    assert "--update" in unreleased, (
+    assert "--update" in entry, (
         "CHANGELOG must note that already-scaffolded projects need a "
         "`/coding-standard --update` re-sync to pick up the rule"
     )
