@@ -970,3 +970,53 @@ def test_cost_chunking_names_both_facets_as_serialize_or_order_reasons() -> None
     assert "serialize" in section or "reorder" in section
     assert "one-issue-per-slice" in section
     assert "tightly-coupled" in section or "tightly coupled" in section
+
+
+# --- #36: implementer ripple report + verifier consistency lens --------------
+
+# When an implementer changes a shared symbol's contract or effective behaviour
+# but updates only some callers, the diff is locally consistent; a per-issue
+# verifier is bound to the diff and structurally cannot see the unchanged
+# callers, so the class was previously caught only by the mandatory integration
+# review — a full extra review + remediation cycle. Two prose additions: (1) the
+# operating contract's three-bucket handoff description (Assumptions &
+# blockers) now instructs the implementer to enumerate affected call sites and
+# report which were updated and which were not; (2) step 4's Verify description
+# documents the conditional consistency lens every dispatched reviewer carries,
+# scoped to fire only when the diff touches a shared, multi-caller symbol.
+
+
+def test_operating_contract_three_bucket_instructs_the_ripple_report() -> None:
+    section = _operating_contract_section().lower()
+    assert "assumptions & blockers" in section or "assumptions and blockers" in section
+    assert "shared symbol" in section, (
+        "the three-bucket description must instruct reporting a shared-symbol "
+        "contract/behaviour change"
+    )
+    assert "call site" in section or "caller" in section, (
+        "the three-bucket description must ask for the affected call sites"
+    )
+    assert "updated" in section, (
+        "the three-bucket description must ask which call sites were updated "
+        "(and which were not)"
+    )
+
+
+def test_verify_step_documents_the_conditional_consistency_lens() -> None:
+    build = _build_section().lower()
+    assert "unchanged" in build, (
+        "step 4's Verify description must document checking a shared symbol's "
+        "UNCHANGED callers"
+    )
+    assert "shared" in build and (
+        "multi-caller" in build or "multiple caller" in build
+    ), (
+        "the consistency lens must be scoped to a shared, multi-caller symbol"
+    )
+    assert "consisten" in build, (
+        "step 4's Verify description must name the consistency check"
+    )
+    assert "only when" in build or "scoped to fire" in build or "no such" in build, (
+        "the consistency lens must be explicitly conditional — it fires only "
+        "when a shared symbol is touched, so an ordinary diff pays nothing extra"
+    )

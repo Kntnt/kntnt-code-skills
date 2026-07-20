@@ -2662,3 +2662,137 @@ def test_reconcile_loop_is_bounded_and_tracks_its_branch_for_teardown() -> None:
     assert "builtBranches.add" in block, (
         "the reconciled branch must be tracked in builtBranches so teardown removes it"
     )
+
+
+# --- #36: implementer ripple report + verifier consistency lens --------------
+
+# When an implementer changes a shared symbol's contract or effective behaviour
+# but updates only some callers, the diff is locally consistent; a per-issue
+# verifier is bound to the diff and structurally cannot see the unchanged
+# callers, so the class was previously caught only by the mandatory integration
+# review — a full extra review + remediation cycle. Two fixes, both prompt-text,
+# mirroring how AGENT_CONSTRAINTS is a single shared constant rather than
+# copy-pasted: (1) a `RIPPLE_REPORT_INSTRUCTION` interpolated into `implement`
+# and `fix` tells the implementer to enumerate affected call sites and report
+# which were updated and which were not under `assumptions`; (2) a
+# `CONSISTENCY_LENS_INSTRUCTION` folded into every lens `verify` dispatches
+# tells the reviewer to also check a changed shared symbol's UNCHANGED callers,
+# scoped to fire only when the diff touches such a symbol — confined to the
+# initial panel, never the narrowly-scoped targeted re-verifies or the
+# mandatory integration review, which stays the unchanged backstop.
+
+RIPPLE_NAME = "RIPPLE_REPORT_INSTRUCTION"
+CONSISTENCY_NAME = "CONSISTENCY_LENS_INSTRUCTION"
+
+
+def test_ripple_report_instruction_declared_exactly_once() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    decls = re.findall(rf"^const {re.escape(RIPPLE_NAME)} = ", source, flags=re.MULTILINE)
+    assert len(decls) == 1, (
+        f"expected exactly one top-level `const {RIPPLE_NAME} =`, found "
+        f"{len(decls)} — the ripple-report text must be defined once and reused"
+    )
+
+
+def test_ripple_report_instruction_covers_the_required_content() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, RIPPLE_NAME)
+    lowered = block.lower()
+    assert "shared symbol" in lowered, (
+        "the ripple report must name a shared symbol's contract/behaviour change"
+    )
+    assert "call site" in lowered or "caller" in lowered, (
+        "the ripple report must ask for the affected call sites/callers"
+    )
+    assert "assumptions" in lowered, (
+        "the ripple report must say to report under `assumptions`"
+    )
+    assert "updated" in lowered, (
+        "the ripple report must ask which call sites were updated (and which were not)"
+    )
+
+
+def test_implement_and_fix_prompts_reference_the_ripple_report_instruction() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    reference = "${" + RIPPLE_NAME + "}"
+    for name in ("implement", "fix"):
+        block = _agent_block(source, name)
+        assert reference in block, (
+            f"the `{name}` prompt must interpolate {reference} so the ripple-"
+            f"report instruction reaches the implementer"
+        )
+
+
+def test_ripple_report_instruction_excluded_from_non_implementer_prompts() -> None:
+    # AC: only `implement` and `fix` gain the ripple-report instruction — the
+    # verifier's job is the consistency LENS below, not the implementer's report,
+    # and the hotfix/reconcile agents are cross-issue/rebase-scoped, out of scope.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    reference = "${" + RIPPLE_NAME + "}"
+    for name in (
+        "verify",
+        "reverifyFindings",
+        "integrate",
+        "integrationReview",
+        "integrationHotfix",
+        "reconcile",
+        "reverifyReconcile",
+    ):
+        block = _agent_block(source, name)
+        assert reference not in block, (
+            f"the `{name}` prompt must NOT carry the ripple-report instruction"
+        )
+
+
+def test_consistency_lens_instruction_declared_exactly_once() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    decls = re.findall(
+        rf"^const {re.escape(CONSISTENCY_NAME)} = ", source, flags=re.MULTILINE
+    )
+    assert len(decls) == 1, (
+        f"expected exactly one top-level `const {CONSISTENCY_NAME} =`, found "
+        f"{len(decls)} — the consistency-lens text must be defined once and reused"
+    )
+
+
+def test_consistency_lens_instruction_covers_the_required_content() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, CONSISTENCY_NAME)
+    lowered = block.lower()
+    assert "shared" in lowered, (
+        "the consistency lens must scope to a shared (multi-caller) symbol"
+    )
+    assert "unchanged" in lowered, (
+        "the consistency lens must check the symbol's UNCHANGED callers"
+    )
+    assert "consisten" in lowered, (
+        "the consistency lens must name the consistency check itself"
+    )
+    assert "skip" in lowered or "only when" in lowered or "no such" in lowered, (
+        "the consistency lens must be conditional: it fires only when a shared "
+        "symbol is touched, so an ordinary diff pays nothing extra"
+    )
+
+
+def test_verify_prompt_references_the_consistency_lens_instruction() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "verify")
+    reference = "${" + CONSISTENCY_NAME + "}"
+    assert reference in block, (
+        f"the `verify` prompt must interpolate {reference} so every dispatched "
+        f"lens carries the conditional consistency check"
+    )
+
+
+def test_consistency_lens_instruction_excluded_from_narrow_or_mandatory_reviews() -> None:
+    # AC: the lens is confined to the INITIAL per-issue panel. The targeted
+    # fix-round and reconcile re-verifies are already narrowly scoped to their own
+    # findings/resolution, and the mandatory integration review stays the
+    # unchanged backstop (out of scope for #36) — none of them gain this text.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    reference = "${" + CONSISTENCY_NAME + "}"
+    for name in ("reverifyFindings", "reverifyReconcile", "integrationReview"):
+        block = _agent_block(source, name)
+        assert reference not in block, (
+            f"the `{name}` prompt must NOT carry the consistency-lens instruction"
+        )
