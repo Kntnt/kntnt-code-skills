@@ -85,10 +85,11 @@ public function resolveUser( string $token ): ?User { … }
 
 ### PHP tooling
 
+Defaults when applicable, not a mandate that every project carries every tool — the same conditionality DDEV already states below. The general module's TDD rule — automate every test that can meaningfully constrain behaviour at the lowest layer that does — is the deciding question for whether a project owes itself a test suite at all; where it does, the following are the defaults.
+
 - **Composer** for dependency management and PSR-4 autoloading.
-- **Pest** for unit and feature tests.
-- **PHPStan** for static analysis. Aim for `--level max` on new code; raise legacy code incrementally. PHPStan catches bugs tests alone do not — typos in property names, wrong argument types, dead branches.
-- **pcov** for PHP code coverage.
+- **Pest** for unit and feature tests, when the TDD rule says a test is owed. When you also measure coverage, use **pcov** rather than Xdebug — Xdebug is a full step debugger and roughly 10x slower for coverage collection than pcov, which only instruments line execution. pcov is a PHP runtime extension (installed via PECL, the PHP build, or container config), not a Composer package; no `composer.json` can depend on it the way it depends on Pest.
+- **PHPStan** for static analysis, unconditionally — even a project with no test suite gets this check, and its value is highest precisely there, because it is then the only automated check standing between a typo and production. Aim for `--level max` on new code; raise legacy code incrementally. PHPStan catches bugs tests alone do not — typos in property names, wrong argument types, dead branches.
 - **DDEV** for any PHP project needing a local server (PHP, database, web server). DDEV's project-local configuration is checked in for a reproducible environment.
 
 WordPress-specific PHP tooling — Brain Monkey, Mockery, the `szepeviktor/phpstan-wordpress` extension, WordPress Playground for integration tests, **phpcs** + **WPCS** for static style checking — is described under the WordPress rules.

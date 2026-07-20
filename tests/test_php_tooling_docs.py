@@ -59,9 +59,7 @@ def _tooling_section(text: str) -> str:
 
 def _tooling_bullets(section: str) -> list[str]:
     return [
-        line.strip()
-        for line in section.splitlines()
-        if line.strip().startswith("- **")
+        line.strip() for line in section.splitlines() if line.strip().startswith("- **")
     ]
 
 
@@ -126,9 +124,7 @@ def test_pcov_over_xdebug_preference_survives_as_a_coverage_clause() -> None:
     )
 
 
-def test_phpstan_bullet_remains_unconditional_with_last_safety_net_rationale() -> (
-    None
-):
+def test_phpstan_bullet_remains_unconditional_with_last_safety_net_rationale() -> None:
     section = _tooling_section(_text())
     bullets = _tooling_bullets(section)
     phpstan_bullets = [b for b in bullets if b.startswith("- **PHPStan**")]
