@@ -130,8 +130,12 @@ def test_phpstan_bullet_remains_unconditional_with_last_safety_net_rationale() -
     phpstan_bullets = [b for b in bullets if b.startswith("- **PHPStan**")]
     assert len(phpstan_bullets) == 1, "expected exactly one PHPStan bullet"
     phpstan_line = phpstan_bullets[0]
-    # Unconditional: no gate on "if you have tests" or similar hedge.
-    assert "when" not in phpstan_line.lower().split("phpstan")[0], (
+    # Unconditional: no gate on "if you have tests" or similar hedge. Check
+    # the text following the bolded tool name — not the prefix before it,
+    # which is always just "- **" and would let any future "when ..." gate
+    # slip past undetected.
+    description = phpstan_line.split("**", 2)[-1]
+    assert "when" not in description.lower(), (
         "PHPStan must remain an unconditional bullet, unlike Pest"
     )
     section_lower = section.lower()
