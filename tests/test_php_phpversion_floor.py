@@ -87,8 +87,7 @@ def _phpstan_bullet(section: str) -> str:
 def test_phpstan_bullet_instructs_pinning_php_version() -> None:
     bullet = _phpstan_bullet(_tooling_section(_text(PHP_MD)))
     assert "phpVersion" in bullet, (
-        "the PHPStan bullet must instruct setting PHPStan's `phpVersion` "
-        "config option"
+        "the PHPStan bullet must instruct setting PHPStan's `phpVersion` config option"
     )
 
 
@@ -99,8 +98,7 @@ def test_phpstan_bullet_names_the_declared_floor_sources() -> None:
         "floor is declared"
     )
     assert "composer.json" in bullet, (
-        "the bullet must name `composer.json` as the other place the floor "
-        "is declared"
+        "the bullet must name `composer.json` as the other place the floor is declared"
     )
 
 
