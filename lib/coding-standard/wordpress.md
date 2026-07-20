@@ -52,6 +52,16 @@ Otherwise the PSR-4 rules from the PHP section apply.
 
 `add_action()` / `add_filter()` callbacks are exempt from the PHP rules' first-class-callable default (*Required modern features*): register with `[ $this, 'method' ]`, not `$this->method(...)`. A first-class callable builds a fresh `Closure` at the call site, and a `Closure`'s hook id (`_wp_filter_build_unique_id()`) is tied to that unreachable instance, so nothing — not even the same object elsewhere — can call `remove_action()` / `remove_filter()` against it. The array-callable form stays individually removable, which is the whole point of exposing a hook.
 
+### Plugin and theme headers
+
+The plugin header docblock (the main plugin file's opening comment) and the theme `style.css` header are metadata, not prose comments — a fixed WordPress format that `get_file_data()` parses one field per line, with no continuation syntax. The comment-width rule (*Line wrapping*, general module) does not apply to the header block — the **whole** block, not only its `Field:` lines, is exempt, because the rule is unsatisfiable there at any width.
+
+A field is never wrapped across multiple lines. `get_file_data()` matches a field's value up to the end of that single line; a line break inside a value does not reformat it, it silently truncates it — the continuation text is dropped with no error and no warning.
+
+Never place a linter annotation (`@since`, `@phpstan-ignore`, or similar) inside the header block. `get_file_data()`'s parsing regex treats `@` as an ordinary header-line prefix, on a par with `*`, `#`, and whitespace, so an annotation line risks being parsed as, and shadowing, a real field.
+
+Column alignment of field values (lining up `Version:` under `Plugin Name:`, and so on) is left to WordPress convention — this standard neither requires nor forbids it. The general module's ban on vertical alignment of `=` / `=>` (*Whitespace*) does not extend here: header fields are metadata, not code.
+
 ### WordPress plugin project structure
 
 ```
