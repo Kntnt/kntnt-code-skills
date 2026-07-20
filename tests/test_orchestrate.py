@@ -414,6 +414,77 @@ def test_parse_dependencies_does_not_warn_when_a_number_reference_resolves() -> 
     assert signals.warnings == []
 
 
+# --- parse_dependencies: a non-directional aside under `## Blocked by` (#47) ----
+#
+# A `#N` that appears only inside a parenthetical `(Related: …)` / `(See …)` aside
+# on a `- None.` sentinel line is context, not a blocker. The `## Blocked by`
+# branch must not manufacture a hard edge from it (the false-positive cycle #47
+# reports), while a genuine bullet under the same heading still yields its edge.
+
+
+def test_parse_dependencies_none_sentinel_with_related_aside_yields_no_edge() -> None:
+    signals = orchestrate.parse_dependencies("## Blocked by\n\n- None. (Related: #99)")
+    assert signals.edges == {}
+
+
+def test_parse_dependencies_real_world_none_related_asides_yield_no_edges() -> None:
+    # The two live issue bodies that triggered #47 (verbatim shape): a `None`
+    # sentinel whose trailing aside names sibling issues must resolve to no edges.
+    body_34 = (
+        "## Blocked by\n\n- None. (Related: #35 / #36 — the "
+        "incomplete-shared-seam-refactor class of work.)"
+    )
+    body_36 = (
+        "## Blocked by\n\n- None. (Related: #34, same-wave file-overlap "
+        "scheduling; #35, the coding-standard companion.)"
+    )
+    assert orchestrate.parse_dependencies(body_34).edges == {}
+    assert orchestrate.parse_dependencies(body_36).edges == {}
+
+
+def test_parse_dependencies_related_aside_ref_is_a_soft_note() -> None:
+    signals = orchestrate.parse_dependencies("## Blocked by\n\n- None. (Related: #99)")
+    assert signals.edges == {}
+    assert any("#99" in note for note in signals.soft_notes)
+
+
+def test_parse_dependencies_see_aside_under_blocked_by_is_not_an_edge() -> None:
+    signals = orchestrate.parse_dependencies("## Blocked by\n\n- None. (See #12)")
+    assert signals.edges == {}
+    assert any("#12" in note for note in signals.soft_notes)
+
+
+def test_parse_dependencies_genuine_bullet_beside_an_aside_still_edges() -> None:
+    # A real blocker bullet keeps its edge; only the aside ref is peeled off.
+    signals = orchestrate.parse_dependencies(
+        "## Blocked by\n\n- #42\n- None. (Related: #99)"
+    )
+    assert signals.edges == {42: "Blocked by"}
+
+
+def test_parse_dependencies_none_with_related_aside_does_not_warn() -> None:
+    signals = orchestrate.parse_dependencies(
+        "## Blocked by\n\n- None. (Related: #99)", title_index={}
+    )
+    assert signals.warnings == []
+
+
+def test_build_waves_two_none_related_asides_naming_each_other_no_cycle() -> None:
+    # The end-to-end #47 case: two issues whose only cross-references sit inside a
+    # `None. (Related: …)` aside plan to independent waves, not a cycle error.
+    raw = (
+        '[{"number":34,"title":"Add missing edges","labels":["ready-for-agent"],'
+        '"body":"## Blocked by\\n\\n- None. (Related: #35 / #36 — context.)"},'
+        '{"number":36,"title":"Ripple report","labels":["ready-for-agent"],'
+        '"body":"## Blocked by\\n\\n- None. (Related: #34, same-wave; #35.)"}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    by_number = {i.number: i for i in issues}
+    assert by_number[34].blocked_by == set()
+    assert by_number[36].blocked_by == set()
+    assert orchestrate.build_waves(issues) == [[34, 36]]
+
+
 # --- parse_dependencies: title resolves a number no #N supplies (AC #2) --------
 #
 # These distinguish "title resolved" from "title ignored": the title maps to a

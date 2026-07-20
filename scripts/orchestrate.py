@@ -141,6 +141,22 @@ SOFT_NOTE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A parenthetical aside opened by a non-directional cue — `(Related: #35)`,
+# `(See #12)`, `(See also #7)`, `(Relates to #9)`. Its `#N` are context, never a
+# blocker, so they are peeled out of the `## Blocked by` section before hard
+# edges are read and recorded as soft notes instead — which is what makes a
+# `- None. (Related: #A/#B)` line resolve to zero edges (issue #47). This is the
+# parenthetical sibling of SOFT_NOTE_RE, which matches the bare prose phrases
+# (`relates to #9`) but NOT this `(Related: …)` aside form with its colon — the
+# exact gap that manufactured a false-positive cycle. `[^)\n]*` keeps a match
+# inside one line, so peeling an aside never collapses the section's line
+# structure that title resolution walks.
+ASIDE_CUE = r"related(?:\s+to)?|relates\s+to|see(?:\s+also)?"
+NONDIRECTIONAL_ASIDE_RE = re.compile(
+    rf"\(\s*(?P<cue>{ASIDE_CUE})\b(?P<refs>[^)\n]*)\)",
+    re.IGNORECASE,
+)
+
 # Where a hard keyword's same-line authority ends: a sentence terminator, or the
 # start of the next hard keyword or soft phrase. A keyword governs only the `#N`
 # in its own clause, so `Depends on #45. Relates to #44.` (or `Requires #1.
@@ -557,9 +573,15 @@ def parse_dependencies(
     # only by its prose title is recovered by exact match against the title
     # index, per line so a whole normalised bullet or paragraph must equal a
     # known title. A section with content that resolves to nothing warns.
+    #
+    # Non-directional `(Related: …)` / `(See …)` asides are peeled off first: a
+    # `#N` living only inside such an aside is context, not a blocker: it must
+    # not become a hard edge — the false-positive cycle #47 reports, where two
+    # issues declaring `Blocked by: None. (Related: #the-other)` looked mutually
+    # blocked. The peeled refs are recorded as soft notes below.
     section = BLOCKED_BY_SECTION_RE.search(text)
     if section is not None:
-        section_body = section["body"]
+        section_body = NONDIRECTIONAL_ASIDE_RE.sub(" ", section["body"])
         for number in ISSUE_REF_RE.findall(section_body):
             edges.setdefault(int(number), "Blocked by")
         if title_index:
@@ -575,11 +597,27 @@ def parse_dependencies(
             warnings.append(_unresolved_region_warning("Blocked by section"))
 
     # Non-directional coupling: visible as a soft note, never an edge. A ref
-    # already claimed as a hard edge keeps its edge and is not down-graded.
+    # already claimed as a hard edge keeps its edge and is not down-graded. Two
+    # forms feed the notes: the bare prose phrase (`relates to #9`) and the
+    # parenthetical aside (`(Related: #9)`) peeled off the section above, so its
+    # references stay visible after an unattended run. `add_note` normalises the
+    # whitespace and drops duplicates (an aside whose cue is a soft phrase,
+    # e.g. `(relates to #9)`) keeping first-seen order across both forms.
     soft_notes: list[str] = []
+    seen_notes: set[str] = set()
+
+    def add_note(note: str) -> None:
+        note = re.sub(r"\s+", " ", note).strip()
+        if note not in seen_notes:
+            seen_notes.add(note)
+            soft_notes.append(note)
+
     for match in SOFT_NOTE_RE.finditer(text):
-        note = f"{match['phrase'].strip()} {match['refs'].strip()}".strip()
-        soft_notes.append(re.sub(r"\s+", " ", note))
+        add_note(f"{match['phrase']} {match['refs']}")
+    for match in NONDIRECTIONAL_ASIDE_RE.finditer(text):
+        refs = list(dict.fromkeys(ISSUE_REF_RE.findall(match["refs"])))
+        if refs:
+            add_note(f"{match['cue']} {' '.join(f'#{ref}' for ref in refs)}")
 
     # A self-reference cannot block its own issue; drop it from the edge set.
     if self_number is not None:

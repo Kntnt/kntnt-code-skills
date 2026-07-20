@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/orchestrate`'s planner no longer manufactures a false-positive `Blocked by` edge (and cycle) from a `#N` inside a `None. (Related: #N)` aside (#47).** A `/orchestrate --yes` run failed at plan time with `dependency cycle among issues [34, 36]` even though both issues declared `Blocked by: None` — the planner's `## Blocked by` branch ran `ISSUE_REF_RE.findall` over the whole section body and hard-edged **every** `#N`, including the sibling references in the parenthetical `(Related: …)` prose note that followed `None.` on the same line, so `#34 → {35, 36}` and `#36 → {34, 35}` produced a spurious #34↔#36 mutual block. `scripts/orchestrate.py` now peels non-directional asides out of the section before reading edges: a new `NONDIRECTIONAL_ASIDE_RE` matches a parenthetical opened by a non-directional cue (`(Related: …)`, `(Relates to …)`, `(See …)`, `(See also …)`) — the `(Related:` colon form the existing `SOFT_NOTE_RE` deliberately does not cover, the gap triage flagged — and the `## Blocked by` branch strips those asides from the section body before extracting `#N` edges, running title resolution, and gating the unresolved-region warning, so a `- None. (Related: #A/#B)` line resolves to **zero** edges while a genuine `- Blocked by #N` / `- #N` bullet beside it keeps its edge unchanged. The peeled references are recorded as soft notes (deduped, first-seen order) so the coupling stays visible after an unattended run. This is the mirror image of #34: that issue adds missing implicit edges; this removes a false one. `tests/test_orchestrate.py` covers the sentinel-with-aside case, the two verbatim real-world issue bodies, the `(See …)` aside, the aside-as-soft-note behaviour, the no-regression genuine bullet, the no-spurious-warning case, and the end-to-end `build_waves` no-cycle outcome.
+
 ## [0.14.0] – 2026-07-20
 
 ### Added

@@ -226,9 +226,10 @@ def test_ruleset_section_states_no_central_package_exists() -> None:
 def test_changelog_unreleased_documents_phpcs_tooling_addition() -> None:
     text = _text(CHANGELOG)
     # [Unreleased] holds this cycle's notes until a release moves them verbatim to
-    # the newest version section; fall back to that so the test survives a release.
+    # the newest version section; fall back to that when this entry is no longer in
+    # Unreleased, so the test survives both a release and a later unrelated entry.
     unreleased = _section(text, r"^##\s+\[Unreleased\]", r"^##\s+\[")
-    if not unreleased.split("\n", 1)[-1].strip():
+    if "#39" not in unreleased:
         unreleased = _section(text, r"^##\s+\[\d", r"^##\s+\[")
     assert "#39" in unreleased, "CHANGELOG's latest entry must reference issue #39"
     lowered = unreleased.lower()

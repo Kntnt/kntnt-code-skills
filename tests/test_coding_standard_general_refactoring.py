@@ -233,9 +233,10 @@ def test_scaffold_canonical_order_is_unchanged() -> None:
 def test_changelog_unreleased_documents_the_rule_and_resync_note() -> None:
     text = CHANGELOG.read_text(encoding="utf-8")
     # [Unreleased] holds this cycle's notes until a release moves them verbatim to
-    # the newest version section; fall back to that so the test survives a release.
+    # the newest version section; fall back to that when this entry is no longer in
+    # Unreleased, so the test survives both a release and a later unrelated entry.
     unreleased = _section(text, r"^##\s+\[Unreleased\]", r"^##\s+\[")
-    if not unreleased.split("\n", 1)[-1].strip():
+    if "#35" not in unreleased:
         unreleased = _section(text, r"^##\s+\[\d", r"^##\s+\[")
     assert "#35" in unreleased, "CHANGELOG's latest entry must reference issue #35"
     lowered = unreleased.lower()
