@@ -102,11 +102,13 @@ const INTEGRATE_SCHEMA = {
     integrated: { type: 'boolean' },
     summary: { type: 'string' },
     blocker: { type: 'string' },
+    conflict: { type: 'boolean', description: 'True ONLY when the merge-mode landing was refused because rebasing the verified branch onto the advanced default hit a genuine content conflict the integrator will not resolve — the signal the bounded reconcile stage repairs (#46). False or absent for any other, non-conflict failure.' },
   },
 }
 
 // `normalizeArgs`, `planIsEmpty`, `blockingFindings`, `unlandedPrerequisites`,
-// `roleTuning`, `shouldEscalateInSitu`, and `withInSituHazard` are kept inline as
+// `roleTuning`, `shouldEscalateInSitu`, `withInSituHazard`, and
+// `isReconcilableConflict` are kept inline as
 // plain internal `const`s because the Workflow harness rejects any top-level
 // `export` beyond the single leading `export const meta` and forbids a top-level
 // `import` — so this script cannot import them. Their tested source of truth is
@@ -318,6 +320,23 @@ const withInSituHazard = (lenses, hazard) => {
 
 }
 
+/**
+ * Whether a parked integration record is a GENUINE rebase content conflict the
+ * bounded reconcile stage can repair (#46 fix 2), as opposed to any other landing
+ * failure. A verified-green branch that failed `--ff-only` only because rebasing it
+ * onto the advanced default hit a content conflict is sound work the integrator
+ * (rightly) will not resolve; rather than park it outright, the engine attempts a
+ * bounded reconcile — rebase+resolve, targeted re-verify of the resolution, then
+ * land. Only such a record qualifies: it must be parked AND carry the integrator's
+ * `conflict` flag. A landed, design-blocked, or otherwise-failed record never
+ * reconciles, and the wave loop gates the attempt on merge mode besides.
+ *
+ * @param {{status?: string, conflict?: boolean}|null|undefined} record The record
+ *   `integrate` returned.
+ * @returns {boolean} Whether to attempt a bounded reconcile before parking.
+ */
+const isReconcilableConflict = (record) => record != null && record.status === 'parked' && record.conflict === true
+
 // Run options, with the conservative defaults the skill documents. Every field
 // is read off the normalized config, never off the raw `args` the harness
 // delivers as a JSON string.
@@ -493,7 +512,7 @@ const implement = (number) =>
       `Read and obey ${standardInstruction}.\n` +
       `${AGENT_CONSTRAINTS}\n` +
       `${planOverlay(implementerMode, issuesByNumber.get(number)?.plan)}` +
-      `Work on a fresh branch off the current integration base. Demonstrate the red — a failing-test commit — before the green, because a test never seen to fail is of unknown value. Refactor only once green.\n` +
+      `Create your feature branch FRESH off the up-to-date default branch — do NOT rely on the worktree's current HEAD, which is the harness's run-start scaffolding ref and is STALE (pinned when the run started, it does not advance as each issue lands, so building on it would fork you off a base missing your predecessors' landed work). Choose a branch name, then run \`git checkout -B <your-branch> <the up-to-date default branch>\` — the \`-B\` form points your branch at the CURRENT default-branch tip whether or not the ref already exists, mirroring the integration hotfix. In this serial integrate-immediately design your predecessors have already landed on the default, so this base contains their work and your branch fast-forwards cleanly at integration. Do all the work in this worktree. Demonstrate the red — a failing-test commit — before the green, because a test never seen to fail is of unknown value. Refactor only once green.\n` +
       `Automate everything meaningfully automatable, then run the project's full gate suite (discover it from the project) and report the REAL result.\n` +
       `Resolve genuine ambiguity by the most reasonable assumption and record it; never pause to ask. The one exception is work that cannot proceed without contradicting a settled decision (an ADR or design doc): set status "blocked", record the blocker, and stop only this issue.\n` +
       `If, during the work, you discover a genuine, previously-unseen danger surface the brief and plan did not anticipate — a write path, a permission gate, an irreversible delete — record it in \`inSituHazard\`; this does not block your progress or change your status, it only flags the surface for independent review.`,
@@ -641,8 +660,8 @@ const integrate = async (record) => {
   const action = merge
     ? `Land branch ${record.branch} on the default branch by fast-forwarding the DEFAULT branch to that branch's tip, WITHOUT ever checking out ${record.branch}. ${record.branch} is still checked out in the implementer's (or a fix round's) persisted worktree, and git refuses to check out one branch in two worktrees at once, so checking it out here would fail mechanically for a non-conflict reason. From the default branch, run \`git merge --ff-only ${record.branch}\` — this advances the default to the feature tip and creates NO merge commit. ` +
       `Keep the integrated history LINEAR: NEVER merge the default branch INTO the feature branch, and NEVER create a merge commit on the feature branch. ` +
-      `In the serial integrate-immediately design nothing landed between ${record.branch}'s build and now, so it is already a fast-forward ahead of the default and \`--ff-only\` succeeds with no rebase replay. Only in the rare case the default moved under the feature branch will the fast-forward be refused; that is the one case a genuine rebase is needed — perform it WITHOUT checking out ${record.branch} while a worktree still holds it: free that worktree first with \`git worktree remove --force <path>\` (which KEEPS the branch ref), exactly as the fix-round handoff does, then rebase ${record.branch} onto the default and fast-forward the default to its tip. That rebase checks ${record.branch} out in THIS worktree — the main, un-isolated, only default-branch checkout — so when the fast-forward is done, return this worktree to the default branch (\`git checkout <default>\`), leaving integrate on the default branch and never stranded on ${record.branch}. ` +
-      `If a genuine conflict makes that rebase unsafe to resolve, do NOT merge — report it as a blocker.`
+      `${record.branch} was created FRESH off the then-current default tip (the implementer forks off the up-to-date default), and in this serial integrate-immediately design issues land one at a time, so nothing has landed on the default since ${record.branch} was cut: it is already a fast-forward ahead of the default and \`--ff-only\` succeeds with no rebase replay. Only in the rare case the default moved under the feature branch anyway will the fast-forward be refused; that is the one case a genuine rebase is needed — perform it WITHOUT checking out ${record.branch} while a worktree still holds it: free that worktree first with \`git worktree remove --force <path>\` (which KEEPS the branch ref), exactly as the fix-round handoff does, then rebase ${record.branch} onto the default and fast-forward the default to its tip. That rebase checks ${record.branch} out in THIS worktree — the main, un-isolated, only default-branch checkout — so when the fast-forward is done, return this worktree to the default branch (\`git checkout <default>\`), leaving integrate on the default branch and never stranded on ${record.branch}. ` +
+      `If a genuine conflict makes that rebase unsafe to resolve, do NOT merge — report it as a blocker AND set \`conflict: true\` in your result, so the run can attempt a bounded reconcile of this verified branch; for any other, non-conflict failure set \`conflict: false\` or omit it.`
     : `Open a pull request for branch ${record.branch} against the default branch. Do NOT merge.`
   const result = await agent(
     `Integrate issue #${record.number} ("${record.title}"). ${action} Report what you did in one line.`,
@@ -650,9 +669,87 @@ const integrate = async (record) => {
   )
 
   // A failed or missing integration parks the otherwise-green issue with its reason.
+  // A merge-mode non-integration threads the integrator's `conflict` flag onto the
+  // parked record so the caller can tell a genuine, reconcilable rebase conflict
+  // (#46) apart from any other landing failure.
   if (result == null) return { ...record, status: 'parked', blockers: [...record.blockers, 'integrator returned nothing'] }
-  if (!result.integrated) return { ...record, status: 'parked', blockers: [...record.blockers, result.blocker || result.summary] }
+  if (!result.integrated) return { ...record, status: 'parked', blockers: [...record.blockers, result.blocker || result.summary], conflict: result.conflict === true }
   return { ...record, verify: `${record.verify} | ${result.summary}` }
+}
+
+// Reconcile a verified-green branch that failed to land ONLY on a genuine rebase
+// content conflict (#46 fix 2): one implementer-grade agent rebases the feature
+// branch onto the advanced default and resolves the conflicts MINIMALLY, keeping
+// both sides' concerns. Like `fix`, it lands in a FRESH worktree while the branch
+// is still checked out in the implementer's (or a fix round's) persisted worktree,
+// so it frees that worktree first (keeping the branch ref) before taking the branch
+// over. It touches code, so it carries worktree isolation and the shared
+// constraints; it must NOT push or merge — the subsequent integrate lands it.
+const reconcile = (record) =>
+  agent(
+    `Reconcile issue #${record.number} ("${record.title}") onto the advanced default branch. Its branch ${record.branch} passed independent verification but could not fast-forward the default because the default moved under it; rebase it and resolve the conflicts so it can land cleanly.\n` +
+      `You are in a FRESH isolated worktree, but branch ${record.branch} is still checked out in another worktree (the implementer's or a fix round's), and git refuses to check out one branch in two worktrees at once. BEFORE anything else, take the branch over:\n` +
+      `1. Run \`git worktree list --porcelain\` and find any OTHER worktree that currently has ${record.branch} checked out.\n` +
+      `2. If one exists, run \`git worktree remove --force <that path>\` to free it. \`remove\` KEEPS the branch ref, so ${record.branch}'s commits survive — NEVER run \`git branch -D\` (or any branch delete) and NEVER \`git reset --hard\`.\n` +
+      `3. Check out ${record.branch} in your own worktree, then rebase it onto the up-to-date default branch (\`git rebase <the up-to-date default branch>\`).\n` +
+      `${AGENT_CONSTRAINTS}\n` +
+      `Resolve EVERY conflict MINIMALLY, keeping BOTH sides' concerns — your branch's change AND whatever landed on the default under you — never discarding either side, and never broadening the change beyond resolving the conflict. Keep the tests green and obey ${standardInstruction}.\n` +
+      `Commit the rebased result on ${record.branch}, then re-run the full gate suite and report the real result.`,
+    { label: `reconcile:#${record.number}`, phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree', ...roleTuning(roles.implementer) },
+  )
+
+// Targeted re-verify of ONLY the conflict resolution a reconcile just produced — a
+// single adversarial agent, never the whole panel, mirroring reverifyFindings. It
+// confirms the rebase kept both sides' concerns and introduced no regression, and
+// returns the same VERDICT_SCHEMA a lens does. Read-only reviewer (no worktree),
+// bound by the shared constraints: it must not push, merge, or close the issue.
+const reverifyReconcile = (number, impl) =>
+  agent(
+    `Adversarially re-verify branch ${impl.branch} for issue #${number} ("${titleOf(number)}") after a reconcile — a rebase onto the advanced default that resolved integration conflicts.\n` +
+      `Review ONLY the conflict resolution: confirm the rebase kept BOTH sides' concerns — this issue's change AND whatever landed on the default under it — with no side silently dropped and no regression introduced. Do NOT re-review the whole change or re-run the full verifier panel.\n` +
+      `You did NOT write this code. Read the issue's contract (\`gh issue view ${number} --comments\`; if an Agent Brief comment exists it is authoritative, OTHERWISE the issue body and its acceptance criteria are the contract) and ${standardInstruction}.\n` +
+      `${AGENT_CONSTRAINTS}\n` +
+      `Check ONLY what the gates cannot — do not re-check lint, build, or tests that already passed. Return clear=true only when the resolution is sound with no dropped concern or regression; otherwise clear=false with the specific problems.`,
+    { label: `reconcile-reverify:#${number}`, phase: 'Verify', schema: VERDICT_SCHEMA, ...roleTuning(roles.judgment) },
+  )
+
+// Bounded reconcile -> targeted re-verify -> land loop for a verified branch that
+// hit a genuine integration conflict (#46 fix 2; the wave loop gates this on merge
+// mode, where landing is authorised and the branch can rebase onto the real
+// default). Each round rebases+resolves on the branch, re-verifies ONLY the
+// resolution (its verdict runs through blockingFindings, so a dead / not-clear
+// review never lands an unconfirmed resolution), then lands via the same linear
+// fast-forward integrate step. It parks only when the re-verify blocks, the branch
+// fails to land for a NON-conflict reason, or the maxFixRounds cap is hit — never
+// looping forever, mirroring the per-issue fix cap. The reconciled branch is
+// tracked in builtBranches so teardown removes its worktree too.
+const reconcileAndIntegrate = async (record) => {
+  let current = record
+  for (let round = 1; round <= maxFixRounds; round += 1) {
+    log(`#${record.number}: reconcile round ${round}/${maxFixRounds} — rebasing the verified branch onto the advanced default`)
+
+    // Rebase + minimal resolve on the feature branch; a dead agent parks it.
+    const rebased = await reconcile(current)
+    if (rebased == null) return { ...current, status: 'parked', blockers: [...current.blockers, 'reconcile agent returned nothing'] }
+    current = { ...current, branch: rebased.branch || current.branch }
+    if (current.branch) builtBranches.add(current.branch)
+
+    // Targeted re-verify of ONLY the resolution; a dead or not-clear verdict blocks.
+    const recheck = await reverifyReconcile(record.number, current)
+    const findings = blockingFindings(recheck ? [recheck] : [])
+    if (findings.length > 0) {
+      return { ...current, status: 'parked', blockers: [...current.blockers, `reconcile re-verify blocked: ${findings.map((finding) => finding.title).join('; ')}`] }
+    }
+
+    // Land the reconciled branch through the same fast-forward integrate step. A
+    // clean land returns done; a fresh genuine conflict may loop within the cap;
+    // any other landing failure parks as-is.
+    const landedRecord = await integrate({ ...current, status: 'done' })
+    if (landedRecord.status === 'done') return landedRecord
+    if (!isReconcilableConflict(landedRecord)) return landedRecord
+    current = landedRecord
+  }
+  return { ...current, status: 'parked', blockers: [...current.blockers, `reconcile cap hit after ${maxFixRounds} round(s): the branch still conflicts with the default`] }
 }
 
 // The MANDATORY final integration review: ONE adversarial reviewer over the real
@@ -836,7 +933,18 @@ try {
       // pull request is opened; a conflict or failure parks it. Because this happens
       // here, inline, a stop after this point still leaves a merge-mode issue on the
       // default branch — the durability property the batched design lacked.
-      const integrated = await integrate(record)
+      let integrated = await integrate(record)
+
+      // #46 reconcile: a verified branch that failed to land ONLY because rebasing
+      // onto the advanced default hit a genuine content conflict is not parked
+      // outright — a bounded reconcile (rebase+resolve -> targeted re-verify -> land)
+      // repairs it before parking. Merge mode only: PR mode lands nothing on the
+      // default, so there is no default to rebase onto. This should not fire in the
+      // ordinary serial run (each branch is cut off the current default tip, so
+      // ff-only holds), but it salvages the rare case the default moved anyway.
+      if (merge && isReconcilableConflict(integrated)) {
+        integrated = await reconcileAndIntegrate(record)
+      }
 
       // Record the outcome. Mark the issue landed ONLY when the run actually merged
       // it onto the base — merge mode alone. A PR-mode integration opens a pull
