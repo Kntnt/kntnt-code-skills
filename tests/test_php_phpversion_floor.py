@@ -22,9 +22,11 @@ Settled at triage (the issue's Agent Brief):
    release predates PHP 8.0 and it passes modern syntax in silence.
 3. Optionally, `wordpress.md` gains the companion note on
    `version_compare()` bootstrap guards: once `phpVersion` is pinned,
-   PHPStan constant-folds such a guard, and `treatPhpDocTypesAsCertain:
-   false` is the honest configuration when the guard defends against a host
-   loading the plugin outside the activation path.
+   PHPStan constant-folds such a guard. `treatPhpDocTypesAsCertain: false`
+   does NOT fix this — that option governs certainty PHPStan derives from
+   PHPDoc annotations, not the `phpVersion`-derived narrowing at work here.
+   The honest fix is a scoped `@phpstan-ignore` comment on the one guard
+   line that must stay a live runtime check.
 
 Out of scope (per the issue): mandating a `phpVersion` *range*, any CI
 wiring in downstream projects, and detecting an over-declared floor.
@@ -178,10 +180,28 @@ def test_wordpress_md_documents_version_compare_bootstrap_guard_interaction() ->
     )
 
 
-def test_wordpress_md_names_treat_php_doc_types_as_certain_false() -> None:
+def test_wordpress_md_rules_out_treat_php_doc_types_as_certain() -> None:
+    # treatPhpDocTypesAsCertain governs PHPDoc-derived certainty, not the
+    # phpVersion-derived constant-folding at work on a version_compare()
+    # guard — naming it without ruling it out would hand readers a fix
+    # that does not work.
     text = _text(WORDPRESS_MD)
     assert "treatPhpDocTypesAsCertain" in text, (
         "wordpress.md must name the `treatPhpDocTypesAsCertain` PHPStan "
-        "option as the honest fix for a guard meant to stay a live check"
+        "option so a reader who reaches for it is told why it does not "
+        "apply here"
     )
-    assert "false" in text.lower()
+    assert "does not touch this" in text, (
+        "wordpress.md must explicitly rule out `treatPhpDocTypesAsCertain` "
+        "as a fix for the phpVersion-derived constant-folding, not merely "
+        "mention the option"
+    )
+
+
+def test_wordpress_md_names_phpstan_ignore_as_the_actual_fix() -> None:
+    text = _text(WORDPRESS_MD)
+    assert "@phpstan-ignore" in text, (
+        "wordpress.md must name a scoped `@phpstan-ignore` comment as the "
+        "way to suppress the finding on a guard that must stay a live "
+        "runtime check"
+    )
