@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.14.0] – 2026-07-20
+
 ### Added
 
 - **`/help` adopts the echo-manpage mechanism from `kntnt-wp-skills` — `docs/man/*.md` source, verbatim echo, help-gate parity, `model: haiku` (#45).** `scripts/help.py` previously surfaced only each skill's intro paragraph, re-wrapped and column-aligned by hand — a missing-source bug, not a formatting one: `/kntnt-code-skills:help release` produced a paragraph, never a usage reference with real flags. The fix retrofits the reference model built for this in `kntnt-wp-skills` (its `docs/design.md` §12): one full manual page per skill at `docs/man/<skill>.md` (`NAME`, `SYNOPSIS`, `DESCRIPTION`, `OPTIONS`, `EXAMPLES`, `FILES`), added for all eight skills — `coder`, `coding-standard`, `commit`, `doctor`, `init`, `orchestrate`, `push`, `release`. `scripts/help.py` is now the echo-style renderer from `kntnt-wp-skills`, essentially unchanged (only its docstring's plugin name differs): it reads `.claude-plugin/plugin.json` and `docs/man/*.md` and prints them verbatim — Claude Code already renders GitHub-flavoured Markdown in the terminal, so no wrapping or alignment is computed here — no argument → the overview (the plugin blurb plus each manpage's NAME line); a skill name → that skill's manual page verbatim; anything else → the one-line unknown-skill error. `commands/help.md` now emits the rendered Markdown **without** the old outer triple-backtick fence (which broke the manpages' own tables and fenced SYNOPSIS blocks) and sets `model: haiku`, since the turn is a pure verbatim echo. Every one of the eight `SKILL.md` files gains a `## 0. Help gate` step: on `help`/`--help`/`-h` it runs `scripts/help.py <skill>`, emits the result verbatim, and stops before anything else — so `/release --help` and `/kntnt-code-skills:help release` reach the same page. `README.md`'s usage now links each skill's manual page instead of restating its flags (the `/help` bullet, a new "full option reference" pointer, and the former "Release-skill arguments" flag list, now a link to the three manpages). `tests/test_help.py` covers the renderer's overview/detail/unknown branches and `main()`'s dispatch against a synthetic plugin-root fixture; `tests/test_help_docs_consistency.py` binds the manpages to reality — every skill has one, every documented flag is grounded in that skill's own `SKILL.md` (and every flag `SKILL.md` defines is documented, so nothing real is silently dropped), every skill has a help gate, the overview carries every manpage's NAME line, `commands/help.md` runs on haiku without the outer fence, and every README `docs/man/` link resolves.
@@ -248,7 +250,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.14.0
 [0.13.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.13.0
 [0.12.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.12.0
 [0.11.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.11.0
