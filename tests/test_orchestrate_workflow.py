@@ -2444,3 +2444,221 @@ def test_plan_overlay_hardens_against_prototype_key_collision() -> None:
     assert "native code" not in out["tostring_with_plan"]
     assert "[object Object]" not in out["tostring_with_plan"]
     assert "function" not in out["tostring_with_plan"]
+
+
+# --- #46: merge-mode branches fork from the current default tip + reconcile ---
+
+# A merge-mode run integrates issues serially, fast-forwarding the default branch
+# to each verified feature tip. The implementer landed in a Workflow worktree
+# whose HEAD is the harness's run-start scaffolding ref, pinned at run start; the
+# old `implement` prompt said only "work on a fresh branch off the current
+# integration base", so every issue after the first forked from that STALE base
+# and, once the default advanced under it, could no longer `--ff-only` — verified
+# work was parked en masse (issue #46). The fix has three parts, all structural:
+#   1. `implement` creates its branch FRESH off the up-to-date default tip with
+#      `git checkout -B`, mirroring `integrationHotfix`, so the ff-only invariant
+#      holds for real in the serial design.
+#   3. the `integrate` prompt no longer asserts the false "nothing landed between
+#      the build and now" invariant — it ties the fast-forward to the branch
+#      having been cut off the then-current tip.
+#   2. a genuine rebase content conflict on a VERIFIED branch is not parked
+#      outright: a bounded reconcile stage (rebase+resolve → targeted re-verify of
+#      ONLY the resolution → land) repairs it, parking only when the re-verify
+#      blocks or the round cap is hit. Merge mode only.
+
+
+def test_implement_creates_branch_fresh_off_current_default_tip() -> None:
+    # #46 fix 1: the implementer must create its feature branch FRESH off the
+    # up-to-date default tip (mirroring integrationHotfix) so the harness's stale
+    # run-start scaffolding base cannot make it build on an old base.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "implement")
+    assert "git checkout -B" in block, (
+        "the implement prompt must create the feature branch fresh off the "
+        "up-to-date default tip with `git checkout -B`, like integrationHotfix"
+    )
+    lowered = block.lower()
+    assert "stale" in lowered, (
+        "the implement prompt must explain the stale run-start base it guards against"
+    )
+    assert "default branch" in lowered, (
+        "the fresh branch must be created off the up-to-date default branch"
+    )
+    # Worktree isolation and the in-situ hazard flag survive the reword.
+    assert "isolation: 'worktree'" in block
+    assert "inSituHazard" in block
+
+
+def test_integrate_prompt_no_longer_asserts_the_false_nothing_landed_invariant() -> None:
+    # #46 fix 3: the false "nothing landed between the build and now" claim is gone;
+    # the ff-only guarantee is tied to the branch being cut off the then-current tip.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrate")
+    lowered = block.lower()
+    assert "nothing landed between" not in lowered, (
+        "the integrate prompt must no longer assert the false 'nothing landed "
+        "between the build and now' invariant"
+    )
+    assert (
+        "then-current default" in lowered
+        or "current default tip" in lowered
+        or "current tip" in lowered
+    ), (
+        "the integrate prompt must tie the fast-forward to the branch having been "
+        "created off the then-current default tip"
+    )
+    # The core landing invariants are untouched by the reword.
+    assert "merge --ff-only" in lowered
+    assert "never merge the default branch into" in lowered
+    assert "linear" in lowered
+
+
+def test_engine_helpers_exports_is_reconcilable_conflict() -> None:
+    helpers = ENGINE_HELPERS.read_text(encoding="utf-8")
+    names = _exported_const_names(helpers)
+    assert "isReconcilableConflict" in names, (
+        "engine-helpers.mjs must export `isReconcilableConflict` as the tested "
+        "source of truth for the #46 reconcile decision"
+    )
+
+
+_RECONCILE_HARNESS = """
+import { isReconcilableConflict } from "__MODULE_URL__";
+const out = {
+  parked_conflict: isReconcilableConflict({ status: 'parked', conflict: true }),
+  parked_no_conflict: isReconcilableConflict({ status: 'parked', conflict: false }),
+  parked_absent_conflict: isReconcilableConflict({ status: 'parked' }),
+  done_conflict: isReconcilableConflict({ status: 'done', conflict: true }),
+  blocked_conflict: isReconcilableConflict({ status: 'blocked', conflict: true }),
+  null_record: isReconcilableConflict(null),
+  undefined_record: isReconcilableConflict(undefined),
+};
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_is_reconcilable_conflict_behaviour() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    harness = _RECONCILE_HARNESS.replace(
+        "__MODULE_URL__", ENGINE_HELPERS.resolve().as_uri()
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+
+    # Only a PARKED record carrying the integrator's genuine-conflict flag reconciles.
+    assert out["parked_conflict"] is True
+    assert out["parked_no_conflict"] is False, (
+        "a parked record without the conflict flag is some other failure — never reconcile"
+    )
+    assert out["parked_absent_conflict"] is False, (
+        "an absent conflict flag must not reconcile"
+    )
+    assert out["done_conflict"] is False, "a landed issue is never reconciled"
+    assert out["blocked_conflict"] is False, "a design-blocked issue is never reconciled"
+    assert out["null_record"] is False
+    assert out["undefined_record"] is False
+
+
+def test_integrate_schema_carries_conflict_field() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    schema = _extract_braced_const(source, "INTEGRATE_SCHEMA")
+    assert "conflict" in schema, (
+        "INTEGRATE_SCHEMA must carry a `conflict` boolean so the integrator can "
+        "signal a genuine rebase content conflict the reconcile stage repairs"
+    )
+
+
+def test_integrate_threads_the_conflict_flag_onto_the_parked_record() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrate")
+    assert "result.conflict" in block, (
+        "integrate must read the integrator's `conflict` flag and thread it onto "
+        "the parked record so the reconcile stage can decide"
+    )
+    # The integrate prompt asks the integrator to set the flag on a genuine conflict.
+    assert "conflict: true" in block.lower() or "`conflict`" in block, (
+        "the integrate prompt must ask the integrator to flag a genuine conflict"
+    )
+
+
+def test_reconcile_agent_is_worktree_isolated_and_frees_the_branch_lock() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "reconcile")
+    assert "isolation: 'worktree'" in block, (
+        "the reconcile agent touches code and MUST carry isolation: 'worktree'"
+    )
+    assert "${" + CONSTRAINTS_NAME + "}" in block, (
+        "the reconcile agent must interpolate the shared AGENT_CONSTRAINTS"
+    )
+    # Like fix, it frees the worktree still holding the branch before taking it over.
+    assert "git worktree remove --force" in block, (
+        "reconcile must free the worktree that still holds the target branch"
+    )
+    lowered = block.lower()
+    assert "rebase" in lowered, "reconcile must rebase the branch onto the default"
+    assert "both" in lowered, (
+        "reconcile must keep BOTH sides' concerns when resolving the conflict"
+    )
+
+
+def test_reverify_reconcile_is_a_single_read_only_verdict_agent() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "reverifyReconcile")
+    assert "parallel(" not in block, (
+        "reverifyReconcile must be a single targeted agent, never a parallel panel"
+    )
+    assert "VERDICT_SCHEMA" in block, (
+        "reverifyReconcile must return the same VERDICT_SCHEMA a verifier does"
+    )
+    assert "isolation" not in block, (
+        "reverifyReconcile is a read-only reviewer and needs no worktree isolation"
+    )
+    assert "${" + CONSTRAINTS_NAME + "}" in block, (
+        "reverifyReconcile must interpolate the shared AGENT_CONSTRAINTS"
+    )
+    assert "only" in block.lower(), (
+        "reverifyReconcile must review ONLY the conflict resolution, not the whole change"
+    )
+
+
+def test_wave_loop_reconciles_a_conflicted_verified_branch_before_parking() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    per_issue_idx = source.index("for (const number of")
+    finally_idx = source.index("finally {")
+    region = source[per_issue_idx:finally_idx]
+    assert re.search(r"merge && isReconcilableConflict\(", region), (
+        "the wave loop must attempt a bounded reconcile — merge mode only — when "
+        "integrate parked a verified branch on a genuine conflict"
+    )
+    assert "reconcileAndIntegrate(" in region, (
+        "the wave loop must call reconcileAndIntegrate to repair a conflicted branch"
+    )
+
+
+def test_reconcile_loop_is_bounded_and_tracks_its_branch_for_teardown() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "reconcileAndIntegrate")
+    assert "maxFixRounds" in block, (
+        "the reconcile loop must be bounded by the per-issue maxFixRounds cap"
+    )
+    assert "reconcile(" in block, "the loop must rebase+resolve via reconcile"
+    assert "reverifyReconcile(" in block, (
+        "the loop must re-verify ONLY the resolution via reverifyReconcile"
+    )
+    assert "integrate(" in block, "the loop must land via the same integrate step"
+    assert "blockingFindings(" in block, (
+        "the re-verify verdict must go through blockingFindings so a dead / "
+        "not-clear review never lands the reconciled branch"
+    )
+    assert "builtBranches.add" in block, (
+        "the reconciled branch must be tracked in builtBranches so teardown removes it"
+    )
