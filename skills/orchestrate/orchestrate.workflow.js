@@ -447,6 +447,37 @@ const AGENT_CONSTRAINTS = `Shared-state rules — these bind you; obey them with
   `- NEVER run \`git reset --hard <ref>\` while HEAD is on a feature branch — it silently discards that branch's commits.\n` +
   `- The ONE safe way to reach a clean state: if a rebase or merge is in progress, abort it (\`git rebase --abort\` / \`git merge --abort\`); then \`git checkout -f <the integration base>\` and discard only working-tree changes to TRACKED files with \`git checkout -- .\`. Never delete untracked files.`
 
+// The shared-symbol ripple-report instruction every code-touching implementer
+// gets (#36): if the change alters a shared symbol's contract, signature, or
+// effective behaviour — especially beyond the files this one task obviously
+// owns — enumerate the affected call sites and state under `assumptions` which
+// were updated and which were not. A per-issue verifier is bound to the diff
+// alone and structurally cannot see an unchanged caller outside it, so a
+// silently incomplete refactor was previously caught only at the mandatory
+// integration review — a full extra review + remediation cycle; this makes it
+// a REPORTED one the orchestrator and verifier can act on immediately, rather
+// than a silent gap. Defined ONCE and interpolated into `implement` and `fix`,
+// mirroring how AGENT_CONSTRAINTS is shared rather than copy-pasted — `fix` is
+// finding-driven but can still touch a shared symbol while addressing a
+// finding, so it carries the same instruction.
+const RIPPLE_REPORT_INSTRUCTION = `If this change alters a shared symbol's contract, signature, or effective behaviour — especially beyond the files this task obviously owns — enumerate the affected call sites and state under \`assumptions\` which you updated and which you did not; a silently incomplete refactor becomes a reported one the orchestrator and verifier can act on.`
+
+// The conditional consistency/ripple lens every dispatched `verify` lens gets
+// (#36): a per-issue reviewer is bound to the diff and structurally cannot see
+// an unchanged caller outside it, so an implementer who updates a shared
+// symbol's contract or effective behaviour but only some of its callers still
+// reads as locally consistent — the exact class the mandatory integration
+// review otherwise caught alone, a full extra review + remediation cycle
+// later. This instruction pulls that check earlier: WHEN the diff changes a
+// shared, multi-caller symbol's contract or effective behaviour, the reviewer
+// ALSO checks that symbol's OTHER, unchanged callers for consistency, not only
+// the diff; an ordinary diff that touches no such shared symbol pays nothing
+// extra. Folded into `verify` ONLY — never into the narrowly-scoped
+// `reverifyFindings` / `reverifyReconcile` re-verifies (already confined to
+// specific findings or a resolution), and never into the mandatory integration
+// review, which stays the unchanged backstop (#36 leaves it alone by design).
+const CONSISTENCY_LENS_INSTRUCTION = `If the diff changes a shared, multi-caller symbol's contract or effective behaviour, ALSO check that symbol's OTHER, UNCHANGED callers for consistency — not only the diff itself, since an unchanged caller sits outside it; skip this check entirely when the diff touches no such shared symbol.`
+
 // The three fixed prompt framings that slide how the `implement` agent is told to
 // TREAT its plan — from mechanical execution of a settled recipe at the low end of
 // the `--level` dial to autonomous problem-solving at the high end (ADR-0002 §4).
@@ -515,6 +546,7 @@ const implement = (number) =>
       `Create your feature branch FRESH off the up-to-date default branch — do NOT rely on the worktree's current HEAD, which is the harness's run-start scaffolding ref and is STALE (pinned when the run started, it does not advance as each issue lands, so building on it would fork you off a base missing your predecessors' landed work). Choose a branch name, then run \`git checkout -B <your-branch> <the up-to-date default branch>\` — the \`-B\` form points your branch at the CURRENT default-branch tip whether or not the ref already exists, mirroring the integration hotfix. In this serial integrate-immediately design your predecessors have already landed on the default, so this base contains their work and your branch fast-forwards cleanly at integration. Do all the work in this worktree. Demonstrate the red — a failing-test commit — before the green, because a test never seen to fail is of unknown value. Refactor only once green.\n` +
       `Automate everything meaningfully automatable, then run the project's full gate suite (discover it from the project) and report the REAL result.\n` +
       `Resolve genuine ambiguity by the most reasonable assumption and record it; never pause to ask. The one exception is work that cannot proceed without contradicting a settled decision (an ADR or design doc): set status "blocked", record the blocker, and stop only this issue.\n` +
+      `${RIPPLE_REPORT_INSTRUCTION}\n` +
       `If, during the work, you discover a genuine, previously-unseen danger surface the brief and plan did not anticipate — a write path, a permission gate, an irreversible delete — record it in \`inSituHazard\`; this does not block your progress or change your status, it only flags the surface for independent review.`,
     { label: `implement:#${number}`, phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree', ...roleTuning(roles.implementer) },
   )
@@ -531,7 +563,8 @@ const fix = (number, impl, findings) =>
       `${AGENT_CONSTRAINTS}\n` +
       `Address ONLY these verified findings, keep the tests green, and obey ${standardInstruction}:\n` +
       findings.map((finding) => `- ${finding.title}: ${finding.detail}`).join('\n') +
-      `\nCommit on ${impl.branch}, then re-run the full gate suite and report the real result.`,
+      `\nCommit on ${impl.branch}, then re-run the full gate suite and report the real result.\n` +
+      `${RIPPLE_REPORT_INSTRUCTION}`,
     { label: `fix:#${number}`, phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree', ...roleTuning(roles.implementer) },
   )
 
@@ -552,7 +585,7 @@ const verify = async (number, impl, lenses) => {
         `Adversarially review branch ${impl.branch} for issue #${number} ("${titleOf(number)}") through ONE lens: ${brief}.\n` +
           `You did NOT write this code. Read the issue's contract (\`gh issue view ${number} --comments\`; if an Agent Brief comment exists it is authoritative, OTHERWISE the issue body and its acceptance criteria are the contract) and ${standardInstruction}.\n` +
           `${AGENT_CONSTRAINTS}\n` +
-          `Check ONLY what the gates cannot — do not re-check lint, build, or tests that already passed. Default to clear=false if you find anything real, and be specific.`,
+          `Check ONLY what the gates cannot — do not re-check lint, build, or tests that already passed. ${CONSISTENCY_LENS_INSTRUCTION} Default to clear=false if you find anything real, and be specific.`,
         opts,
       )
     }),

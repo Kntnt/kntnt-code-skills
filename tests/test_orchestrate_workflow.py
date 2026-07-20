@@ -2687,7 +2687,9 @@ CONSISTENCY_NAME = "CONSISTENCY_LENS_INSTRUCTION"
 
 def test_ripple_report_instruction_declared_exactly_once() -> None:
     source = WORKFLOW.read_text(encoding="utf-8")
-    decls = re.findall(rf"^const {re.escape(RIPPLE_NAME)} = ", source, flags=re.MULTILINE)
+    decls = re.findall(
+        rf"^const {re.escape(RIPPLE_NAME)} = ", source, flags=re.MULTILINE
+    )
     assert len(decls) == 1, (
         f"expected exactly one top-level `const {RIPPLE_NAME} =`, found "
         f"{len(decls)} — the ripple-report text must be defined once and reused"
@@ -2784,7 +2786,9 @@ def test_verify_prompt_references_the_consistency_lens_instruction() -> None:
     )
 
 
-def test_consistency_lens_instruction_excluded_from_narrow_or_mandatory_reviews() -> None:
+def test_consistency_lens_instruction_excluded_from_narrow_or_mandatory_reviews() -> (
+    None
+):
     # AC: the lens is confined to the INITIAL per-issue panel. The targeted
     # fix-round and reconcile re-verifies are already narrowly scoped to their own
     # findings/resolution, and the mandatory integration review stays the

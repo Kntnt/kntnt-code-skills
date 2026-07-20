@@ -1010,9 +1010,7 @@ def test_verify_step_documents_the_conditional_consistency_lens() -> None:
     )
     assert "shared" in build and (
         "multi-caller" in build or "multiple caller" in build
-    ), (
-        "the consistency lens must be scoped to a shared, multi-caller symbol"
-    )
+    ), "the consistency lens must be scoped to a shared, multi-caller symbol"
     assert "consisten" in build, (
         "step 4's Verify description must name the consistency check"
     )
