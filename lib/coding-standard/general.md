@@ -102,6 +102,10 @@ Always prefer the modern construction over the legacy one: nullish coalescing, n
 
 Write a guard only where a real, present condition needs it — an untrusted boundary (user input, a network response, deserialization), a documented platform quirk, a contract a caller can plausibly break. Defensive code against states the surrounding invariants already rule out is forbidden: redundant null checks, `try`/`catch` around calls that cannot throw, re-validation of data already validated upstream, `else` branches for conditions that cannot occur, fallbacks for a dependency the module constructs itself. Such code adds paths no test covers, dilutes the contract, and feigns a doubt the types and invariants have already settled. When a guard is warranted, its `//` topic sentence names the threat it defends against — as the dispatch example above does.
 
+### Refactoring completeness
+
+When a change alters a shared symbol's contract, signature, or effective behaviour, enumerate every caller — grep, an IDE's find-references — before finishing, and update all of them in the same change. Never leave some callers updated to the new contract and others stranded on the old one: a diff that reads as locally consistent within the files it touches can still leave the codebase globally inconsistent, a gap a review that only reads the diff structurally misses. When bringing every caller up to date would genuinely ripple beyond the task at hand, say so explicitly in the summary or handoff — never apply the change to only the callers already in view and leave the rest half-done.
+
 ### Identifiers
 
 - Names are self-documenting. Avoid abbreviations except well-established ones (`url`, `id`, `db`, `i` in tight loops).

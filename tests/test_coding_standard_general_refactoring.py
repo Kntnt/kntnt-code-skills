@@ -74,13 +74,18 @@ def _general_text() -> str:
 
 def _section(text: str, start_pattern: str, end_pattern: str) -> str:
     """Slice from the heading matching ``start_pattern`` up to (excluding) the
-    next heading matching ``end_pattern`` — the text's tail if none follows."""
+    next heading matching ``end_pattern`` — the text's tail if none follows.
+
+    Searches for ``end_pattern`` only after the start heading's own line, so
+    an end pattern that (unlike the start pattern) also matches the start
+    heading's hash level cannot re-match at position zero."""
 
     start = re.search(start_pattern, text, re.MULTILINE)
     assert start is not None, f"section start not found: {start_pattern!r}"
     rest = text[start.start() :]
-    end = re.search(end_pattern, rest[1:], re.MULTILINE)
-    return rest if end is None else rest[: end.start() + 1]
+    after_heading = rest.find("\n") + 1 or len(rest)
+    end = re.search(end_pattern, rest[after_heading:], re.MULTILINE)
+    return rest if end is None else rest[: after_heading + end.start()]
 
 
 def _universal_rules_section() -> str:
