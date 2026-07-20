@@ -17,6 +17,10 @@ would otherwise rot silently:
 3. The README's spelled-out skill counts track reality — the total number of
    `skills/` directories, and the size of the release-workflow trio — so adding
    a skill without updating the prose is caught here rather than in review.
+4. `release`'s `--yes` flag suppresses every interactive prompt, with no
+   carve-out — the first-run project-record confirmation (step 2) proceeds
+   on the best-detected record and reports it, exactly like the single
+   confirmation gate (step 7) skips (#44).
 
 Run with: `uv run --with pytest pytest -q`
 """
@@ -29,6 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
 LIB_COMMIT = REPO_ROOT / "lib" / "commit.md"
 README = REPO_ROOT / "README.md"
+RELEASE_SKILL_MD = SKILLS_DIR / "release" / "SKILL.md"
 
 # The three skills that share the commit spine. `commit` is the innermost
 # (reconcile + commit), `push` adds the push, `release` wraps bump/tag/publish
@@ -103,4 +108,40 @@ def test_readme_release_workflow_count_is_accurate() -> None:
     phrase = f"{_cardinal(len(RELEASE_WORKFLOW_SKILLS))} release-workflow skills"
     assert phrase in _text(README).lower(), (
         f"README does not state '{phrase}' for the {RELEASE_WORKFLOW_SKILLS} trio"
+    )
+
+
+def test_release_skill_has_no_yes_carve_out_for_first_run_record() -> None:
+    text = _text(RELEASE_SKILL_MD)
+    assert "never the first-run" not in text, (
+        "release SKILL.md still documents a --yes carve-out for the "
+        "first-run record confirmation (#44)"
+    )
+    assert "never** skipped, even with" not in text, (
+        "release SKILL.md still says the first-run record confirmation is "
+        "never skipped under --yes (#44)"
+    )
+
+
+def test_release_skill_yes_states_uniform_no_prompts_rule() -> None:
+    text = _text(RELEASE_SKILL_MD).lower()
+    assert "suppress" in text and "no exceptions" in text, (
+        "release SKILL.md's --yes description does not state the uniform "
+        "'suppresses all prompts, no exceptions' rule (#44)"
+    )
+
+
+def test_release_skill_documents_reporting_detected_record_under_yes() -> None:
+    text = _text(RELEASE_SKILL_MD).lower()
+    assert "reports what it detected and recorded" in text, (
+        "release SKILL.md does not document reporting the detected/recorded "
+        "project record when --yes skips the first-run confirmation (#44)"
+    )
+
+
+def test_readme_release_yes_has_no_first_run_carve_out() -> None:
+    text = _text(README)
+    assert "never the first-run" not in text, (
+        "README still documents a --yes carve-out for release's first-run "
+        "version-location detection (#44)"
     )
