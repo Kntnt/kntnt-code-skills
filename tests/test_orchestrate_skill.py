@@ -885,3 +885,88 @@ def test_decision_boundary_map_has_pr_row_and_never_inferred_note() -> None:
     assert "never" in section and "infer" in section, (
         "the decision-boundary map must note merge authority is never inferred"
     )
+
+
+# --- #34: implicit issue relationships beyond Blocked-by edges ---------------
+
+# The deterministic planner (`orchestrate.py plan`) computes only the explicit
+# `Blocked by` edge graph and stays prose-blind by design — unchanged by this
+# issue. The orchestrator's own read of every in-scope issue and brief (step 1)
+# must additionally assess two implicit relationships the issue text can
+# reveal that the helper does not compute: same-wave file/module overlap
+# (-> serialize the colliding pair) and a cross-reference to another in-scope
+# issue's not-yet-built deliverable (-> order the referrer after the provider,
+# or flag the missing edge). Both are surfaced at the confirm gate, the plan's
+# `soft_notes` is read as first-class input to the overlap assessment, and the
+# "issues in one wave are independent" claim is qualified to
+# dependency-independence only. These tests are structural over SKILL.md's
+# step 2 (Plan) and step 3 (Confirm, including Cost and chunking).
+
+
+def _plan_section() -> str:
+    """The '### 2. Plan (deterministic)' section and its subsections."""
+
+    return _section(_skill_text(), r"^###\s+2\.\s+Plan", r"^###\s+3\.")
+
+
+def test_wave_independence_wording_is_qualified_to_dependency_independence() -> None:
+    section = _plan_section().lower()
+    # The bare claim "independent" must be qualified to dependency-independence
+    # only — it is not a promise the pair shares no other coupling.
+    assert (
+        "dependency-independent" in section or "dependency independence" in section
+    ), "the wave-independence claim must be qualified to dependency-independence"
+
+
+def test_plan_step_assesses_same_wave_file_overlap_and_serializes() -> None:
+    section = _plan_section().lower()
+    assert "overlap" in section
+    assert "same-wave" in section or "same wave" in section
+    assert "serialize" in section
+    # The concrete corrective actions the brief names.
+    assert "one-issue-per-slice" in section or "soft-order" in section
+
+
+def test_plan_step_reads_soft_notes_as_first_class_input_to_overlap() -> None:
+    section = _plan_section().lower()
+    assert "soft_notes" in section, (
+        "the plan step must name `soft_notes` as input to the overlap assessment"
+    )
+    assert "first-class input" in section or "first class input" in section, (
+        "soft_notes must be read as first-class input, not merely an audit-trail note"
+    )
+
+
+def test_plan_step_detects_deliverable_cross_reference_and_orders_it() -> None:
+    section = _plan_section().lower()
+    assert "deliverable" in section
+    assert "command" in section and "symbol" in section and "file" in section
+    assert "missing" in section and (
+        "hard edge" in section or "blocked by" in section
+    )
+    assert "order the referrer" in section or (
+        "referrer" in section and "provider" in section
+    )
+
+
+def test_plan_step_states_relationships_are_silent_but_surfaced_at_gate() -> None:
+    section = _plan_section().lower()
+    assert "confirm gate" in section or "step 3" in section
+    assert "reorder" in section
+    assert "serializ" in section
+    assert "why" in section
+
+
+def test_confirm_gate_shows_reordering_and_serialization_with_reasons() -> None:
+    section = _confirm_section().lower()
+    assert "reorder" in section or "serializ" in section
+    assert "overlap" in section or "cross-reference" in section or "deliverable" in section
+
+
+def test_cost_chunking_names_both_facets_as_serialize_or_order_reasons() -> None:
+    section = _confirm_section().lower()
+    assert "overlap" in section
+    assert "cross-reference" in section or "deliverable" in section
+    assert "serialize" in section or "reorder" in section
+    assert "one-issue-per-slice" in section
+    assert "tightly-coupled" in section or "tightly coupled" in section
