@@ -18,7 +18,7 @@ Applies whenever the project contains PHP code. WordPress projects additionally 
 - Arrow functions (`fn() =>`) for short callbacks.
 - `enum` for closed sets of values; backed enums when the values cross a boundary (DB, JSON, query string).
 - Null-safe operator: `$user?->getProfile()?->getEmail()`.
-- First-class callable syntax: `array_filter( $items, $this->is_valid(...) )`.
+- First-class callable syntax for immediate-consumption callables — `array_filter( $items, $this->is_valid(...) )`, `array_map`, `usort`, and the like — where the callable is used and discarded within the same call. **Exception:** not for `add_action()` / `add_filter()` callbacks, nor any registry where a callback must remain individually removable — `$this->method(...)` builds a fresh `Closure` on every call, and a `Closure`'s hook id (`_wp_filter_build_unique_id()`) is tied to that unreachable instance, so nothing can ever call `remove_action()` / `remove_filter()` against it; use the array-callable form, `[ $this, 'method' ]`, there instead.
 - `str_contains()`, `str_starts_with()`, `str_ends_with()` instead of `strpos` comparisons.
 - Array spread: `[ ...$existing, $new ]`.
 

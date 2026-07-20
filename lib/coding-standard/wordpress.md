@@ -48,6 +48,10 @@ Otherwise the PSR-4 rules from the PHP section apply.
 - Errors are silent toward visitors. Diagnostics go to a plugin-managed log file or `error_log()`.
 - Capabilities, not roles, gate admin actions.
 
+### Hook registration callables
+
+`add_action()` / `add_filter()` callbacks are exempt from the PHP rules' first-class-callable default (*Required modern features*): register with `[ $this, 'method' ]`, not `$this->method(...)`. A first-class callable builds a fresh `Closure` at the call site, and a `Closure`'s hook id (`_wp_filter_build_unique_id()`) is tied to that unreachable instance, so nothing — not even the same object elsewhere — can call `remove_action()` / `remove_filter()` against it. The array-callable form stays individually removable, which is the whole point of exposing a hook.
+
 ### WordPress plugin project structure
 
 ```
