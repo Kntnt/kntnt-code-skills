@@ -2489,7 +2489,9 @@ def test_implement_creates_branch_fresh_off_current_default_tip() -> None:
     assert "inSituHazard" in block
 
 
-def test_integrate_prompt_no_longer_asserts_the_false_nothing_landed_invariant() -> None:
+def test_integrate_prompt_no_longer_asserts_the_false_nothing_landed_invariant() -> (
+    None
+):
     # #46 fix 3: the false "nothing landed between the build and now" claim is gone;
     # the ff-only guarantee is tied to the branch being cut off the then-current tip.
     source = WORKFLOW.read_text(encoding="utf-8")
@@ -2563,7 +2565,9 @@ def test_is_reconcilable_conflict_behaviour() -> None:
         "an absent conflict flag must not reconcile"
     )
     assert out["done_conflict"] is False, "a landed issue is never reconciled"
-    assert out["blocked_conflict"] is False, "a design-blocked issue is never reconciled"
+    assert out["blocked_conflict"] is False, (
+        "a design-blocked issue is never reconciled"
+    )
     assert out["null_record"] is False
     assert out["undefined_record"] is False
 

@@ -129,8 +129,7 @@ def test_header_section_exemption_is_not_scoped_to_field_lines_only() -> None:
 def test_header_section_states_a_field_is_never_wrapped() -> None:
     section = _header_section().lower()
     assert "never" in section and "wrap" in section, (
-        "the section must state a header field is never wrapped across "
-        "multiple lines"
+        "the section must state a header field is never wrapped across multiple lines"
     )
 
 
@@ -156,8 +155,7 @@ def test_header_section_warns_against_linter_annotations() -> None:
         "the header block"
     )
     assert "never" in section or "don't" in section or "do not" in section, (
-        "the warning must be stated as a rule, not merely mentioned in "
-        "passing"
+        "the warning must be stated as a rule, not merely mentioned in passing"
     )
 
 
@@ -172,8 +170,7 @@ def test_header_section_states_the_at_prefix_reason() -> None:
         "the section must state that `@` is parsed as a header-line prefix"
     )
     assert "shadow" in lowered, (
-        "the section must state the consequence: an annotation can shadow "
-        "a real field"
+        "the section must state the consequence: an annotation can shadow a real field"
     )
 
 

@@ -64,7 +64,15 @@ KNOWN_MODULE_STEMS = frozenset(
 # Language/framework names that would make the rule non-language-agnostic if
 # they showed up inside its own prose — the whole point of it living in the
 # universal module rather than a per-language one.
-LANGUAGE_NAMES = ("PHP", "JavaScript", "TypeScript", "Python", "WordPress", "Bash", "PSR-12")
+LANGUAGE_NAMES = (
+    "PHP",
+    "JavaScript",
+    "TypeScript",
+    "Python",
+    "WordPress",
+    "Bash",
+    "PSR-12",
+)
 
 
 def _general_text() -> str:
@@ -107,7 +115,9 @@ def _refactoring_completeness_section() -> str:
 def _defensive_coding_section() -> str:
     """Sibling rule used only as a length reference point."""
 
-    return _section(_universal_rules_section(), r"^###\s+Defensive coding", r"^###\s+\S")
+    return _section(
+        _universal_rules_section(), r"^###\s+Defensive coding", r"^###\s+\S"
+    )
 
 
 # --- the rule exists, in the right place ------------------------------------
@@ -129,9 +139,11 @@ def test_rule_requires_enumerating_callers_before_finishing() -> None:
     assert "caller" in section or "call site" in section, (
         "the rule must name callers or call sites as what gets enumerated"
     )
-    assert "grep" in section or "find-references" in section or "find references" in section, (
-        "the rule must name a concrete enumeration technique (grep / find-references)"
-    )
+    assert (
+        "grep" in section
+        or "find-references" in section
+        or "find references" in section
+    ), "the rule must name a concrete enumeration technique (grep / find-references)"
 
 
 def test_rule_requires_updating_every_call_site_in_the_same_change() -> None:
@@ -154,7 +166,9 @@ def test_rule_warns_a_locally_consistent_diff_can_be_globally_inconsistent() -> 
     )
 
 
-def test_rule_requires_flagging_ripple_beyond_the_task_instead_of_half_applying() -> None:
+def test_rule_requires_flagging_ripple_beyond_the_task_instead_of_half_applying() -> (
+    None
+):
     section = _refactoring_completeness_section().lower()
     assert "ripple" in section, "the rule must name the ripple-beyond-the-task case"
     assert "summary" in section or "handoff" in section, (
@@ -221,9 +235,7 @@ def test_changelog_unreleased_documents_the_rule_and_resync_note() -> None:
     unreleased = _section(text, r"^##\s+\[Unreleased\]", r"^##\s+\[")
     assert "#35" in unreleased, "CHANGELOG [Unreleased] must reference issue #35"
     lowered = unreleased.lower()
-    assert "refactoring completeness" in lowered, (
-        "CHANGELOG must name the new rule"
-    )
+    assert "refactoring completeness" in lowered, "CHANGELOG must name the new rule"
     assert "--update" in unreleased, (
         "CHANGELOG must note that already-scaffolded projects need a "
         "`/coding-standard --update` re-sync to pick up the rule"

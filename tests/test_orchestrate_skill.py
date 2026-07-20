@@ -941,9 +941,7 @@ def test_plan_step_detects_deliverable_cross_reference_and_orders_it() -> None:
     section = _plan_section().lower()
     assert "deliverable" in section
     assert "command" in section and "symbol" in section and "file" in section
-    assert "missing" in section and (
-        "hard edge" in section or "blocked by" in section
-    )
+    assert "missing" in section and ("hard edge" in section or "blocked by" in section)
     assert "order the referrer" in section or (
         "referrer" in section and "provider" in section
     )
@@ -960,7 +958,9 @@ def test_plan_step_states_relationships_are_silent_but_surfaced_at_gate() -> Non
 def test_confirm_gate_shows_reordering_and_serialization_with_reasons() -> None:
     section = _confirm_section().lower()
     assert "reorder" in section or "serializ" in section
-    assert "overlap" in section or "cross-reference" in section or "deliverable" in section
+    assert (
+        "overlap" in section or "cross-reference" in section or "deliverable" in section
+    )
 
 
 def test_cost_chunking_names_both_facets_as_serialize_or_order_reasons() -> None:

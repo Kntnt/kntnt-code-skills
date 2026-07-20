@@ -94,11 +94,15 @@ def test_wordpress_md_states_array_callable_form_for_hook_registration() -> None
     lowered = text.lower()
     assert "add_action(" in text or "add_filter(" in text
     assert "[ $this, " in text or "[$this, " in text
-    assert "remov" in lowered  # the same removability rationale, not a bare rule restated
+    assert (
+        "remov" in lowered
+    )  # the same removability rationale, not a bare rule restated
 
 
 def test_wordpress_md_cross_references_the_php_module() -> None:
     text = _text(WORDPRESS_MD)
     # The rationale is stated once, authoritatively, in the PHP module; the
     # WordPress module should point back rather than duplicate it wholesale.
-    assert "PHP" in text and ("first-class" in text.lower() or "PHP rules" in text or "PHP module" in text)
+    assert "PHP" in text and (
+        "first-class" in text.lower() or "PHP rules" in text or "PHP module" in text
+    )
