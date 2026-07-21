@@ -13,6 +13,7 @@ description: >
   push" and a bare "push" to the push skill instead. When it is unclear
   whether this workflow is meant — for instance a bare `git commit` with no
   changelog work intended — ask first rather than triggering.
+argument-hint: "[\"message\"] [--yes] [help]"
 ---
 
 # commit

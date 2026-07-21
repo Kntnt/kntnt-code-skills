@@ -12,6 +12,7 @@ description: >
   with no push is the commit skill, not this one. When it is unclear
   whether this workflow is meant — for instance a bare `git push` with no
   changelog work intended — ask first rather than triggering.
+argument-hint: "[\"message\"] [--yes] [help]"
 ---
 
 # push

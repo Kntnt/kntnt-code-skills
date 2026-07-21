@@ -14,6 +14,7 @@ description: >
   any language — the examples here are English only). Because it spawns
   many sub-agents and can integrate code, it never auto-triggers on a
   vague "implement this": when in doubt, ask first.
+argument-hint: "[scope] [--level=XS|S|M|L|XL] [--merge|--pr] [--plan|--dry-run] [--max-fix-rounds=N] [--max-lenses=N] [--yes] [help]"
 ---
 
 # orchestrate

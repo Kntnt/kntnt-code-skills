@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **All eight skills now carry an `argument-hint` frontmatter field.** Each skill's `SKILL.md` gains an `argument-hint` value describing the arguments the skill accepts, so a slash-command UI can show the expected arguments inline — the same convention `commands/help.md` already uses (`argument-hint: [skill-name]`). The values are grounded in each skill's own documented *Arguments* section: `coder` and `init` accept only the universal help gate (`[help]`); `coding-standard` `[--update] [--dry-run] [help]`; `commit` and `push` `["message"] [--yes] [help]`; `doctor` `[--yes] [help]`; `release` `[minor|major|X.Y.Z] [--no-build] [--yes] [help]`; and `orchestrate` the full dial set (`[scope] [--level=XS|S|M|L|XL] [--merge|--pr] [--plan|--dry-run] [--max-fix-rounds=N] [--max-lenses=N] [--yes] [help]`). No skill behaviour changes; the field is metadata only. The audit and the full gate stay green.
+
+### Changed
+
+- **`README.md`, `CONTRIBUTING.md`, and `.gitignore` reconciled to the Kntnt baseline via `/doctor`.** The doctor run flagged drift against the project's own templates and baseline, resolved here without changing any substantive content. `README.md` is restructured to the canonical audience-layered shape — License/Latest-release badges under the title, a `## Description` section with `### Key features` / `### The problem` / `### How this project helps`, `## Requirements` restored before `## Installation`, the existing usage/architecture prose wrapped under `## Usage`, a `## Questions, bugs, and feature requests` section pointing to Discussions and Issues, the former collapsed *Contributing* split into `## Development` (carrying the five-command gate) and `## How you can contribute`, and a closing `## Changelog` section keeping the domain-specific SemVer policy as a `### Versioning` subsection — with all existing tables, code fences, and manual-page links preserved. `CONTRIBUTING.md` gains the `## Behaviour` section from the template. `.gitignore` gains the missing baseline entries (`*.py[cod]`, `.venv/`, `*.egg-info/`, `dist/`, `build/`, and an explicit `.claude/settings.local.json`).
+
 ## [0.15.0] – 2026-07-21
 
 ### Added

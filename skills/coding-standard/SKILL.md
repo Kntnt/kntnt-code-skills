@@ -11,6 +11,7 @@ description: >
   request to scaffold an app or write code is the `coder` skill, not
   this one. Because it writes and deletes files in the project, never
   auto-trigger on a vague code task — when in doubt, ask first.
+argument-hint: "[--update] [--dry-run] [help]"
 ---
 
 # coding-standard

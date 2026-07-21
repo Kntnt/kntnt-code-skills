@@ -16,6 +16,7 @@ description: >
   project, that is the `coding-standard` skill. The examples here are
   English, but trigger equally on the equivalent request in any
   language. When in doubt, trigger.
+argument-hint: "[help]"
 ---
 
 # coder

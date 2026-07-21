@@ -16,6 +16,10 @@ The plugin embodies a specific coding standard. Decisions about what enters the 
 
 By submitting a contribution, you agree it is licensed under Apache 2.0 by virtue of Apache License 2.0 §5 *Submission of Contributions*, which states that any contribution intentionally submitted for inclusion in the work shall be under the terms of that licence unless you explicitly state otherwise. No separate contributor licence agreement is required.
 
+## Behaviour
+
+Be respectful and constructive in issues, pull requests, and discussions. Assume good faith, keep criticism about the work rather than the person, and help keep this a project people want to contribute to.
+
 ## How to contribute
 
 1. **Open an issue first** for anything in the *discussed* row of the table above. For *welcomed* items, you can open a PR directly. Use the issue tracker at <https://github.com/Kntnt/kntnt-code-skills/issues>.

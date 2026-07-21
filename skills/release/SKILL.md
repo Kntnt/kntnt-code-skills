@@ -12,6 +12,7 @@ description: >
   version of the current project. This is an irreversible, outward-facing
   operation: when there is the slightest doubt that a release is intended,
   ask first rather than triggering.
+argument-hint: "[minor|major|X.Y.Z] [--no-build] [--yes] [help]"
 ---
 
 # release

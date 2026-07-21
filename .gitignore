@@ -15,12 +15,18 @@
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+.venv/
+*.egg-info/
 
+# Python build artifacts
+dist/
+build/
 
 # Claude Code
 .claude/*
 !.claude/settings.json
+.claude/settings.local.json
 
 # Eval runner output
 evals/workspace/

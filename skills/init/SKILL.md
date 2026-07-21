@@ -11,6 +11,7 @@ description: >
   "set up a repo" or because a task happened to start a new project; when in
   doubt, ask first. Because it writes files, runs `git init`, and can create
   a GitHub repository, it is explicit-only.
+argument-hint: "[help]"
 ---
 
 # init

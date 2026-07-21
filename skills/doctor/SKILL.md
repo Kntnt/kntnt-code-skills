@@ -11,6 +11,7 @@ description: >
   Kntnt baseline. Do not activate on a vague "check my project" or
   "what's wrong here"; when in doubt, ask first. `--yes` applies the
   fixes without prompting (it never commits).
+argument-hint: "[--yes] [help]"
 ---
 
 # doctor
