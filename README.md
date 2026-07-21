@@ -49,7 +49,7 @@ Most usage is just invoking the skills. This section describes what each one doe
 
 ### What you get
 
-The plugin exposes two coding-standard skills, two project-lifecycle skills, three release-workflow skills, an orchestration skill and one command:
+The plugin exposes eight skills — two coding-standard skills, two project-lifecycle skills, three release-workflow skills and an orchestration skill — plus one command:
 
 - **`coder`** – applies the coding standard. It auto-triggers on code-related prompts (in any language) and loads as a lazy bootstrap: at trigger it reads only the standard's router, then pulls in each topic module the moment the working context proves a language or framework axis applies – never the whole standard up front – and keeps pulling more as new axes surface through the session. When a project has already scaffolded the standard into `agents.d/coding-standard/` (via `/coding-standard`), it loads nothing from the plugin at all and defers to the project's own on-demand `AGENTS.md` References – the deliberate snapshot – which the harness already follows on its own. It writes code to those rules and is read-only on the project: it never writes the standard into the project as files.
 - **`/coding-standard`** – materialises the standard into a project as files under `agents.d/coding-standard/` and keeps them in sync. Explicitly invoked only: it creates the files on a fresh project, reports how they have drifted on an already-scaffolded one and reconciles them on `--update` (see *The coding standard* below).
@@ -166,86 +166,6 @@ uv run scripts/audit.py
 ```
 
 `ruff check` lints and `ruff format --check` enforces formatting across the repo; `mypy` type-checks `scripts` and `tests`; `pytest` runs the test suites for the helper scripts; and `audit.py` runs the scriptable checks (plugin.json shape and CHANGELOG version match, module ↔ `CANONICAL_ORDER` symmetry). There is no `pyproject.toml`, so the tools run through `uvx` / `uv run`. Install the pre-commit hook with `uv tool install pre-commit && pre-commit install`; from then on the audit fires before every commit and CI re-runs the same five on every push and PR.
-
-### Repository layout
-
-```
-kntnt-code-skills/
-├── .claude-plugin/
-│   ├── plugin.json
-│   └── marketplace.json
-├── .github/
-│   ├── ISSUE_TEMPLATE/
-│   │   └── bug.md
-│   └── workflows/
-│       └── audit.yml
-├── commands/
-│   └── help.md
-├── skills/
-│   ├── coder/
-│   │   └── SKILL.md
-│   ├── coding-standard/
-│   │   └── SKILL.md
-│   ├── init/
-│   │   └── SKILL.md
-│   ├── doctor/
-│   │   ├── SKILL.md
-│   │   └── doctor.workflow.js
-│   ├── orchestrate/
-│   │   ├── SKILL.md
-│   │   └── orchestrate.workflow.js
-│   ├── commit/
-│   │   └── SKILL.md
-│   ├── push/
-│   │   └── SKILL.md
-│   └── release/
-│       └── SKILL.md
-├── lib/
-│   ├── coding-standard/
-│   │   ├── _index.md
-│   │   ├── general.md
-│   │   ├── php.md
-│   │   ├── wordpress.md
-│   │   ├── wordpress-block.md
-│   │   ├── typescript.md
-│   │   ├── javascript-vanilla.md
-│   │   ├── python.md
-│   │   └── bash.md
-│   ├── gitignore/
-│   │   ├── base.txt
-│   │   ├── php.txt
-│   │   ├── typescript.txt
-│   │   ├── python.txt
-│   │   └── wordpress-block.txt
-│   ├── templates/
-│   │   ├── README.md
-│   │   ├── CHANGELOG.md
-│   │   ├── CONTRIBUTING.md
-│   │   └── NOTICE
-│   └── changelog.md
-├── scripts/
-│   ├── audit.py
-│   ├── doctor.py
-│   ├── help.py
-│   ├── init.py
-│   ├── orchestrate.py
-│   ├── release.py
-│   └── scaffold.py
-├── tests/
-│   ├── test_doctor.py
-│   ├── test_init.py
-│   ├── test_orchestrate.py
-│   └── test_scaffold.py
-├── .pre-commit-config.yaml
-├── .gitignore
-├── CHANGELOG.md
-├── CONTRIBUTING.md
-├── LICENSE
-├── NOTICE
-└── README.md
-```
-
-`commands/` holds the typed-only `/help` command. `skills/` holds the eight skills: `coder` (applies the coding standard), `coding-standard` (materialises it into a project), `init` (bootstraps a new project to the baseline), `doctor` (reconciles an existing one against it), the `commit`/`push`/`release` workflow skills and `orchestrate` (the away-from-keyboard issue-to-code build). `lib/` holds text resources that skills include – `coding-standard/` (the standard's topic modules and their shared `_index.md`, loaded by both `coder` and `coding-standard`), `gitignore/` (the `.gitignore` baseline and per-module fragments), `templates/` (the generic, tokenised README/CHANGELOG/CONTRIBUTING/NOTICE that `init` renders) and `changelog.md` with `commit.md` (the reconcile and stage-and-commit procedures shared by `commit`, `push` and `release`). `scripts/` holds the standalone `uv`-run tools: the audit, the `/help` renderer, `scaffold.py` (the coding-standard engine behind `/coding-standard`), `init.py` (the deterministic file work behind `/init`), `doctor.py` (the deterministic checks behind `/doctor`), `release.py`'s deterministic CHANGELOG mechanics and `orchestrate.py`'s dependency-graph, red/green and report mechanics for `/orchestrate` (whose Workflow engine, `orchestrate.workflow.js`, lives beside its skill, as `doctor.workflow.js` lives beside `doctor`). `tests/` holds the pytest suites for `scaffold.py`, `init.py`, `doctor.py` and `orchestrate.py`, run by both the audit workflow and the pre-commit hook.
 
 ### Authoring rules
 

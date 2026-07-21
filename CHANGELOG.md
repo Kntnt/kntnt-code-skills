@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.16.1] – 2026-07-21
+
+### Changed
+
+- **`README.md` drops the `### Repository layout` section (the ASCII directory tree and its prose walkthrough).** Both merely restated what `ls` shows directly — pure derivable duplication that only risked drifting out of sync as the tree grew — so the whole section is removed rather than maintained. The `## Development` section now flows straight from the five-command gate into `### Authoring rules`; no other section referenced the layout. The walkthrough's one non-derivable fact — the total skill count, which `tests/test_commit_push_release_docs.py` binds to reality — is preserved in the *What you get* intro, now stated as *eight skills*.
+
 ## [0.16.0] – 2026-07-21
 
 ### Added
@@ -276,7 +282,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.16.1
 [0.16.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.16.0
 [0.15.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.15.0
 [0.14.1]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.14.1
