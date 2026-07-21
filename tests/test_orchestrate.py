@@ -1125,7 +1125,9 @@ def test_build_plan_low_levels_emit_one_lens_and_one_fix_round(level: str) -> No
 
 
 @pytest.mark.parametrize("level", ["M", "L", "XL"])
-def test_build_plan_high_levels_emit_three_lenses_and_two_fix_rounds(level: str) -> None:
+def test_build_plan_high_levels_emit_three_lenses_and_two_fix_rounds(
+    level: str,
+) -> None:
     # Rigor saturates at M (ADR-0004): M, L, and XL all get the full 3-lens panel
     # and 2 fix rounds. Above M the level buys thinking depth, not more process.
     plan = _plan("Standalone.", level=level)
