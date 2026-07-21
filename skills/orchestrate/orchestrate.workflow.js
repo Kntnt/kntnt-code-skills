@@ -87,6 +87,7 @@ const VERDICT_SCHEMA = {
           title: { type: 'string' },
           detail: { type: 'string' },
           severity: { type: 'string', enum: ['low', 'medium', 'high'] },
+          suggestedFix: { type: 'string', description: 'A remedy DIRECTION for this finding, proposed only AFTER judging it real (ADR-0004) — so the fix agent starts from a diagnosis + direction rather than re-deriving it. ADVISORY, not authoritative: the reviewer read the code but did not run it, so the fixer verifies it before following, may choose a better fix, and binds the tests to the acceptance criteria, never to this suggestion. Omitted when the reviewer has no confident direction.' },
         },
       },
     },
@@ -381,21 +382,25 @@ const implementerMode = config.implementerMode
 // Title lookup for logging and report records.
 const titleOf = (number) => issuesByNumber.get(number)?.title || `issue ${number}`
 
-// The default verifier panel, used when planning has not annotated the issue:
-// a SINGLE broad adversarial reviewer that folds every lean-verification concern
-// into one lens — correctness against the issue intent and its acceptance
-// criteria, the quality of the tests, and any security or data-safety hazard the
-// issue touches. One agent, not three. Planning raises this to 2–3 focused lenses
-// ONLY for a genuinely high-risk issue, via the per-issue `lenses` override below.
+// The default verifier panel, used ONLY when planning has not annotated the
+// issue (a hand-launched or pre-plan run): a SINGLE broad adversarial reviewer
+// that folds every concern into one lens — correctness against the issue intent
+// and its acceptance criteria, the quality of the tests, and any security or
+// data-safety hazard the issue touches. One agent, not three. A planned run
+// always sets the per-issue `lenses` override below — 1 broad lens at XS/S, 3
+// focused lenses at M/L/XL (ADR-0004, rigor saturating at M), escalated further
+// only by a Risk marker on an XS/S issue — so this fallback is the lean floor,
+// not the normal path.
 const DEFAULT_LENSES = [
   'correctness against the issue intent and its acceptance criteria, the quality of the tests (is the red demonstrated, are the tests load-bearing, does every acceptance criterion map to a test), AND any security or data-safety hazard the issue touches — review all of these together through one broad adversarial lens',
 ]
 
 // The verifier panel for an issue. The default is the single broad adversarial
-// reviewer in DEFAULT_LENSES; planning overrides it per issue by setting
-// `lenses`, scaled to real risk — the orchestrator raises a genuinely high-risk
-// issue (a write path, a permission gate, an irreversible delete) to 2–3 focused
-// lenses. A lens is a plain brief string, or a { brief, agentType } object to
+// reviewer in DEFAULT_LENSES; a planned run overrides it per issue by setting
+// `lenses`, scaled from the level baseline (1 broad at XS/S, 3 focused at
+// M/L/XL since ADR-0004) and escalated further by a Risk marker on an XS/S issue
+// (a write path, a permission gate, an irreversible delete). A lens is a plain
+// brief string, or a { brief, agentType } object to
 // route to one of the project's own review agents (a silent-failure hunter, a
 // test-coverage analyzer, …). An ABSENT `lenses` field (a non-array, the normal
 // case) falls back to DEFAULT_LENSES; an EXPLICITLY empty array (the plan
@@ -561,8 +566,8 @@ const fix = (number, impl, findings) =>
       `2. If one exists, run \`git worktree remove --force <that path>\` to free it. \`remove\` KEEPS the branch ref, so ${impl.branch}'s commits survive — NEVER run \`git branch -D\` (or any branch delete) and NEVER \`git reset --hard\`.\n` +
       `3. Now check out ${impl.branch} in your own worktree and do all the work here.\n` +
       `${AGENT_CONSTRAINTS}\n` +
-      `Address ONLY these verified findings, keep the tests green, and obey ${standardInstruction}:\n` +
-      findings.map((finding) => `- ${finding.title}: ${finding.detail}`).join('\n') +
+      `Address ONLY these verified findings, keep the tests green, and obey ${standardInstruction}. Each finding is authoritative; any \`suggested direction\` attached to it is ADVISORY only — the reviewer read the code but did not run it, so verify a suggestion before following it, pick a better fix if you see one, and bind your tests to the acceptance criteria, never to the suggestion:\n` +
+      findings.map((finding) => `- ${finding.title}: ${finding.detail}${finding.suggestedFix ? `\n  suggested direction (advisory): ${finding.suggestedFix}` : ''}`).join('\n') +
       `\nCommit on ${impl.branch}, then re-run the full gate suite and report the real result.\n` +
       `${RIPPLE_REPORT_INSTRUCTION}`,
     { label: `fix:#${number}`, phase: 'Implement', schema: IMPLEMENT_SCHEMA, isolation: 'worktree', ...roleTuning(roles.implementer) },
@@ -585,7 +590,7 @@ const verify = async (number, impl, lenses) => {
         `Adversarially review branch ${impl.branch} for issue #${number} ("${titleOf(number)}") through ONE lens: ${brief}.\n` +
           `You did NOT write this code. Read the issue's contract (\`gh issue view ${number} --comments\`; if an Agent Brief comment exists it is authoritative, OTHERWISE the issue body and its acceptance criteria are the contract) and ${standardInstruction}.\n` +
           `${AGENT_CONSTRAINTS}\n` +
-          `Check ONLY what the gates cannot — do not re-check lint, build, or tests that already passed. ${CONSISTENCY_LENS_INSTRUCTION} Default to clear=false if you find anything real, and be specific.`,
+          `Check ONLY what the gates cannot — do not re-check lint, build, or tests that already passed. ${CONSISTENCY_LENS_INSTRUCTION} Default to clear=false if you find anything real, and be specific. For each finding, JUDGE it real FIRST, on its own merits — only THEN, if you can see one, add a \`suggestedFix\` naming a remedy DIRECTION for the fixer to start from. The ease or difficulty of a fix must NEVER soften, inflate, or drop the finding itself; your neutrality is judging the defect, not designing its repair.`,
         opts,
       )
     }),

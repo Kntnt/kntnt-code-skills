@@ -2804,3 +2804,84 @@ def test_consistency_lens_instruction_excluded_from_narrow_or_mandatory_reviews(
         assert reference not in block, (
             f"the `{name}` prompt must NOT carry the consistency-lens instruction"
         )
+
+
+# --- verifier fix-direction suggestions (ADR-0004 Decision 2) ----------------
+
+# When a verifier lens confirms a real finding, it also proposes a remedy
+# DIRECTION so the fix agent starts from a diagnosis + direction rather than
+# re-deriving it — cutting serial fix-round wall-clock. Three guardrails bind
+# the mechanism: (1) judge first, THEN suggest — the finding's reality is
+# settled on its own merits before any fix is considered, so an easy-to-fix bias
+# never softens the review; (2) the finding is authoritative and the suggestion
+# advisory — the fix agent verifies it before following, and the tests bind to
+# the acceptance criteria, never to the suggestion; (3) the targeted re-verify
+# stays keyed to the FINDING, not the suggested solution, so a fixer choosing a
+# better fix is never penalized. The suggestion rides an optional `suggestedFix`
+# field on VERDICT_SCHEMA's finding object. These are structural over the source.
+
+
+def test_verdict_schema_carries_optional_suggested_fix() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    schema_start = source.index("const VERDICT_SCHEMA")
+    schema_end = source.index("const INTEGRATE_SCHEMA")
+    schema = source[schema_start:schema_end]
+    assert "suggestedFix" in schema, (
+        "VERDICT_SCHEMA's finding object must carry an optional `suggestedFix` "
+        "field for the reviewer's proposed remedy direction"
+    )
+    # It stays OPTIONAL — the finding's required list is unchanged, so a reviewer
+    # with no confident direction simply omits it.
+    assert "required: ['title', 'detail']" in schema, (
+        "`suggestedFix` must be optional — the finding's required list stays "
+        "['title', 'detail'], never gaining suggestedFix"
+    )
+
+
+def test_verify_prompt_asks_to_judge_first_then_suggest_a_fix() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "verify")
+    lowered = block.lower()
+    assert "suggestedfix" in lowered, (
+        "the verify prompt must ask the lens to propose a `suggestedFix` direction"
+    )
+    # Guardrail 1: judge the finding real FIRST, before proposing any fix, so the
+    # ease of a fix never softens (or inflates) the finding's reality.
+    assert "judge" in lowered, (
+        "the verify prompt must tell the lens to JUDGE the finding real first"
+    )
+    assert "soften" in lowered or "neutrality" in lowered, (
+        "the verify prompt must warn that a fix's ease must not soften the finding "
+        "(adversarial neutrality)"
+    )
+
+
+def test_fix_prompt_renders_suggested_fix_as_advisory() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "fix")
+    assert "suggestedFix" in block, (
+        "the fix prompt must render the finding's `suggestedFix` when present"
+    )
+    lowered = block.lower()
+    # Guardrail 2: the finding is authoritative, the suggestion advisory — verify
+    # it before following, and the tests bind to the acceptance criteria.
+    assert "advisory" in lowered, (
+        "the fix prompt must mark a suggested direction as advisory"
+    )
+    assert "acceptance criteria" in lowered, (
+        "the fix prompt must state the tests bind to the acceptance criteria, "
+        "never to the suggestion"
+    )
+
+
+def test_reverify_findings_stays_keyed_to_the_finding_not_the_suggestion() -> None:
+    # Guardrail 3: the targeted re-verify is keyed to the FINDING, never the
+    # suggested solution, so a fixer who chose a better fix than suggested is not
+    # penalized. The reverify prompt must not carry the suggestion.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "reverifyFindings")
+    assert "suggestedFix" not in block, (
+        "reverifyFindings must stay keyed to the finding, never referencing the "
+        "advisory suggestedFix — the fix is judged by whether the finding is "
+        "resolved, not whether the suggestion was followed"
+    )

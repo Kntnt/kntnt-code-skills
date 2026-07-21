@@ -5,6 +5,8 @@
 - **Deciders:** Thomas Barregren
 
 > **Amended by [ADR-0003](0003-decoupling-rigor-from-the-level-dial.md).** §1 ("one ambition dial, nothing else — no separate rigor knobs"), §5 (the inviolable per-issue-lens floor), and §7/§8 (the merge surface) are updated by that ADR's decoupling of per-issue rigor from this dial (`--max-lenses`) and its `--pr` flag. This document is left as originally decided and cross-referenced, not rewritten; ADR-0003 holds the amendment's detail.
+>
+> **Amended by [ADR-0004](0004-rework-the-level-ladder.md).** §4 (the illustrative, non-durable model/effort ladder) and §5 (the level→rank rigor mapping) are updated by that ADR's rework: rigor now **saturates at `M`** (`M`/`L`/`XL` all at 3 lenses, 2 fix rounds; `LEVEL_RANK` = `{XS:0, S:0, M:2, L:2, XL:2}`), and the tiers are re-pitched (Fable as the judge from `M`, a deep-reasoning Opus implementer at `L`, Fable-all-the-way at `XL`). The rigor floor (§5), the escalate-only risk model (§6), and the §7/§8 merge surface are unchanged in substance. ADR-0004 also adds the verifier fix-direction suggestion. Again left as originally decided and cross-referenced, not rewritten.
 
 ## Context
 

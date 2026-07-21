@@ -163,18 +163,31 @@ def test_budgetfloor_is_documented_as_a_settable_engine_arg() -> None:
     assert "60000" in build or "60,000" in build
 
 
-# --- confirm gate: estimate reflects the LEAN defaults -----------------------
+# --- confirm gate: estimate reflects the ADR-0004 two-tier ladder ------------
+
+# Since ADR-0004 rigor saturates at M: XS/S remain the lean fast lane (1 broad
+# lens, 1 fix round), while the default M level — and L/XL with it — sits at the
+# full 3-lens, 2-round top tier. The cost prose must present BOTH tiers honestly,
+# not the old flat "M is lean" framing.
 
 
-def test_estimate_reflects_lean_defaults() -> None:
+def test_estimate_presents_both_the_lean_fast_lane_and_the_m_default() -> None:
     section = _confirm_section().lower()
-    # One broad reviewer, one fix round.
+    # The lean XS/S fast lane is still a single broad reviewer, one fix round.
     assert "single" in section or "one broad reviewer" in section
     assert "one fix round" in section or "1 fix round" in section
-    # NOT the heavier defaults it replaced.
-    assert "three lenses" not in section
-    assert "two fix rounds" not in section
-    # The per-issue ×4 must NOT be described as implement/verify/fix/integrate —
+    assert "fast lane" in section, (
+        "the cost prose must frame XS/S as the lean fast lane, not M"
+    )
+    # The default M level is NO LONGER lean — rigor saturates at M: 3 lenses, 2
+    # fix rounds. The prose must state that increase honestly.
+    assert "5" in section and re.search(r"5\s*[-–—]\s*9", section), (
+        "the M-tier per-issue range (5–9 sub-agents) must be stated"
+    )
+    assert "saturat" in section, (
+        "the cost prose must state rigor saturates at M (so L/XL cost the same)"
+    )
+    # The per-issue ×N must NOT be described as implement/verify/fix/integrate —
     # that spelling silently drops the re-verify agent the engine always runs.
     assert "implement/verify/fix/integrate" not in section
 
@@ -192,13 +205,13 @@ def test_estimate_distinguishes_typical_from_worst_case() -> None:
     assert "merge mode" in section
 
 
-# --- #30: the cost estimate is level-aware -----------------------------------
+# --- #30 / ADR-0004: the cost estimate is level-aware ------------------------
 
 # Since #30 the per-issue cost is no longer a fixed × 4: the `--level` dial sets
 # both the verifier panel size and the fix-round cap (ADR-0001 §5), so a higher
-# level raises the per-issue sub-agent count. The estimate must scale with the
-# level's panel size `P` and fix-round cap `F`, reducing to the lean `N × 4 + 3`
-# at the default M level.
+# level raises the per-issue sub-agent count. Since ADR-0004 the tiers are XS/S
+# (`P=1`, `F=1` → `N × 4 + 3`) and M/L/XL (`P=3`, `F=2` → `N × 7 + 3`); the
+# estimate must scale with `P` and `F` and name the default M instance at N × 7.
 
 
 def test_estimate_is_level_aware() -> None:
@@ -218,9 +231,13 @@ def test_estimate_is_level_aware() -> None:
     )
     # A higher level raises the per-issue sub-agent count.
     assert "higher level" in section
-    # The default M level still reduces to the lean N × 4.
+    # The lean XS/S fast lane reduces to N × 4 ...
     assert re.search(r"n\s*[×x*]\s*4", section), (
-        "the M-level instance must reduce to the lean N × 4"
+        "the XS/S fast-lane instance must reduce to the lean N × 4"
+    )
+    # ... and the default M level, with rigor saturated, reduces to N × 7.
+    assert re.search(r"n\s*[×x*]\s*7", section), (
+        "the default-M instance must reduce to N × 7 (P=3, F=2 since ADR-0004)"
     )
 
 

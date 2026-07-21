@@ -1064,14 +1064,16 @@ def test_render_report_shows_none_for_empty_sections() -> None:
     assert "## Blockers and parked issues\n\n- None." in report
 
 
-# --- verify rigor from --level + per-issue Risk (issue #26) --------------------
+# --- verify rigor from --level + per-issue Risk (issue #26, ADR-0004) ----------
 #
 # The planner derives the verify-panel rigor (per-issue lens count) and the
 # run-level fix-round cap from the `--level` dial and each issue's explicit risk,
-# per ADR-0001 §5-§6. The §5 baseline table: XS/S/M -> 1 lens, 1 fix round;
-# L -> 2 lenses, 2 rounds; XL -> 3 lenses, 2 rounds. Per-issue risk escalates on
-# top (escalate-only, highest signal wins); an inviolable floor of >=1 lens and
-# 1 fix round always holds; `0` fix rounds is reachable only via an explicit
+# per ADR-0001 §5-§6 as amended by ADR-0004. The rigor ladder now SATURATES at M:
+# XS/S -> 1 lens, 1 fix round; M/L/XL -> 3 lenses, 2 rounds. Above M you buy
+# thinking depth (model/effort), not more process, so risk escalation is only
+# observable at XS/S (M+ already sits at the top tier). Per-issue risk escalates
+# on top (escalate-only, highest signal wins); an inviolable floor of >=1 lens
+# and 1 fix round always holds; `0` fix rounds is reachable only via an explicit
 # `--max-fix-rounds=0`. These tests assert on the emitted plan JSON.
 
 
@@ -1114,34 +1116,34 @@ def _lenses(plan: dict[str, Any], number: int = 1) -> list[Any]:
 # AC-1: level -> baseline lookup for lenses and the run-level fix-round cap.
 
 
-@pytest.mark.parametrize("level", ["XS", "S", "M"])
+@pytest.mark.parametrize("level", ["XS", "S"])
 def test_build_plan_low_levels_emit_one_lens_and_one_fix_round(level: str) -> None:
+    # XS/S are the cheap fast lane: a single broad lens and one fix round.
     plan = _plan("Standalone.", level=level)
     assert len(_lenses(plan)) == 1
     assert plan["maxFixRounds"] == 1
 
 
-def test_build_plan_level_l_emits_two_lenses_and_two_fix_rounds() -> None:
-    plan = _plan("Standalone.", level="L")
-    assert len(_lenses(plan)) == 2
-    assert plan["maxFixRounds"] == 2
-
-
-def test_build_plan_level_xl_emits_three_lenses_and_two_fix_rounds() -> None:
-    plan = _plan("Standalone.", level="XL")
+@pytest.mark.parametrize("level", ["M", "L", "XL"])
+def test_build_plan_high_levels_emit_three_lenses_and_two_fix_rounds(level: str) -> None:
+    # Rigor saturates at M (ADR-0004): M, L, and XL all get the full 3-lens panel
+    # and 2 fix rounds. Above M the level buys thinking depth, not more process.
+    plan = _plan("Standalone.", level=level)
     assert len(_lenses(plan)) == 3
     assert plan["maxFixRounds"] == 2
 
 
 def test_build_plan_defaults_to_the_m_baseline() -> None:
-    # No level argument at all resolves to the M baseline (one lens, one round).
+    # No level argument at all resolves to the M baseline — which, since ADR-0004,
+    # is the full 3-lens panel and 2 fix rounds.
     plan = _plan("Standalone.")
-    assert len(_lenses(plan)) == 1
-    assert plan["maxFixRounds"] == 1
+    assert len(_lenses(plan)) == 3
+    assert plan["maxFixRounds"] == 2
 
 
 def test_plan_cli_accepts_level_and_emits_rigor() -> None:
-    # AC-1: the real CLI accepts `--level` and emits the derived rigor.
+    # AC-1: the real CLI accepts `--level` and emits the derived rigor. Since
+    # ADR-0004, L sits at the saturated top tier — 3 lenses, 2 fix rounds.
     raw = '[{"number":7,"title":"A","labels":[],"body":"Standalone."}]'
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "plan", "--level=L"],
@@ -1153,19 +1155,22 @@ def test_plan_cli_accepts_level_and_emits_rigor() -> None:
     plan = json.loads(result.stdout)
     assert plan["level"] == "L"
     assert plan["maxFixRounds"] == 2
-    assert len(plan["issues"][0]["lenses"]) == 2
+    assert len(plan["issues"][0]["lenses"]) == 3
 
 
 # AC-2: the `Risk:` marker is parsed and escalates that issue's rigor, escalate-only.
 
 
 def test_build_plan_risk_high_marker_escalates_lenses() -> None:
-    plan = _plan("Agent Brief (Risk: high): do the risky thing.", level="M")
+    # Escalation is observable at the low tier: S baseline is 1 lens, a high
+    # marker pulls it up to the 3-lens top tier.
+    plan = _plan("Agent Brief (Risk: high): do the risky thing.", level="S")
     assert len(_lenses(plan)) == 3
 
 
 def test_build_plan_risk_medium_marker_escalates_lenses() -> None:
-    plan = _plan("Risk: medium\n\nBuild it.", level="M")
+    # S baseline is 1 lens; a medium marker escalates it to the 2-lens tier.
+    plan = _plan("Risk: medium\n\nBuild it.", level="S")
     assert len(_lenses(plan)) == 2
 
 
@@ -1199,9 +1204,10 @@ def test_build_plan_risk_marker_in_agent_brief_comment_is_parsed() -> None:
 
 
 def test_build_plan_risk_low_marker_does_not_lower_below_level_baseline() -> None:
-    # An explicit low never pulls rigor below the level's own baseline floor.
+    # An explicit low never pulls rigor below the level's own baseline floor: at
+    # L (the saturated top tier since ADR-0004) that floor is 3 lenses, 2 rounds.
     plan = _plan("Risk: low\n\nRoutine.", level="L")
-    assert len(_lenses(plan)) == 2
+    assert len(_lenses(plan)) == 3
     assert plan["maxFixRounds"] == 2
 
 
@@ -1273,14 +1279,16 @@ def test_build_plan_no_disagreement_warning_when_low_marker_stands_alone() -> No
 
 
 def test_build_plan_absent_risk_resolves_to_level_baseline() -> None:
+    # L is the saturated top tier since ADR-0004 — its baseline is 3 lenses.
     plan = _plan("No marker here at all.", level="L")
-    assert len(_lenses(plan)) == 2
+    assert len(_lenses(plan)) == 3
 
 
 def test_build_plan_ambiguous_risk_marker_resolves_to_baseline() -> None:
     # A `Risk:` word that is not one of high/medium/low is not a signal: the issue
-    # rounds up to the level baseline rather than below it.
-    plan = _plan("Risk: elevated maybe\n\nUnclear.", level="M")
+    # rounds up to the level baseline rather than below it. Checked at XS, where
+    # the 1-lens baseline makes "not escalated above the baseline" observable.
+    plan = _plan("Risk: elevated maybe\n\nUnclear.", level="XS")
     assert len(_lenses(plan)) == 1
     assert plan["maxFixRounds"] == 1
 
@@ -1344,9 +1352,9 @@ def test_build_plan_max_lenses_caps_a_level_derived_panel() -> None:
 
 
 def test_build_plan_max_lenses_never_raises_a_smaller_panel() -> None:
-    # The cap only ever lowers a panel: an M-baseline (1 lens) issue stays at 1
+    # The cap only ever lowers a panel: an XS-baseline (1 lens) issue stays at 1
     # even though --max-lenses=5 permits up to five.
-    plan = _plan("Standalone.", level="M", max_lenses=5)
+    plan = _plan("Standalone.", level="XS", max_lenses=5)
     assert len(_lenses(plan)) == 1
 
 
@@ -1377,10 +1385,10 @@ def test_build_plan_max_lenses_zero_with_risk_label_stays_zero_and_warns() -> No
 
 
 def test_build_plan_max_lenses_zero_with_risk_medium_at_level_l_warns() -> None:
-    # At L, Risk: medium derives the same 2-lens panel the L baseline already
-    # has -- the hazard never out-ranks the level, so a level-relative proxy
-    # for "was this risk-escalated?" would miss it. The raw marker is still a
-    # plan-time hazard and must be named regardless.
+    # At L (the saturated top tier since ADR-0004), Risk: medium is OUT-RANKED by
+    # the level baseline (3 lenses) -- so a level-relative proxy for "was this
+    # risk-escalated?" would miss it entirely. The raw marker is still a plan-time
+    # hazard and must be named regardless.
     plan = _plan("Risk: medium — needs a careful look.", level="L", max_lenses=0)
     assert _lenses(plan) == []
     assert any("#1" in warning for warning in plan["warnings"])

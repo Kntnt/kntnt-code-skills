@@ -196,25 +196,32 @@ TEST_FILE_RE = re.compile(
 LEVELS = ("XS", "S", "M", "L", "XL")
 DEFAULT_LEVEL = "M"
 
-# The fixed, model-agnostic rigor ladder (ADR-0001 §5). Each rank is one
-# (lens count, fix-round cap) tier: rank 0 is the XS/S/M baseline, rank 1 the L
-# tier, rank 2 the XL tier. Per-issue risk escalates a lower rank UP this same
-# ladder (§6, escalate-only) and never below it — rank 0 is the inviolable floor
-# (≥ 1 adversarial lens, 1 fix round). Only an explicit `--max-fix-rounds=0`
-# reaches zero rounds; no level defaults to it.
+# The fixed, model-agnostic rigor ladder (ADR-0001 §5, ranks amended by
+# ADR-0004). Each rank is one (lens count, fix-round cap) tier: rank 0 is the
+# XS/S fast-lane baseline, rank 1 the risk-escalation-only middle tier, rank 2
+# the M/L/XL top tier. Per-issue risk escalates a lower rank UP this same ladder
+# (§6, escalate-only) and never below it — rank 0 is the inviolable floor (≥ 1
+# adversarial lens, 1 fix round). Only an explicit `--max-fix-rounds=0` reaches
+# zero rounds; no level defaults to it.
 RIGOR_TIERS = (
     {"lenses": 1, "fix_rounds": 1},
     {"lenses": 2, "fix_rounds": 2},
     {"lenses": 3, "fix_rounds": 2},
 )
 
-# Each ambition level's baseline rank on RIGOR_TIERS (ADR-0001 §5).
-LEVEL_RANK = {"XS": 0, "S": 0, "M": 0, "L": 1, "XL": 2}
+# Each ambition level's baseline rank on RIGOR_TIERS (ADR-0001 §5, amended by
+# ADR-0004). Rigor SATURATES at M: XS/S sit at the lean rank 0, while M, L, and
+# XL all sit at the top rank 2 (3 lenses, 2 fix rounds) — above M the level buys
+# thinking depth (model/effort), not more process. Rank 1 is never a level
+# baseline; it is reached only by a `Risk: medium` escalation on an XS/S issue.
+LEVEL_RANK = {"XS": 0, "S": 0, "M": 2, "L": 2, "XL": 2}
 
 # An explicit risk signal's rank on the same ladder — the escalate-only mapping
 # from a `Risk:` marker or a `risk:*` label to rigor (ADR-0001 §6). `low` adds no
-# escalation (baseline); `medium` escalates to the L tier; `high` to the XL tier
-# and, because rigor is the highest signal, is a floor the result never undercuts.
+# escalation (baseline); `medium` escalates to rank 1 (2 lenses); `high` to rank
+# 2 (3 lenses) and, because rigor is the highest signal, is a floor the result
+# never undercuts. Since ADR-0004 saturated M/L/XL at rank 2, an escalation is
+# only observable on an XS/S issue — at M and above the baseline already tops out.
 RISK_RANK = {"low": 0, "medium": 1, "high": 2}
 
 # The verifier focus each lens carries at a given tier, mirroring ADR-0001 §5's

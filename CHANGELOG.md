@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.15.0] – 2026-07-21
+
+### Added
+
+- **`/orchestrate` verifier lenses now propose a fix direction (ADR-0004, decision 2).** When a lens confirms a real finding it also proposes a remedy *direction*, so the fix agent starts from a diagnosis **and** a direction rather than re-deriving one — shortening each serial fix round, which is the wall-clock cost of the fix↔verify loop. The suggestion rides a new optional `suggestedFix` field on `VERDICT_SCHEMA`'s finding object in `skills/orchestrate/orchestrate.workflow.js`; it is rendered separately and marked advisory in the `fix` prompt, alongside the finding's own `title`/`detail` that already reach it. Three guardrails bind the mechanism: (1) the `verify` prompt tells the lens to **judge the finding real first**, on its own merits, before proposing any fix, so the ease of a fix never softens (or inflates) the finding — preserving adversarial neutrality; (2) the `fix` prompt states the finding is authoritative and the suggestion advisory — verify it before following, pick a better fix if clearer, and bind the tests to the acceptance criteria, never to the suggestion; (3) the targeted re-verify (`reverifyFindings`) is **unchanged** and stays keyed to the finding, never the suggested solution, so a fixer who chose a better fix is not penalized (`suggestedFix` is deliberately not rendered there). `tests/test_orchestrate_workflow.py` covers the schema field's optionality, the judge-first `verify` wording, the advisory `fix` rendering, and the re-verify exclusion, red-first.
+
+### Changed
+
+- **`/orchestrate`'s `--level` ladder is re-pitched so verification rigor saturates at `M` (ADR-0004, decision 1).** Field experience: verifiers found many defects → many serial fix iterations → long wall-clock, and the default `M` was rarely enough, so nearly every run was dialed up to `L`. Because issues run serially but the verifier panel runs in parallel (3 lenses ≈ the wall-clock of 1) and the fix-round cap is a ceiling not a schedule (a clean issue runs 0 rounds regardless), the wall-clock-cheapest way to park fewer issues is to catch everything in the one parallel panel and allow a second fix round — paying tokens, which are explicitly not the optimization target here. `scripts/orchestrate.py`'s `LEVEL_RANK` changes from `{XS:0, S:0, M:0, L:1, XL:2}` to `{XS:0, S:0, M:2, L:2, XL:2}` (`RIGOR_TIERS`/`LENSES_BY_RANK` unchanged), so `M`/`L`/`XL` all sit at the top tier — **3 focused lenses, 2 fix rounds** — while `XS`/`S` stay the lean fast lane (1 broad lens, 1 fix round). Rank 1 (2 lenses) is no longer any level's baseline; risk escalation is now only observable on an `XS`/`S` issue, since `M`+ already tops out. The illustrative model/effort ladder is re-pitched too — judgement climbs Opus·low → Opus·medium → **Fable·medium** → Fable·high → Fable·high (Fable as the judge from `M`, a deep-reasoning Opus·xhigh implementer at `L`, Fable-all-the-way at `XL`), the judge deliberately topping out at Fable·**high** not `xhigh` (Anthropic's Fable 5 guidance makes `high` the default and `xhigh` ≈ 2× the tokens for marginal review gain). The inviolable rigor floor, the escalate-only risk model, and the `--max-lenses`/`--max-fix-rounds`/`--pr` overrides are unchanged. `skills/orchestrate/SKILL.md` (both ladder tables, the honestly-rewritten cost model — default `M` now `N × 7 + 3`, the `XS`/`S` fast lane `N × 4 + 3`, per issue 5–9 vs 3–5 — and every per-level rigor mention), `docs/man/orchestrate.md` (the ambition-dial prose), and the engine's `DEFAULT_LENSES`/`lensesFor` comments are reconciled; ADR-0004 records the decision and cross-references ADR-0001 §4/§5 and ADR-0002 §4. `tests/test_orchestrate.py` and `tests/test_orchestrate_skill.py` are updated to the saturated ladder and two-tier cost model.
+
 ## [0.14.1] – 2026-07-20
 
 ### Fixed
@@ -256,7 +266,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.15.0
 [0.14.1]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.14.1
 [0.14.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.14.0
 [0.13.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.13.0

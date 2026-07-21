@@ -4,6 +4,8 @@
 - **Date:** 2026-07-13
 - **Deciders:** Thomas Barregren
 
+> **Refreshed by [ADR-0004](0004-rework-the-level-ladder.md).** The illustrative per-level model tiers this ADR cites in passing (e.g. §3's "`XS` → Haiku, `S` → Sonnet") are superseded by ADR-0004's re-pitched ladder; the *mechanism* this ADR decides — the `implementerMode` framing, the inversely-scaled per-issue implementation-plan overlay, and their `args` surface — is unchanged.
+
 ## Context
 
 ADR-0001 settled the control model for `/orchestrate` and fixed, in §3, the *intent* of two coupled ideas but not their mechanism: the **sliding implementer** (its mode slides from a mechanical executor of a pre-settled plan at the low end of the `--level` dial to an autonomous problem-solver at the high end) and a **per-issue implementation-planning pass** (an LLM judgment pass whose weight scales inversely with the level — heavy at `XS`, ≈ nothing at `XL`), kept distinct from the deterministic graph planner. The engine has no such pass today: its `implement` sub-agent fetches the issue's contract itself and goes straight to code. This ADR settles the mechanism so the build work can proceed test-first.
