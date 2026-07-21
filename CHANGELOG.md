@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.16.0] – 2026-07-21
+
 ### Added
 
 - **All eight skills now carry an `argument-hint` frontmatter field.** Each skill's `SKILL.md` gains an `argument-hint` value describing the arguments the skill accepts, so a slash-command UI can show the expected arguments inline — the same convention `commands/help.md` already uses (`argument-hint: [skill-name]`). The values are grounded in each skill's own documented *Arguments* section: `coder` and `init` accept only the universal help gate (`[help]`); `coding-standard` `[--update] [--dry-run] [help]`; `commit` and `push` `["message"] [--yes] [help]`; `doctor` `[--yes] [help]`; `release` `[minor|major|X.Y.Z] [--no-build] [--yes] [help]`; and `orchestrate` the full dial set (`[scope] [--level=XS|S|M|L|XL] [--merge|--pr] [--plan|--dry-run] [--max-fix-rounds=N] [--max-lenses=N] [--yes] [help]`). No skill behaviour changes; the field is metadata only. The audit and the full gate stay green.
@@ -274,7 +276,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `general.md` — the "latest stable version" rule gained an escape clause for projects and dependencies that require an earlier version; standalone scripts added to the no-prefix-needed list.
 - `typescript.md` — documents that Bun strips types at runtime, so type safety needs a separate `tsc --noEmit` pass.
 
-[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/Kntnt/kntnt-code-skills/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.16.0
 [0.15.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.15.0
 [0.14.1]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.14.1
 [0.14.0]: https://github.com/Kntnt/kntnt-code-skills/releases/tag/v0.14.0
