@@ -645,7 +645,25 @@ const milestoneStarted = (number) => `orchestrate: started #${number}, run <runI
 const milestoneImplementationGreen = (number) => `orchestrate: implementation green #${number}, run <runId>`
 const milestoneVerificationCleared = (number) => `orchestrate: verification cleared #${number}, run <runId>`
 const milestoneFixRound = (number, round) => `orchestrate: fix round ${round} #${number}, run <runId>`
-const milestoneParked = (number, reason) => `orchestrate: parked #${number} (${reason}), run <runId>`
+
+// The longest a `parked` reason may ride inside a milestone comment, and the
+// characters it may carry — mirrors `sanitize_parked_reason` in orchestrate.py so
+// the grammar #50 reads back is identical whichever side formats it. The reason is
+// agent-authored prose (a verifier summary quoting issue and repo content), so it
+// is sanitised before it is templated: dropping every character outside the
+// allowlist keeps it a single, short line that cannot break out of the `(...)`
+// capture, cannot reconstruct an `orchestrate:` prefix that would smuggle a second
+// marker (dropping `:`, the hard #49 non-regression), cannot inject a shell or
+// prompt payload into the reporter's `gh` command (dropping quotes, backticks and
+// `$`), and cannot disclose the full verdict text durably on a public issue.
+const MAX_PARKED_REASON_LEN = 100
+const sanitizeReason = (reason) => {
+  const collapsed = String(reason ?? '').replace(/\s+/g, ' ').trim()
+  const allowed = collapsed.replace(/[^A-Za-z0-9 .,#/_-]/g, '').replace(/\s+/g, ' ').trim()
+  const capped = allowed.length > MAX_PARKED_REASON_LEN ? `${allowed.slice(0, MAX_PARKED_REASON_LEN - 3).trimEnd()}...` : allowed
+  return capped || 'unspecified'
+}
+const milestoneParked = (number, reason) => `orchestrate: parked #${number} (${sanitizeReason(reason)}), run <runId>`
 
 // The mechanical `reporter` sub-agent (issue #48): a SECOND authorized outward
 // writer, but strictly weaker than integrate — its SOLE authorized write is to
@@ -1152,6 +1170,11 @@ try {
           reason = clauses.join('; ')
         }
 
+        // Post the durable `parked` heartbeat before parking — a blocked
+        // dependent is exactly the "issue died / blocked" case AC2 promises a
+        // marker for, and without it a maintainer watching the timeline sees the
+        // prerequisite park, then silence about every issue it cascades to (#48).
+        await report(number, milestoneParked(number, reason))
         parked.push({ ...toRecord(number, null, 'parked', reason), blockers: [reason] })
         continue
       }
@@ -1180,6 +1203,12 @@ try {
       if (verdict === 'landed-marker-stale') {
         const reason = `landed-marker present${facts?.landedSha ? ` (${facts.landedSha})` : ''} but its commit is NOT an ancestor of the default tip — reverted, rebased away, or foreign history; parked for a human to reconcile, never rebuilt (#49)`
         log(`#${number}: ${reason}`)
+        // This park is LOUD, not benign — the human it parks FOR needs an
+        // out-of-band signal, so it posts a `parked` heartbeat like every other
+        // per-issue death (unlike the benign already-landed/already-open skips,
+        // which correctly stay silent). The reason is sanitised and truncated by
+        // milestoneParked, so the giant forensic message rides only the record (#48).
+        await report(number, milestoneParked(number, 'stale landed-marker, human reconcile needed'))
         parked.push({ ...toRecord(number, null, 'landed-marker-stale', ''), blockers: [reason] })
         continue
       }

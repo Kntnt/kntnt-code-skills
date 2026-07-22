@@ -3060,7 +3060,7 @@ def test_stale_marker_is_parked_never_rebuilt() -> None:
     # The stale-marker branch must park (push to `parked`) and `continue` — it must
     # NOT fall through to buildAndVerify, or it would rebuild landed work from zero.
     stale_idx = region.index("verdict === 'landed-marker-stale'")
-    stale_block = region[stale_idx : stale_idx + 700]
+    stale_block = region[stale_idx : stale_idx + 1200]
     assert "parked.push(" in stale_block, "a stale marker must be parked"
     assert "continue" in stale_block, (
         "the stale-marker branch must `continue`, never fall through to a rebuild"
@@ -3269,4 +3269,130 @@ def test_parked_milestone_is_reported_when_an_issue_dies() -> None:
     region = source[per_issue_idx:finally_idx]
     assert "milestoneParked(" in region, (
         "a dispatched issue that dies must get a durable parked milestone comment"
+    )
+
+
+# The full milestone template literals — not just their prefixes. The engine's
+# arrow templates are a SECOND, independent copy of #49's grammar, and their
+# `, run <runId>` tail is what makes a posted comment parseable by
+# `orchestrate.py parse_landed_marker`. If the JS copy drifted (a dropped comma,
+# `run<runId>`, a reordered tail) every posted milestone would fail parse while the
+# suite stayed green — the SKILL↔parser round-trip binds only SKILL.md's copy. So
+# bind the engine's copy WHOLE, exactly as #49 binds the integrate landed literal.
+MILESTONE_TEMPLATE_LITERALS = (
+    "`orchestrate: started #${number}, run <runId>`",
+    "`orchestrate: implementation green #${number}, run <runId>`",
+    "`orchestrate: verification cleared #${number}, run <runId>`",
+    "`orchestrate: fix round ${round} #${number}, run <runId>`",
+    "`orchestrate: parked #${number} (${sanitizeReason(reason)}), run <runId>`",
+)
+
+
+def test_engine_milestone_templates_bind_the_full_grammar_tail() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    for literal in MILESTONE_TEMPLATE_LITERALS:
+        assert literal in source, (
+            f"the engine milestone template {literal!r} must appear VERBATIM — the "
+            "`, run <runId>` tail is what makes a posted comment parseable; binding "
+            "only the prefix lets the parse-critical tail drift undetected"
+        )
+
+
+def test_every_report_call_site_is_awaited() -> None:
+    # The per-issue-sequencing amendment is binding: EVERY reporter dispatch must be
+    # awaited so an issue's milestones post in lifecycle order (#50 reads the latest
+    # comment as the current phase). Assert the universal property, not the mere
+    # existence of one `await report(`: a single fire-and-forget `report(...)` would
+    # let a later milestone land before an earlier one and mis-render the board.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    call_sites = list(re.finditer(r"\breport\(", source))
+    assert len(call_sites) >= 8, (
+        "expected the known report(...) dispatch sites; the regex or the source drifted"
+    )
+    for match in call_sites:
+        preceding = source[: match.start()].rstrip()
+        assert preceding.endswith("await"), (
+            f"every report(...) dispatch must be awaited (offset {match.start()}); a "
+            "fire-and-forget reporter breaks per-issue milestone ordering"
+        )
+
+
+def test_buildandverify_milestone_order_and_mode_agnostic() -> None:
+    # AC1 fixes the lifecycle ORDER, not merely the presence of the calls, and the
+    # boundaries are mode-agnostic. Assert both with the index-ordering technique the
+    # sibling started-test uses: implementation-green before the verifier runs, the
+    # fix-round heartbeat inside the loop before fix() fires, verification-cleared at
+    # each panel-clear return — and NO `if (merge` guard wrapping any of it.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "buildAndVerify")
+
+    assert block.index("milestoneImplementationGreen(") < block.index(
+        "verify(number, impl"
+    ), "implementation green must be reported BEFORE the independent verifier runs"
+
+    assert block.index("milestoneFixRound(") < block.index(
+        "fix(number, impl, findings)"
+    ), "the fix-round heartbeat must be reported BEFORE the fix agent is dispatched"
+
+    # The mode-agnostic regression the test's own contract rules out: the milestone
+    # calls must not be gated on merge mode — they live in buildAndVerify, which
+    # carries no merge branching at all.
+    assert "if (merge" not in block, (
+        "the mid-run boundaries are mode-agnostic — no `if (merge` guard may enclose "
+        "the milestone calls in buildAndVerify"
+    )
+
+    # Each verification-cleared report sits immediately before a done return.
+    cleared = "milestoneVerificationCleared("
+    assert block.count(cleared) == 2, (
+        "verification cleared is reported at both panel-clear returns (first pass "
+        "and post-fix)"
+    )
+    search_from = 0
+    while (idx := block.find(cleared, search_from)) != -1:
+        tail = block[idx : idx + 200]
+        assert "'done'" in tail, (
+            "each verification-cleared report must be adjacent to a done return"
+        )
+        search_from = idx + len(cleared)
+
+
+def test_prerequisite_and_stale_parks_post_a_parked_heartbeat() -> None:
+    # Finding: two per-issue park paths posted no durable heartbeat. Both are
+    # unambiguous parks a maintainer must see out of band — the prerequisite-cascade
+    # park (a blocked dependent) and the landed-marker-stale park (loud, for a human
+    # to reconcile). The only per-issue park that MAY stay silent is the token-budget
+    # one (dispatching a reporter after the budget floor is breached contradicts it).
+    source = WORKFLOW.read_text(encoding="utf-8")
+    per_issue_idx = source.index("for (const number of")
+    # Scope to the per-issue loop only: the run-level integration-review / hotfix
+    # parks below carry a pseudo `number: 0` and post no per-issue heartbeat by
+    # design (a heartbeat on issue #0 is meaningless).
+    review_idx = source.index("// MANDATORY final integration review.")
+    region = source[per_issue_idx:review_idx]
+
+    for match in re.finditer(r"parked\.push\(", region):
+        # The token-budget park is the one sanctioned heartbeat-free per-issue park.
+        if "token budget exhausted" in region[match.start() : match.start() + 140]:
+            continue
+        window = region[max(0, match.start() - 420) : match.start()]
+        assert "milestoneParked(" in window, (
+            f"the park at offset {match.start()} must post a durable parked "
+            "heartbeat before parking (AC2)"
+        )
+
+
+def test_parked_milestone_sanitizes_its_reason() -> None:
+    # The parked reason is raw agent-authored verifier/blocker text baked into the
+    # comment the reporter posts through a `gh` shell command. milestoneParked must
+    # route it through the sanitiser so it cannot break the grammar #50 reads,
+    # smuggle a second marker, inject a shell/prompt payload, or disclose the full
+    # verdict text durably on a public issue.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert re.search(r"^const sanitizeReason = ", source, flags=re.MULTILINE), (
+        "the engine needs a sanitizeReason helper mirroring orchestrate.py"
+    )
+    block = _agent_block(source, "milestoneParked")
+    assert "sanitizeReason(reason)" in block, (
+        "milestoneParked must sanitise the reason, never interpolate it raw"
     )

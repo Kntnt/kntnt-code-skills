@@ -943,6 +943,44 @@ PARKED_MARKER_RE = re.compile(
     r",\s+run\s+(?P<run_id>\S+)"
 )
 
+# The longest a `parked` reason may be inside a milestone comment. A short reason
+# keeps the timeline legible and bounds how much verifier detail — which can quote
+# security-sensitive findings (a hardcoded credential, an exploit sketch) — is
+# disclosed durably on a public issue: the brief promises a "<short reason>", not
+# the full verdict text.
+MAX_PARKED_REASON_LEN = 100
+
+# The characters a `parked` reason may carry. The reason is agent-authored prose
+# (a verifier summary quoting issue and repo content), so everything outside this
+# allowlist is stripped before it is templated into the marker. Dropping `:` makes
+# the `orchestrate:` prefix unconstructable, so no reason can ever reconstruct a
+# second marker and parse back as a `landed` verb — the hard #49 non-regression;
+# dropping `(` `)` keeps the non-greedy reason capture from truncating and the
+# `), run` tail from corrupting the round-trip; dropping quotes, backticks and `$`
+# neuters the shell/prompt form the mechanical reporter posts the comment through.
+PARKED_REASON_DISALLOWED_RE = re.compile(r"[^A-Za-z0-9 .,#/_-]")
+
+
+def sanitize_parked_reason(reason: str) -> str:
+    """Reduce an agent-authored park reason to a short, single-line, grammar-safe
+    fragment for a `parked` milestone (issue #48).
+
+    Collapses all whitespace to single spaces, strips every character outside
+    PARKED_REASON_DISALLOWED_RE's allowlist — so the reason can neither break the
+    single-line `(...)` grammar #50 reads back nor reconstruct an `orchestrate:`
+    prefix that would smuggle a second marker — and truncates to
+    MAX_PARKED_REASON_LEN with an ellipsis. An empty result becomes a placeholder
+    so the marker still round-trips. Mirrored by `sanitizeReason` in
+    `orchestrate.workflow.js`, the side that actually posts the comment."""
+
+    collapsed = re.sub(r"\s+", " ", reason or "").strip()
+    allowed = re.sub(
+        r"\s+", " ", PARKED_REASON_DISALLOWED_RE.sub("", collapsed)
+    ).strip()
+    if len(allowed) > MAX_PARKED_REASON_LEN:
+        allowed = allowed[: MAX_PARKED_REASON_LEN - 3].rstrip() + "..."
+    return allowed or "unspecified"
+
 
 @dataclass
 class Marker:
@@ -1022,10 +1060,15 @@ def format_fix_round_marker(number: int, fix_round: int, run_id: str) -> str:
 def format_parked_marker(number: int, reason: str, run_id: str) -> str:
     """Render the `parked` milestone the reporter posts when an issue dies —
     fails to integrate, is blocked, or exhausts its fix rounds — `orchestrate:
-    parked #<n> (<reason>), run <runId>` (issue #48). The reason is kept short so
-    the timeline stays legible; the parser reads it back non-greedily."""
+    parked #<n> (<reason>), run <runId>` (issue #48). The reason is sanitised to a
+    short, single-line, grammar-safe fragment (`sanitize_parked_reason`) so the
+    timeline stays legible, no verifier detail leaks unbounded onto a public issue,
+    and the marker always round-trips; the parser reads it back non-greedily."""
 
-    return f"{LANDED_MARKER_PREFIX} parked #{number} ({reason}), run {run_id}"
+    return (
+        f"{LANDED_MARKER_PREFIX} parked #{number} "
+        f"({sanitize_parked_reason(reason)}), run {run_id}"
+    )
 
 
 def parse_landed_marker(comment_body: str) -> Marker | None:
