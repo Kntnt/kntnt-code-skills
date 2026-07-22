@@ -1368,8 +1368,12 @@ def test_skill_documents_status_one_liner_with_state_all() -> None:
     text = _skill_text()
     lowered = text.lower()
 
-    # The `status` subcommand and its stdin-fed one-liner are documented.
-    assert "orchestrate.py status" in text or "status`" in lowered, (
+    # The `orchestrate.py status` invocation, tolerating the repo's quoted
+    # plugin-root form (`orchestrate.py" status`) between script and subcommand.
+    status_invocation = re.compile(r"orchestrate\.py\"?\s+status")
+
+    # The `status` subcommand is documented.
+    assert status_invocation.search(text), (
         "SKILL.md must document the `status` subcommand"
     )
 
@@ -1379,7 +1383,7 @@ def test_skill_documents_status_one_liner_with_state_all() -> None:
     status_pipes = [
         line
         for line in text.splitlines()
-        if "orchestrate.py status" in line and "gh issue list" in line
+        if status_invocation.search(line) and "gh issue list" in line
     ]
     assert status_pipes, (
         "SKILL.md must document a `gh issue list ... | ... orchestrate.py status` one-liner"
@@ -1393,7 +1397,7 @@ def test_skill_documents_status_one_liner_with_state_all() -> None:
         )
 
     # The live `watch` variant is documented.
-    assert "watch " in lowered and "orchestrate.py status" in text, (
+    assert "watch " in lowered and status_invocation.search(text), (
         "SKILL.md must document the `watch` live-view variant of `status`"
     )
 

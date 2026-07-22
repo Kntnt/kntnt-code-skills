@@ -16,6 +16,9 @@ must be done the same way every time:
   * report  Fold the sub-agents' per-issue verdicts into one consolidated
             report: what shipped green first, then the de-duplicated work
             left for a human, then assumptions and blockers.
+  * status  Reconstruct each issue's live position in a run — queued /
+            working / done / parked — from the durable milestone comments,
+            one row per issue, for out-of-band progress watching.
 
 It never calls `claude`. Spawning sub-agents is the orchestrator's job and
 runs inside the interactive session — so it counts against the subscription
@@ -25,6 +28,7 @@ and writes to stdout; it shells out to nothing — the caller runs `gh` and
 
   * `plan`     <- `gh issue list --json number,title,labels,body,comments`
   * `redgreen` <- `git log --reverse --no-merges --format='commit %H' --name-only <base>..<head>`
+  * `status`   <- `gh issue list --label ready-for-agent --state all --json number,comments`
 
 Standard library only; the PEP 723 block pins only the Python version so
 `uv run scripts/orchestrate.py ...` works from anywhere.
@@ -34,6 +38,7 @@ Subcommands:
     plan      Build the dependency graph and dispatch waves from issues JSON.
     redgreen  Check a branch demonstrates a failing test before the code.
     report    Render the consolidated final report from verdicts JSON.
+    status    Render the per-issue run board from issue+comment JSON.
 
 Exit codes:
 
@@ -50,6 +55,7 @@ import re
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, NoReturn, cast
 
 # The triage state that marks an issue as fully specified and safe to build
@@ -1614,6 +1620,238 @@ def render_report(verdicts: list[Verdict]) -> str:
     return "\n".join(lines)
 
 
+# The state label each `status` row carries — the four positions an issue can hold
+# in a run: not yet touched, mid-flight (with the phase), landed (with the SHA), or
+# dead (with the reason). Ordered here as the lifecycle runs.
+STATUS_QUEUED = "queued"
+STATUS_WORKING = "working"
+STATUS_DONE = "done"
+STATUS_PARKED = "parked"
+
+# The human phase phrase shown beside a `working` / `done` / `parked` row, keyed by
+# the milestone verb `parse_landed_marker` returns. `fix-round`, `landed`, `parked`,
+# and `opened-pr` carry a per-marker value (round / SHA / reason / PR) folded in by
+# `_status_from_marker`, so they are absent here; the rest map to a fixed phrase.
+STATUS_PHASE_BY_VERB = {
+    "started": "started",
+    "implementation-green": "implementation green",
+    "verification-cleared": "verifying",
+}
+
+
+@dataclass
+class StatusMarker:
+    """One parsed lifecycle marker with the timestamp that orders it.
+
+    `created_at` is the comment's ISO-8601 `createdAt`, parsed to a `datetime` for
+    within-run recency ordering; `sequence` is a monotonic tiebreaker (the order the
+    marker was read across the whole universe) so two markers sharing a timestamp
+    still order deterministically, newest-read last."""
+
+    marker: Marker
+    created_at: datetime
+    sequence: int
+
+
+@dataclass
+class StatusIssue:
+    """One issue in the `status` universe: its number and every lifecycle marker its
+    comments carried, already parsed. Non-marker comments are dropped at load."""
+
+    number: int
+    markers: list[StatusMarker] = field(default_factory=list)
+
+
+@dataclass
+class StatusRow:
+    """One rendered board row: the issue `number`, its `state` (one of the four
+    STATUS_* labels), and the `detail` — the phase, SHA, reason, or PR that
+    qualifies a `working` / `done` / `parked` row (empty for `queued`)."""
+
+    number: int
+    state: str
+    detail: str
+
+
+# The far-past sentinel a marker with an unparseable or missing `createdAt` sorts
+# at, so it never wins recency over a genuinely-timestamped marker; the `sequence`
+# tiebreaker still orders several such markers by read order.
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _parse_status_timestamp(value: Any) -> datetime:
+    """Parse a comment's ISO-8601 `createdAt` into an aware `datetime`.
+
+    `gh` emits UTC with a trailing `Z`, which `datetime.fromisoformat` accepts only
+    from 3.11+; a naive value is assumed UTC. A missing or malformed timestamp
+    yields the far-past `_EPOCH` sentinel rather than raising — the board must still
+    render, and the `sequence` tiebreaker keeps ordering deterministic."""
+
+    if not isinstance(value, str) or not value:
+        return _EPOCH
+
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return _EPOCH
+
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def load_status_universe(raw: str) -> list[StatusIssue]:
+    """Parse a `gh issue list --json number,comments` payload into StatusIssues.
+
+    Each issue's comments are read through `parse_landed_marker` — the single source
+    of truth for the marker grammar — and only the ones carrying a well-formed marker
+    are kept, each paired with its `createdAt` timestamp and a universe-wide read
+    sequence. The stdin order of issues is preserved so the board renders in the order
+    the caller listed them. A comment may be a bare string or a `{"body": ...}` object;
+    a missing or non-list `comments` field yields an issue with no markers (it renders
+    `queued`). Raises ValueError on malformed JSON or a shape that is not an array of
+    issue objects, so the CLI can report a clean error rather than a traceback."""
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"input is not valid JSON: {exc}") from exc
+
+    if not isinstance(data, list):
+        raise ValueError("expected a JSON array of issues")
+
+    # Read every issue's comments into parsed markers, assigning each a universe-wide
+    # sequence so timestamp ties still order deterministically by read order.
+    universe: list[StatusIssue] = []
+    sequence = 0
+    for entry in data:
+        if not isinstance(entry, dict) or "number" not in entry:
+            raise ValueError("an issue entry is missing its 'number'")
+
+        issue_markers: list[StatusMarker] = []
+        comments = entry.get("comments")
+        for comment in comments if isinstance(comments, list) else []:
+            body = comment if isinstance(comment, str) else comment.get("body", "")
+            marker = parse_landed_marker(str(body or ""))
+            if marker is None:
+                continue
+            created_at = _parse_status_timestamp(
+                comment.get("createdAt") if isinstance(comment, dict) else None
+            )
+            issue_markers.append(StatusMarker(marker, created_at, sequence))
+            sequence += 1
+
+        universe.append(StatusIssue(number=int(entry["number"]), markers=issue_markers))
+
+    return universe
+
+
+def _marker_order(entry: StatusMarker) -> tuple[datetime, int]:
+    """The recency key a marker is ordered by within a run: newest timestamp wins,
+    read sequence breaks a tie so the last-read of two same-instant markers leads."""
+
+    return (entry.created_at, entry.sequence)
+
+
+def _resolve_run(universe: list[StatusIssue], run: str | None) -> str | None:
+    """The run the board is scoped to: the caller's `--run` when given, else the run
+    of the newest marker across the whole universe (the latest run). None when `run`
+    is None and no issue carries any marker — every issue then renders `queued`."""
+
+    if run is not None:
+        return run
+
+    # The default run is whichever run the single newest marker belongs to.
+    latest: StatusMarker | None = None
+    for issue in universe:
+        for entry in issue.markers:
+            if latest is None or _marker_order(entry) > _marker_order(latest):
+                latest = entry
+    return latest.marker.run_id if latest is not None else None
+
+
+def _status_from_marker(marker: Marker) -> tuple[str, str]:
+    """Map a lifecycle marker to its board (state, detail).
+
+    `landed`/`opened-pr` are terminal → `done` (the SHA, or the opened PR number);
+    `parked` → `parked` with its reason; every mid-run milestone → `working` with its
+    phase, `fix-round` folding in the round number. An unrecognised verb degrades to
+    `working` with the verb itself, so a future marker still renders something."""
+
+    if marker.verb == "landed":
+        return STATUS_DONE, f"landed {marker.sha}"
+    if marker.verb == "opened-pr":
+        return STATUS_DONE, f"opened PR #{marker.pr}"
+    if marker.verb == "parked":
+        return STATUS_PARKED, marker.reason or "unspecified"
+    if marker.verb == "fix-round":
+        return STATUS_WORKING, f"fix round {marker.fix_round}"
+
+    return STATUS_WORKING, STATUS_PHASE_BY_VERB.get(marker.verb, marker.verb)
+
+
+def build_status(
+    universe: list[StatusIssue], run: str | None = None
+) -> list[StatusRow]:
+    """Render each issue's current position in the scoped run — one row per issue.
+
+    The run is the caller's `--run`, else the latest run (the run of the newest
+    marker across the universe). For each issue, the state is its latest milestone
+    *within that run*: the newest marker whose `run_id` matches the scope. An issue
+    with no marker in the scoped run — including every issue when the universe holds
+    no markers at all — renders `queued`. The issue universe is exactly what was piped
+    in; the run only scopes which markers count. Rows preserve the stdin issue order."""
+
+    scoped_run = _resolve_run(universe, run)
+
+    rows: list[StatusRow] = []
+    for issue in universe:
+        # The latest marker belonging to the scoped run governs this issue's state;
+        # no such marker means the issue has not been touched in this run.
+        in_run = [entry for entry in issue.markers if entry.marker.run_id == scoped_run]
+        if not in_run:
+            rows.append(StatusRow(number=issue.number, state=STATUS_QUEUED, detail=""))
+            continue
+
+        latest = max(in_run, key=_marker_order)
+        state, detail = _status_from_marker(latest.marker)
+        rows.append(StatusRow(number=issue.number, state=state, detail=detail))
+
+    return rows
+
+
+def render_status(rows: list[StatusRow]) -> str:
+    """Render the status board as plain, column-aligned text — one line per issue,
+    `#<number>  <state>  <detail>` — kept simple and colourless so it stays legible
+    under `watch`. Column widths flex to the longest number and state present."""
+
+    if not rows:
+        return ""
+
+    # Size the number and state columns to their widest entry so the details align.
+    number_width = max(len(f"#{row.number}") for row in rows)
+    state_width = max(len(row.state) for row in rows)
+
+    lines: list[str] = []
+    for row in rows:
+        cells = [f"#{row.number}".ljust(number_width), row.state.ljust(state_width)]
+        if row.detail:
+            cells.append(row.detail)
+        lines.append("  ".join(cells).rstrip())
+    return "\n".join(lines)
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Run the `status` subcommand — read a `gh issue list --json number,comments`
+    payload from stdin and print the per-issue board for the scoped run to stdout."""
+
+    try:
+        universe = load_status_universe(sys.stdin.read())
+    except ValueError as exc:
+        fail(str(exc))
+
+    print(render_status(build_status(universe, run=args.run)))
+    return 0
+
+
 def cmd_plan(args: argparse.Namespace) -> int:
     """Run the `plan` subcommand — read issues JSON from stdin, build the
     dependency graph and dispatch waves, and print the plan as JSON."""
@@ -1744,6 +1982,19 @@ def main() -> int:
         "report", help="Render the consolidated final report from verdicts JSON."
     )
     report_parser.set_defaults(func=cmd_report)
+
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Render the per-issue run board from issue+comment JSON.",
+    )
+    status_parser.add_argument(
+        "--run",
+        default=None,
+        metavar="ID",
+        help="Scope the board to this run id; defaults to the latest run "
+        "(the run of the newest marker across the piped-in issues).",
+    )
+    status_parser.set_defaults(func=cmd_status)
 
     # argparse sets `func` dynamically, so its type is opaque; the cast
     # restores the int return contract every cmd_* function already honours.

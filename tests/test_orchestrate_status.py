@@ -57,48 +57,64 @@ def rows_by_number(universe: str, run: str | None = None) -> dict[int, Any]:
 
 def test_started_marker_renders_working() -> None:
     marker = orchestrate.format_started_marker(47, "run-1")
-    rows = rows_by_number(json.dumps([issue(47, [comment(marker, "2026-07-22T10:00:00Z")])]))
+    rows = rows_by_number(
+        json.dumps([issue(47, [comment(marker, "2026-07-22T10:00:00Z")])])
+    )
     assert rows[47].state == "working"
     assert "started" in rows[47].detail
 
 
 def test_implementation_green_renders_working_with_phase() -> None:
     marker = orchestrate.format_implementation_green_marker(47, "run-1")
-    rows = rows_by_number(json.dumps([issue(47, [comment(marker, "2026-07-22T10:00:00Z")])]))
+    rows = rows_by_number(
+        json.dumps([issue(47, [comment(marker, "2026-07-22T10:00:00Z")])])
+    )
     assert rows[47].state == "working"
     assert "implementation green" in rows[47].detail
 
 
 def test_fix_round_renders_working_with_round_number() -> None:
     marker = orchestrate.format_fix_round_marker(47, 2, "run-1")
-    rows = rows_by_number(json.dumps([issue(47, [comment(marker, "2026-07-22T10:00:00Z")])]))
+    rows = rows_by_number(
+        json.dumps([issue(47, [comment(marker, "2026-07-22T10:00:00Z")])])
+    )
     assert rows[47].state == "working"
     assert "fix round 2" in rows[47].detail
 
 
 def test_verification_cleared_renders_working_verifying() -> None:
     marker = orchestrate.format_verification_cleared_marker(47, "run-1")
-    rows = rows_by_number(json.dumps([issue(47, [comment(marker, "2026-07-22T10:00:00Z")])]))
+    rows = rows_by_number(
+        json.dumps([issue(47, [comment(marker, "2026-07-22T10:00:00Z")])])
+    )
     assert rows[47].state == "working"
     assert "verif" in rows[47].detail.lower()
 
 
 def test_landed_marker_renders_done_with_sha() -> None:
     marker = orchestrate.format_landed_marker("a1b2c3d", "main", "run-1")
-    rows = rows_by_number(json.dumps([issue(47, [comment(marker, "2026-07-22T10:00:00Z")])]))
+    rows = rows_by_number(
+        json.dumps([issue(47, [comment(marker, "2026-07-22T10:00:00Z")])])
+    )
     assert rows[47].state == "done"
     assert "a1b2c3d" in rows[47].detail
 
 
 def test_parked_marker_renders_parked_with_reason() -> None:
     marker = orchestrate.format_parked_marker(47, "fix rounds exhausted", "run-1")
-    rows = rows_by_number(json.dumps([issue(47, [comment(marker, "2026-07-22T10:00:00Z")])]))
+    rows = rows_by_number(
+        json.dumps([issue(47, [comment(marker, "2026-07-22T10:00:00Z")])])
+    )
     assert rows[47].state == "parked"
     assert "fix rounds exhausted" in rows[47].detail
 
 
 def test_issue_with_no_marker_renders_queued() -> None:
-    rows = rows_by_number(json.dumps([issue(51, [comment("just a normal comment", "2026-07-22T10:00:00Z")])]))
+    rows = rows_by_number(
+        json.dumps(
+            [issue(51, [comment("just a normal comment", "2026-07-22T10:00:00Z")])]
+        )
+    )
     assert rows[51].state == "queued"
 
 
@@ -136,7 +152,7 @@ def test_latest_marker_in_run_wins() -> None:
 
 
 def test_default_run_is_the_latest_by_marker_timestamp() -> None:
-    old = orchestrate.format_landed_marker("old1234", "main", "run-1")
+    old = orchestrate.format_landed_marker("01d1234", "main", "run-1")
     new = orchestrate.format_started_marker(47, "run-2")
     rows = rows_by_number(
         json.dumps(
@@ -156,7 +172,7 @@ def test_default_run_is_the_latest_by_marker_timestamp() -> None:
 
 
 def test_explicit_run_pins_an_older_run() -> None:
-    old = orchestrate.format_landed_marker("old1234", "main", "run-1")
+    old = orchestrate.format_landed_marker("01d1234", "main", "run-1")
     new = orchestrate.format_started_marker(47, "run-2")
     rows = rows_by_number(
         json.dumps(
@@ -174,7 +190,7 @@ def test_explicit_run_pins_an_older_run() -> None:
     )
     # Pinned to run-1, so its landed marker governs even though run-2 is newer.
     assert rows[47].state == "done"
-    assert "old1234" in rows[47].detail
+    assert "01d1234" in rows[47].detail
 
 
 def test_issue_with_marker_only_in_another_run_is_queued() -> None:
@@ -198,10 +214,36 @@ def test_issue_with_marker_only_in_another_run_is_queued() -> None:
 def test_board_renders_all_four_states_one_row_per_issue() -> None:
     universe = json.dumps(
         [
-            issue(47, [comment(orchestrate.format_landed_marker("a1b2c3d", "main", "run-9"), "2026-07-22T10:00:00Z")]),
-            issue(48, [comment(orchestrate.format_verification_cleared_marker(48, "run-9"), "2026-07-22T10:05:00Z")]),
+            issue(
+                47,
+                [
+                    comment(
+                        orchestrate.format_landed_marker("a1b2c3d", "main", "run-9"),
+                        "2026-07-22T10:00:00Z",
+                    )
+                ],
+            ),
+            issue(
+                48,
+                [
+                    comment(
+                        orchestrate.format_verification_cleared_marker(48, "run-9"),
+                        "2026-07-22T10:05:00Z",
+                    )
+                ],
+            ),
             issue(51, []),
-            issue(52, [comment(orchestrate.format_parked_marker(52, "fix rounds exhausted", "run-9"), "2026-07-22T10:10:00Z")]),
+            issue(
+                52,
+                [
+                    comment(
+                        orchestrate.format_parked_marker(
+                            52, "fix rounds exhausted", "run-9"
+                        ),
+                        "2026-07-22T10:10:00Z",
+                    )
+                ],
+            ),
         ]
     )
     parsed = orchestrate.load_status_universe(universe)
@@ -213,7 +255,11 @@ def test_board_renders_all_four_states_one_row_per_issue() -> None:
     assert "#47" in rendered and "done" in rendered and "a1b2c3d" in rendered
     assert "#48" in rendered and "working" in rendered
     assert "#51" in rendered and "queued" in rendered
-    assert "#52" in rendered and "parked" in rendered and "fix rounds exhausted" in rendered
+    assert (
+        "#52" in rendered
+        and "parked" in rendered
+        and "fix rounds exhausted" in rendered
+    )
 
 
 # --- CLI subprocess -----------------------------------------------------------
@@ -233,7 +279,15 @@ def run_cli(payload: str, *args: str) -> subprocess.CompletedProcess[str]:
 def test_cli_status_prints_board_from_stdin() -> None:
     universe = json.dumps(
         [
-            issue(47, [comment(orchestrate.format_landed_marker("a1b2c3d", "main", "run-9"), "2026-07-22T10:00:00Z")]),
+            issue(
+                47,
+                [
+                    comment(
+                        orchestrate.format_landed_marker("a1b2c3d", "main", "run-9"),
+                        "2026-07-22T10:00:00Z",
+                    )
+                ],
+            ),
             issue(51, []),
         ]
     )
@@ -247,15 +301,23 @@ def test_cli_status_prints_board_from_stdin() -> None:
 
 
 def test_cli_status_run_flag_pins_a_specific_run() -> None:
-    old = orchestrate.format_landed_marker("old1234", "main", "run-1")
+    old = orchestrate.format_landed_marker("01d1234", "main", "run-1")
     new = orchestrate.format_started_marker(47, "run-2")
     universe = json.dumps(
-        [issue(47, [comment(old, "2026-07-20T10:00:00Z"), comment(new, "2026-07-22T10:00:00Z")])]
+        [
+            issue(
+                47,
+                [
+                    comment(old, "2026-07-20T10:00:00Z"),
+                    comment(new, "2026-07-22T10:00:00Z"),
+                ],
+            )
+        ]
     )
     result = run_cli(universe, "--run", "run-1")
     assert result.returncode == 0, result.stderr
     assert "done" in result.stdout
-    assert "old1234" in result.stdout
+    assert "01d1234" in result.stdout
 
 
 def test_cli_status_rejects_malformed_json() -> None:

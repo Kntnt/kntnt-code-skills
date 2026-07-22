@@ -222,6 +222,24 @@ A run can be killed mid-flight — a spend cut-off, a crash, a harness/session r
 
 No engine-side resume *detection* is attempted — the script receives no resume signal from the harness, so the preflight guard, not detection, is the net. The rule is: **detect that the preconditions to continue are gone, then re-plan and hand over; never start over from zero.**
 
+## Watching progress out-of-band (`status`, #50)
+
+A run makes no TUI of its own, but its progress is fully reconstructable from the durable milestone comments the reporter and integrate step post (#48/#49). The `status` subcommand folds those comments into a **per-issue board** — one row per issue, `queued` / `working` (with the phase) / `done` (with the SHA) / `parked` (with the reason) — scoped to a single run. It is a **pure stdin → stdout renderer**: it does no network I/O of its own; the caller fetches with `gh` and pipes the JSON in. Run it from any other terminal while the build runs, with **zero interaction** with the orchestrator's session:
+
+```bash
+gh issue list --label ready-for-agent --state all --json number,comments | uv run "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.py" status
+```
+
+For a live view, wrap it in `watch`:
+
+```bash
+watch -n 60 'gh issue list --label ready-for-agent --state all --json number,comments | uv run "${CLAUDE_PLUGIN_ROOT}/scripts/orchestrate.py" status'
+```
+
+`--state all` is **required**, not optional: merge mode closes each issue the moment it lands (#49, D1), so the default `--state open` would silently drop every landed issue from the piped-in universe — the board would only ever shrink and never show a `done` row. Markers are **run-scoped**: `status` defaults to the latest run (the run of the newest marker across the piped-in issues) and `--run <id>` pins a specific one; an issue in the piped-in universe with no marker for the scoped run renders `queued`. The issue *universe* is exactly what you piped in; the *run* only scopes which markers count.
+
+One caveat on the fetch: `gh issue list --json comments` returns only the **first page of each issue's comments (~100)**, so on a long-lived, comment-heavy issue the latest run's markers can fall outside that window and the board reads stale for that issue — reach for `gh issue view <n> --comments` to see its full timeline when a row looks wrong.
+
 ## Model and effort
 
 Model and reasoning effort are not set per agent by hand — they are **derived from the `--level` dial**. The **orchestrator** (the session-model planning pass) turns the level into a **per-role `(model, effort)`** and hands it to the engine as `args.roles`; the engine stores no model-name table and only applies what it is given (spreading it into each sub-agent's dispatch), so a role that carries no resolution — or an older plan with no `roles` at all — simply inherits the session model. Put the strong model and the high effort where the judgement is, not where the routing is — and let the level decide how strong.
@@ -311,6 +329,6 @@ Two cautions. Run `/goal` **interactively** — `claude -p "/goal …"` is headl
 
 ## Files this skill uses
 
-- `scripts/orchestrate.py` — deterministic helper: `plan` (issues JSON → dependency graph + waves), `redgreen` (git-log → red-before-green verdict), and `report` (verdicts JSON → consolidated report). Never calls `claude`; covered by `tests/test_orchestrate.py`.
+- `scripts/orchestrate.py` — deterministic helper: `plan` (issues JSON → dependency graph + waves), `redgreen` (git-log → red-before-green verdict), `report` (verdicts JSON → consolidated report), and `status` (issue+comment JSON → per-issue run board). Never calls `claude`; covered by `tests/test_orchestrate.py`.
 - `skills/orchestrate/orchestrate.workflow.js` — the Workflow-tool engine: implement → verify → integrate over the planned waves, agents in the subscription pool. A workflow script must have **exactly one top-level `export` (`export const meta`) and no other top-level `export` or `import`** — the Workflow harness rejects any additional top-level `export`/`import` with a `SyntaxError` at launch, so any helper that needs its own unit test is kept inline here and mirrored in an importable module (`lib/orchestrate/engine-helpers.mjs`) that the tests exercise.
 - Reads (per project): `agents.d/coding-standard/` (the scaffolded standard), the issues' agent briefs, the definition of done, the test strategy, and the cited ADRs / design docs.
