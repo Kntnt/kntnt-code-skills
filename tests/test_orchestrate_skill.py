@@ -1357,3 +1357,48 @@ def test_adr0005_header_notes_the_adr0006_amendment() -> None:
     assert "ADR-0006" in text, (
         "ADR-0005 must cross-reference ADR-0006, which widens its §3 to a second writer"
     )
+
+
+def test_skill_documents_status_one_liner_with_state_all() -> None:
+    """The out-of-band progress-watching section documents the `status` one-liner
+    and its `watch` variant. Both MUST pass `--state all` — merge mode closes each
+    landed issue, so the default `--state open` would silently drop every `done`
+    row — and select `number,comments` (issue #50)."""
+
+    text = _skill_text()
+    lowered = text.lower()
+
+    # The `status` subcommand and its stdin-fed one-liner are documented.
+    assert "orchestrate.py status" in text or "status`" in lowered, (
+        "SKILL.md must document the `status` subcommand"
+    )
+
+    # The documented `gh issue list` feeding `status` must carry `--state all` and
+    # request the comments the board reads back — a one-liner without `--state all`
+    # can never render a `done` row in merge mode.
+    status_pipes = [
+        line
+        for line in text.splitlines()
+        if "orchestrate.py status" in line and "gh issue list" in line
+    ]
+    assert status_pipes, (
+        "SKILL.md must document a `gh issue list ... | ... orchestrate.py status` one-liner"
+    )
+    for line in status_pipes:
+        assert "--state all" in line, (
+            "the status one-liner/watch variant must pass --state all"
+        )
+        assert "number,comments" in line, (
+            "the status one-liner must request --json number,comments"
+        )
+
+    # The live `watch` variant is documented.
+    assert "watch " in lowered and "orchestrate.py status" in text, (
+        "SKILL.md must document the `watch` live-view variant of `status`"
+    )
+
+    # The first-page comment-page cap is noted, with the per-issue fallback.
+    assert "gh issue view" in text and ("100" in text or "first page" in lowered), (
+        "SKILL.md must note the ~100-comment first-page cap and the "
+        "`gh issue view <n> --comments` fallback"
+    )
