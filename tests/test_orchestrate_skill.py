@@ -1218,7 +1218,11 @@ MILESTONE_TEMPLATES: list[tuple[str, dict[str, str], str]] = [
         {"<n>": "47"},
         "verification-cleared",
     ),
-    ("orchestrate: fix round <k> #<n>, run <runId>", {"<k>": "2", "<n>": "47"}, "fix-round"),
+    (
+        "orchestrate: fix round <k> #<n>, run <runId>",
+        {"<k>": "2", "<n>": "47"},
+        "fix-round",
+    ),
     (
         "orchestrate: parked #<n> (<reason>), run <runId>",
         {"<n>": "47", "<reason>": "cap hit"},
@@ -1282,9 +1286,11 @@ def test_skill_documents_out_of_band_progress_watching() -> None:
         "SKILL.md must document watching progress out of band"
     )
     # Watch the issue comments / GitHub notifications — never the TUI.
-    assert "notification" in text or "issue's comments" in text or "comment timeline" in text, (
-        "SKILL.md must point the maintainer at the issue comments / notifications"
-    )
+    assert (
+        "notification" in text
+        or "issue's comments" in text
+        or "comment timeline" in text
+    ), "SKILL.md must point the maintainer at the issue comments / notifications"
 
 
 # --- ADR-0006 (issue #48) -----------------------------------------------------
@@ -1325,8 +1331,10 @@ def test_adr0006_exists_and_records_the_reporter_decision() -> None:
         "ADR-0006 must record that integrate remains the sole mutating writer"
     )
     # The §7 floor is preserved — the reporter never closes.
-    assert "never close" in lowered or "reporter never" in lowered or (
-        "floor" in lowered and "reporter" in lowered
+    assert (
+        "never close" in lowered
+        or "reporter never" in lowered
+        or ("floor" in lowered and "reporter" in lowered)
     ), "ADR-0006 must record that the §7 floor holds — the reporter never closes"
 
 
@@ -1341,7 +1349,10 @@ def test_adr0001_header_notes_the_adr0006_amendment() -> None:
 
 def test_adr0005_header_notes_the_adr0006_amendment() -> None:
     text = (
-        REPO_ROOT / "docs" / "adr" / "0005-durable-landed-markers-and-close-at-integrate.md"
+        REPO_ROOT
+        / "docs"
+        / "adr"
+        / "0005-durable-landed-markers-and-close-at-integrate.md"
     ).read_text(encoding="utf-8")
     assert "ADR-0006" in text, (
         "ADR-0005 must cross-reference ADR-0006, which widens its §3 to a second writer"

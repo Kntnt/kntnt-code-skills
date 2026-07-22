@@ -5,6 +5,8 @@
 - **Deciders:** Thomas Barregren
 
 > **Amends [ADR-0001](0001-orchestrate-control-model.md) §5 and §7 by reference.** §7's inviolable floor — "close an issue only after independent verification *and* integration" — is unchanged in substance; this ADR pins *when* and *by whom* that close happens (at integrate time, by the integrate step) and carves a single narrow exception to §7's "no sub-agent closes/pushes/merges" rule. §5's mandatory integration review is unchanged; this ADR records that it now operates at run level over already-closed issues and never reopens one. The escalate-only risk model (§6), the `--yes`/merge-authority separation (§7/§8), the rigor ladder (ADR-0004), and the `--max-lenses`/`--pr` decoupling (ADR-0003) are all untouched.
+>
+> **Amended by [ADR-0006](0006-mid-run-milestone-heartbeat-and-the-reporter-role.md).** §3's *single* narrow outward-write exception (the integrate step, the sole mutator) is widened to admit a **second, strictly weaker** writer: a comment-only, mechanical-tier *reporter* posting mid-run milestone comments that mutate no shared state. Integrate remains the sole *mutating* writer and the sole closer; the terminal `landed` / `opened-PR` markers, close-at-integrate, and the preflight guard here are all unchanged (a milestone verb never parses as `landed`). ADR-0006 extends the marker grammar of Decision R1(b) with the milestone verbs.
 
 ## Context
 

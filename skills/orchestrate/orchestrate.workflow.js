@@ -126,6 +126,20 @@ const PREFLIGHT_SCHEMA = {
   },
 }
 
+// What the mechanical `reporter` sub-agent returns (issue #48): whether it posted
+// the one milestone comment it was asked to. Deliberately minimal — the reporter's
+// SOLE authorized outward write is that comment, and reporting is best-effort, so
+// even `posted: false` (or a dead reporter) never blocks, parks, or fails an issue.
+const REPORTER_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['posted'],
+  properties: {
+    posted: { type: 'boolean', description: 'The milestone comment was posted on the issue.' },
+    summary: { type: 'string' },
+  },
+}
+
 // `normalizeArgs`, `planIsEmpty`, `blockingFindings`, `unlandedPrerequisites`,
 // `roleTuning`, `shouldEscalateInSitu`, `withInSituHazard`,
 // `isReconcilableConflict`, and `preflightDecision` are kept inline as
@@ -614,6 +628,58 @@ const planOverlay = (mode, plan) => {
 
 }
 
+// How a marker-posting sub-agent (integrate #49, reporter #48) discovers the
+// runId, which is NOT an engine arg — the orchestrator only learns it AFTER
+// launch — from the run's own worktree scaffolding branches, named
+// `worktree-<runId>-<n>`; failing that it uses `unknown`, which the tolerant
+// `parse_landed_marker` still accepts as valid provenance.
+const RUN_ID_HINT = `this run's id — discover it from the run's worktree scaffolding branches, named \`worktree-<runId>-<n>\`: run \`git branch --list 'worktree-*'\` and take the \`<runId>\` segment; if none is discoverable use \`unknown\``
+
+// The mid-run milestone comment templates (issue #48) — the exact canonical
+// grammar `orchestrate.py` formats and SKILL.md documents, with `<runId>` left
+// for the reporter to substitute (it discovers the runId via RUN_ID_HINT). A
+// milestone carries an issue number, never a landing SHA, so it can never be
+// mistaken for a #49 `landed` marker. `fix round` embeds its round; `parked`
+// carries a short reason.
+const milestoneStarted = (number) => `orchestrate: started #${number}, run <runId>`
+const milestoneImplementationGreen = (number) => `orchestrate: implementation green #${number}, run <runId>`
+const milestoneVerificationCleared = (number) => `orchestrate: verification cleared #${number}, run <runId>`
+const milestoneFixRound = (number, round) => `orchestrate: fix round ${round} #${number}, run <runId>`
+const milestoneParked = (number, reason) => `orchestrate: parked #${number} (${reason}), run <runId>`
+
+// The mechanical `reporter` sub-agent (issue #48): a SECOND authorized outward
+// writer, but strictly weaker than integrate — its SOLE authorized write is to
+// post ONE milestone comment; it carries the shared ${AGENT_CONSTRAINTS} so it is
+// forbidden to close, push, or merge exactly as the workers are, and it needs no
+// worktree because it touches no code. It substitutes the runId into the template
+// and posts. Its failure is swallowed by `report` below, so it never gates progress.
+const reporter = (number, milestone) =>
+  agent(
+    `Post ONE orchestrate milestone comment on GitHub issue #${number} ("${titleOf(number)}") — this is your SOLE action.\n` +
+      `Post a comment on issue #${number} in EXACTLY this form: \`${milestone}\` — substitute <runId> with ${RUN_ID_HINT}. Post it with \`gh issue comment ${number} --body '<the comment>'\`, then report posted:true.\n` +
+      `${AGENT_CONSTRAINTS}\n` +
+      `Do NOT implement, close the issue, push, merge, or modify anything else — a status comment is your only write. If posting fails for any reason, report posted:false rather than retrying or escalating; a reporter failure must never block the run.`,
+    { label: `reporter:#${number}`, phase: 'Report', schema: REPORTER_SCHEMA, ...roleTuning(roles.mechanical) },
+  )
+
+// Best-effort milestone dispatch (issue #48). Reporting is AUXILIARY — a failed or
+// absent reporter must never block, park, or fail an issue (mirroring ADR-0005's
+// "a dead preflight decodes to dispatch" philosophy). So the reporter is awaited
+// (per-issue sequencing: an issue's milestones post in lifecycle order, which #50
+// reads back) but any error is swallowed here, never propagated. Reporters for
+// DIFFERENT issues may still run concurrently; only per-issue order is guaranteed.
+const report = async (number, milestone) => {
+
+  // Swallow every failure — a reporter error is a visibility miss, never a
+  // correctness gate, so it stays out of the issue's outcome entirely.
+  try {
+    await reporter(number, milestone)
+  } catch (error) {
+    log(`#${number}: reporter dispatch failed (${milestone}) — swallowed, run continues`)
+  }
+
+}
+
 // The mechanical preflight idempotence check dispatched BEFORE an implementer
 // (issue #49): a read-only agent that gathers the issue's durable landing state
 // so a blind cross-session restart never re-implements already-landed work. It
@@ -729,6 +795,11 @@ const buildAndVerify = async (number) => {
 
   if (impl.status === 'blocked') return toRecord(number, impl, 'blocked', 'design blocker')
 
+  // The implementer's gates passed — the build is green. Emit the out-of-band
+  // `implementation green` heartbeat (best-effort, awaited for per-issue order)
+  // before the independent verifier runs; this boundary is mode-agnostic (#48).
+  await report(number, milestoneImplementationGreen(number))
+
   // The plan's own verifier panel for this issue (ADR-0003 §2): DEFAULT_LENSES
   // when the plan set none, a risk-scaled override when it named one, or
   // EXPLICITLY empty when the plan produced 0 (--max-lenses=0). An explicitly
@@ -761,7 +832,11 @@ const buildAndVerify = async (number) => {
   const verdicts = await verify(number, impl, lenses)
   let summary = verdicts.map((verdict) => verdict.summary).join(' | ')
   let findings = blockingFindings(verdicts)
-  if (findings.length === 0) return toRecord(number, impl, 'done', summary)
+  if (findings.length === 0) {
+    // The panel cleared on the first pass — report it out of band before integrate.
+    await report(number, milestoneVerificationCleared(number))
+    return toRecord(number, impl, 'done', summary)
+  }
 
   // Capped fix loop: fix the concrete findings, then RE-VERIFY ONLY THOSE FIXED
   // FINDINGS with a single targeted agent — never the whole panel again. That
@@ -769,6 +844,10 @@ const buildAndVerify = async (number) => {
   // A stubborn issue parks rather than looping forever.
   for (let round = 1; round <= maxFixRounds; round += 1) {
     log(`#${number}: fix round ${round}/${maxFixRounds} — ${findings.length} finding(s)`)
+
+    // Emit the `fix round <k>` heartbeat as the round begins (best-effort, #48).
+    await report(number, milestoneFixRound(number, round))
+
     impl = (await fix(number, impl, findings)) ?? impl
 
     // A dead re-verifier never clears the issue: keep the prior findings
@@ -779,7 +858,11 @@ const buildAndVerify = async (number) => {
     if (recheck == null) continue
     summary = recheck.summary || summary
     findings = blockingFindings([recheck])
-    if (findings.length === 0) return toRecord(number, impl, 'done', summary)
+    if (findings.length === 0) {
+      // The fixed findings re-verified clean — report the cleared panel.
+      await report(number, milestoneVerificationCleared(number))
+      return toRecord(number, impl, 'done', summary)
+    }
   }
 
   return toRecord(number, impl, 'parked', `cap hit after ${maxFixRounds} fix round(s): ${summary}`)
@@ -801,10 +884,10 @@ const integrate = async (record) => {
 
   // How the agent sources each field of the canonical marker. The runId is not
   // an engine arg (the orchestrator only learns it AFTER launch), so the agent
-  // discovers it from the run's own worktree scaffolding branches, which the
-  // harness names `worktree-<runId>-<n>`; failing that it uses `unknown`, which
-  // the tolerant `parse_landed_marker` still accepts as valid provenance.
-  const runIdHint = `this run's id — discover it from the run's worktree scaffolding branches, named \`worktree-<runId>-<n>\`: run \`git branch --list 'worktree-*'\` and take the \`<runId>\` segment; if none is discoverable use \`unknown\``
+  // discovers it via the shared RUN_ID_HINT — the run's own worktree scaffolding
+  // branches, named `worktree-<runId>-<n>`; failing that `unknown`, which the
+  // tolerant `parse_landed_marker` still accepts as valid provenance.
+  const runIdHint = RUN_ID_HINT
 
   // Compose the mode-specific marker+close instruction, gated to a real issue: in
   // merge mode post the landed-marker and close; in PR mode post the PR-marker and
@@ -1107,6 +1190,12 @@ try {
         continue
       }
 
+      // The preflight decided to DISPATCH: emit the out-of-band `started`
+      // heartbeat before the build begins (best-effort, awaited for per-issue
+      // order). It is posted ONLY here — never for an issue preflight skipped as
+      // already-landed / already-open / stale, each of which `continue`d above (#48).
+      await report(number, milestoneStarted(number))
+
       // Build + independently verify this one issue (worktree-isolated).
       const record = await buildAndVerify(number)
 
@@ -1114,10 +1203,14 @@ try {
       // but park it with a reason rather than silently dropping the issue — a
       // vanished issue would not even appear in the report.
       if (record == null) {
+        await report(number, milestoneParked(number, 'buildAndVerify returned nothing'))
         parked.push(toRecord(number, null, 'parked', 'buildAndVerify returned nothing'))
         continue
       }
       if (record.status !== 'done') {
+        // The dispatched issue died — blocked, or exhausted its fix rounds. Post
+        // the durable `parked` heartbeat before parking it (best-effort, #48).
+        await report(number, milestoneParked(number, record.verify || (record.blockers || []).join('; ') || record.status))
         parked.push(record)
         continue
       }
@@ -1151,6 +1244,9 @@ try {
         verdicts.push(integrated)
         if (merge) landed.add(integrated.number)
       } else {
+        // Integration failed or was blocked — post the durable `parked` heartbeat
+        // with the landing failure's reason before parking it (best-effort, #48).
+        await report(number, milestoneParked(number, (integrated.blockers || []).slice(-1)[0] || integrated.verify || 'integration failed'))
         parked.push(integrated)
       }
     }

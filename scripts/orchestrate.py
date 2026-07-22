@@ -915,16 +915,48 @@ PR_MARKER_RE = re.compile(
     r"orchestrate:\s+opened\s+PR\s+#(?P<pr>\d+),\s+run\s+(?P<run_id>\S+)"
 )
 
+# The mid-run milestone heartbeat (issue #48) — a durable, machine-readable
+# comment the mechanical `reporter` sub-agent posts at each lifecycle boundary an
+# issue reaches, so a multi-hour run's per-issue progress is visible out of band.
+# These extend #49's single-source-of-truth grammar with the same fixed-prefix,
+# positional discipline (`orchestrate: <verb> …, run <runId>`); they carry an
+# issue number rather than a landing SHA, so a milestone comment NEVER parses as a
+# `landed` marker and #49's preflight ancestry check is untouched (the hard
+# non-regression). `fix round` embeds its round number in the verb phrase;
+# `parked` carries a short parenthesised reason, read back non-greedily so an
+# inner comma does not truncate it.
+STARTED_MARKER_RE = re.compile(
+    r"orchestrate:\s+started\s+#(?P<number>\d+),\s+run\s+(?P<run_id>\S+)"
+)
+IMPLEMENTATION_GREEN_MARKER_RE = re.compile(
+    r"orchestrate:\s+implementation\s+green\s+#(?P<number>\d+),\s+run\s+(?P<run_id>\S+)"
+)
+VERIFICATION_CLEARED_MARKER_RE = re.compile(
+    r"orchestrate:\s+verification\s+cleared\s+#(?P<number>\d+),\s+run\s+(?P<run_id>\S+)"
+)
+FIX_ROUND_MARKER_RE = re.compile(
+    r"orchestrate:\s+fix\s+round\s+(?P<fix_round>\d+)\s+#(?P<number>\d+)"
+    r",\s+run\s+(?P<run_id>\S+)"
+)
+PARKED_MARKER_RE = re.compile(
+    r"orchestrate:\s+parked\s+#(?P<number>\d+)\s+\((?P<reason>.*?)\)"
+    r",\s+run\s+(?P<run_id>\S+)"
+)
+
 
 @dataclass
 class Marker:
-    """A parsed orchestrate landed-marker (issue #49).
+    """A parsed orchestrate marker (issues #49, #48).
 
-    `verb` is `"landed"` (merge mode) or `"opened-pr"` (PR mode). The `sha` and
-    `branch` fields carry the landing point of a `landed` marker; `pr` carries
-    the pull-request number of an `opened-pr` marker; `run_id` is the originating
-    run for both. The unused fields stay None so the shape extends cleanly to
-    #48's richer milestone vocabulary.
+    `verb` names the lifecycle event: the #49 terminal markers `"landed"` (merge
+    mode) and `"opened-pr"` (PR mode), or a #48 mid-run milestone —
+    `"started"`, `"implementation-green"`, `"verification-cleared"`,
+    `"fix-round"`, or `"parked"`. `run_id` is the originating run for every verb.
+    The remaining fields are per-verb and stay None when unused: `sha`/`branch`
+    carry a `landed` marker's landing point; `pr` an `opened-pr` marker's PR
+    number; `number` the issue a milestone marker is about; `fix_round` a
+    `fix-round` marker's round; `reason` a `parked` marker's short reason. A
+    milestone verb never sets `sha`, so it can never be mistaken for a landing.
     """
 
     verb: str
@@ -932,6 +964,9 @@ class Marker:
     sha: str | None = None
     branch: str | None = None
     pr: int | None = None
+    number: int | None = None
+    fix_round: int | None = None
+    reason: str | None = None
 
 
 def format_landed_marker(sha: str, branch: str, run_id: str) -> str:
@@ -952,14 +987,63 @@ def format_pr_marker(pr: int, run_id: str) -> str:
     return f"{LANDED_MARKER_PREFIX} opened PR #{pr}, run {run_id}"
 
 
+def format_started_marker(number: int, run_id: str) -> str:
+    """Render the `started` milestone the reporter posts when an issue the
+    preflight decided to dispatch begins its build — `orchestrate: started #<n>,
+    run <runId>` (issue #48)."""
+
+    return f"{LANDED_MARKER_PREFIX} started #{number}, run {run_id}"
+
+
+def format_implementation_green_marker(number: int, run_id: str) -> str:
+    """Render the `implementation green` milestone the reporter posts once the
+    implementer's gates pass — `orchestrate: implementation green #<n>, run
+    <runId>` (issue #48)."""
+
+    return f"{LANDED_MARKER_PREFIX} implementation green #{number}, run {run_id}"
+
+
+def format_verification_cleared_marker(number: int, run_id: str) -> str:
+    """Render the `verification cleared` milestone the reporter posts once the
+    adversarial verifier panel clears — `orchestrate: verification cleared #<n>,
+    run <runId>` (issue #48)."""
+
+    return f"{LANDED_MARKER_PREFIX} verification cleared #{number}, run {run_id}"
+
+
+def format_fix_round_marker(number: int, fix_round: int, run_id: str) -> str:
+    """Render the `fix round` milestone the reporter posts when a fix round
+    begins — `orchestrate: fix round <k> #<n>, run <runId>` (issue #48). The
+    round number rides inside the verb phrase."""
+
+    return f"{LANDED_MARKER_PREFIX} fix round {fix_round} #{number}, run {run_id}"
+
+
+def format_parked_marker(number: int, reason: str, run_id: str) -> str:
+    """Render the `parked` milestone the reporter posts when an issue dies —
+    fails to integrate, is blocked, or exhausts its fix rounds — `orchestrate:
+    parked #<n> (<reason>), run <runId>` (issue #48). The reason is kept short so
+    the timeline stays legible; the parser reads it back non-greedily."""
+
+    return f"{LANDED_MARKER_PREFIX} parked #{number} ({reason}), run {run_id}"
+
+
 def parse_landed_marker(comment_body: str) -> Marker | None:
     """Read an orchestrate marker back out of a comment body, tolerantly.
 
-    Returns the parsed `Marker` for the first `landed` or `opened PR` marker the
-    body carries — even when it sits amid other prose — or None when the body
-    holds no well-formed marker. A truncated or malformed marker (a bare prefix,
-    a missing positional field) resolves to None rather than a partial Marker, so
-    the preflight guard never acts on a half-read landing (issue #49)."""
+    Returns the parsed `Marker` for the first marker the body carries — a #49
+    terminal `landed` / `opened PR`, or a #48 mid-run milestone (`started`,
+    `implementation green`, `verification cleared`, `fix round <k>`, `parked`) —
+    even when it sits amid other prose, or None when the body holds no well-formed
+    marker. A truncated or malformed marker (a bare prefix, a missing positional
+    field) resolves to None rather than a partial Marker.
+
+    The two terminal verbs are tried FIRST and, crucially, a milestone verb
+    carries an issue number rather than a landing SHA — so a milestone comment
+    never yields `verb == "landed"` and never populates `sha`. That keeps #49's
+    preflight ancestry check (which acts only on a `landed` marker whose SHA is an
+    ancestor of the default tip) untouched: no milestone comment can trigger a
+    false `already-landed` skip."""
 
     text = comment_body or ""
 
@@ -978,6 +1062,49 @@ def parse_landed_marker(comment_body: str) -> Marker | None:
     pr = PR_MARKER_RE.search(text)
     if pr is not None:
         return Marker(verb="opened-pr", run_id=pr["run_id"], pr=int(pr["pr"]))
+
+    # The #48 mid-run milestones. Each carries an issue number and no SHA, so it
+    # is a distinct verb the preflight ignores. `fix-round` and `parked` also
+    # carry their round / reason.
+    started = STARTED_MARKER_RE.search(text)
+    if started is not None:
+        return Marker(
+            verb="started", run_id=started["run_id"], number=int(started["number"])
+        )
+
+    green = IMPLEMENTATION_GREEN_MARKER_RE.search(text)
+    if green is not None:
+        return Marker(
+            verb="implementation-green",
+            run_id=green["run_id"],
+            number=int(green["number"]),
+        )
+
+    cleared = VERIFICATION_CLEARED_MARKER_RE.search(text)
+    if cleared is not None:
+        return Marker(
+            verb="verification-cleared",
+            run_id=cleared["run_id"],
+            number=int(cleared["number"]),
+        )
+
+    fix_round = FIX_ROUND_MARKER_RE.search(text)
+    if fix_round is not None:
+        return Marker(
+            verb="fix-round",
+            run_id=fix_round["run_id"],
+            number=int(fix_round["number"]),
+            fix_round=int(fix_round["fix_round"]),
+        )
+
+    parked = PARKED_MARKER_RE.search(text)
+    if parked is not None:
+        return Marker(
+            verb="parked",
+            run_id=parked["run_id"],
+            number=int(parked["number"]),
+            reason=parked["reason"],
+        )
 
     return None
 
