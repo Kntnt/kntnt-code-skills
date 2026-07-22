@@ -1063,6 +1063,165 @@ def test_parse_landed_marker_rejects_a_truncated_marker() -> None:
     )
 
 
+# --- mid-run milestone heartbeat markers (issue #48) -------------------------
+
+
+def test_format_started_marker_is_the_canonical_positional_form() -> None:
+    # The mid-run heartbeat the reporter posts when an issue's build begins.
+    assert (
+        orchestrate.format_started_marker(47, "wf_abc123")
+        == "orchestrate: started #47, run wf_abc123"
+    )
+
+
+def test_format_implementation_green_marker_is_the_canonical_form() -> None:
+    assert (
+        orchestrate.format_implementation_green_marker(47, "wf_abc123")
+        == "orchestrate: implementation green #47, run wf_abc123"
+    )
+
+
+def test_format_verification_cleared_marker_is_the_canonical_form() -> None:
+    assert (
+        orchestrate.format_verification_cleared_marker(47, "wf_abc123")
+        == "orchestrate: verification cleared #47, run wf_abc123"
+    )
+
+
+def test_format_fix_round_marker_carries_the_round_number() -> None:
+    assert (
+        orchestrate.format_fix_round_marker(47, 2, "wf_abc123")
+        == "orchestrate: fix round 2 #47, run wf_abc123"
+    )
+
+
+def test_format_parked_marker_carries_the_short_reason() -> None:
+    assert (
+        orchestrate.format_parked_marker(47, "cap hit after 2 fix rounds", "wf_abc123")
+        == "orchestrate: parked #47 (cap hit after 2 fix rounds), run wf_abc123"
+    )
+
+
+def test_started_marker_round_trips_through_the_parser() -> None:
+    parsed = orchestrate.parse_landed_marker(
+        orchestrate.format_started_marker(47, "wf_x")
+    )
+    assert parsed is not None
+    assert parsed.verb == "started"
+    assert parsed.number == 47
+    assert parsed.run_id == "wf_x"
+    # A milestone verb carries no landing SHA — the hard #49 non-regression.
+    assert parsed.sha is None and parsed.branch is None and parsed.pr is None
+
+
+def test_implementation_green_marker_round_trips_through_the_parser() -> None:
+    parsed = orchestrate.parse_landed_marker(
+        orchestrate.format_implementation_green_marker(8, "wf_y")
+    )
+    assert parsed is not None
+    assert parsed.verb == "implementation-green"
+    assert parsed.number == 8
+    assert parsed.run_id == "wf_y"
+    assert parsed.sha is None
+
+
+def test_verification_cleared_marker_round_trips_through_the_parser() -> None:
+    parsed = orchestrate.parse_landed_marker(
+        orchestrate.format_verification_cleared_marker(8, "wf_y")
+    )
+    assert parsed is not None
+    assert parsed.verb == "verification-cleared"
+    assert parsed.number == 8
+    assert parsed.run_id == "wf_y"
+
+
+def test_fix_round_marker_round_trips_with_its_round_number() -> None:
+    parsed = orchestrate.parse_landed_marker(
+        orchestrate.format_fix_round_marker(8, 3, "wf_y")
+    )
+    assert parsed is not None
+    assert parsed.verb == "fix-round"
+    assert parsed.number == 8
+    assert parsed.fix_round == 3
+    assert parsed.run_id == "wf_y"
+
+
+def test_parked_marker_round_trips_with_its_reason() -> None:
+    parsed = orchestrate.parse_landed_marker(
+        orchestrate.format_parked_marker(8, "design blocker", "wf_y")
+    )
+    assert parsed is not None
+    assert parsed.verb == "parked"
+    assert parsed.number == 8
+    assert parsed.reason == "design blocker"
+    assert parsed.run_id == "wf_y"
+
+
+def test_milestone_markers_are_found_embedded_in_a_comment() -> None:
+    body = "Kicking this off.\n\norchestrate: started #47, run wf_7\n\nGo."
+    parsed = orchestrate.parse_landed_marker(body)
+    assert parsed is not None and parsed.verb == "started" and parsed.number == 47
+
+
+def test_no_milestone_verb_ever_parses_as_a_landed_marker() -> None:
+    # The #49 preflight keys on a `landed` marker whose SHA is an ancestor of the
+    # default tip. A milestone comment carries a DIFFERENT verb and NO SHA, so it
+    # must never be mistaken for a landed marker — otherwise a run would falsely
+    # skip an unbuilt issue as already-landed. This is the hard non-regression.
+    milestones = [
+        orchestrate.format_started_marker(47, "wf_x"),
+        orchestrate.format_implementation_green_marker(47, "wf_x"),
+        orchestrate.format_verification_cleared_marker(47, "wf_x"),
+        orchestrate.format_fix_round_marker(47, 2, "wf_x"),
+        orchestrate.format_parked_marker(47, "some reason", "wf_x"),
+    ]
+    for marker in milestones:
+        parsed = orchestrate.parse_landed_marker(marker)
+        assert parsed is not None, marker
+        assert parsed.verb != "landed", (
+            f"a milestone comment must never parse as a landed marker: {marker!r}"
+        )
+        assert parsed.sha is None, (
+            f"a milestone comment carries no landing SHA: {marker!r}"
+        )
+
+
+def test_preflight_verdicts_unchanged_amid_milestone_comments() -> None:
+    # A comment thread carrying only milestone comments (started, implementation
+    # green, parked) — no landed marker — must resolve to no landed marker at all,
+    # so #49's `dispatch` verdict is unchanged and no false `already-landed` skip
+    # occurs.
+    thread = (
+        "orchestrate: started #47, run wf_x\n\n"
+        "orchestrate: implementation green #47, run wf_x\n\n"
+        "orchestrate: parked #47 (cap hit), run wf_x"
+    )
+    parsed = orchestrate.parse_landed_marker(thread)
+    assert parsed is not None
+    assert parsed.verb != "landed"
+    # But a thread that ALSO carries a genuine landed marker still resolves to it,
+    # so the presence of milestone comments never hides a real landing.
+    with_landing = thread + "\n\norchestrate: landed deadbeef on main, run wf_x"
+    landed = orchestrate.parse_landed_marker(with_landing)
+    assert landed is not None and landed.verb == "landed" and landed.sha == "deadbeef"
+
+
+def test_parse_rejects_malformed_milestone_comments() -> None:
+    # Each milestone verb without its full positional shape is not a marker.
+    for malformed in (
+        "orchestrate: started",
+        "orchestrate: started #47",
+        "orchestrate: started 47, run wf_x",
+        "orchestrate: implementation green, run wf_x",
+        "orchestrate: verification cleared #47",
+        "orchestrate: fix round #47, run wf_x",
+        "orchestrate: fix round 2 #47",
+        "orchestrate: parked #47, run wf_x",
+        "orchestrate: parked #47 (no run id)",
+    ):
+        assert orchestrate.parse_landed_marker(malformed) is None, malformed
+
+
 # --- render_report ------------------------------------------------------------
 
 

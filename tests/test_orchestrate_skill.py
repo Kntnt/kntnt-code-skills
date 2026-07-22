@@ -1199,3 +1199,150 @@ def test_adr0001_header_notes_the_adr0005_amendment() -> None:
     assert "Amended by [ADR-0005]" in text, (
         "ADR-0001's header must cross-reference the ADR-0005 amendment"
     )
+
+
+# --- mid-run milestone heartbeat + the reporter role (issue #48) --------------
+
+# Every canonical milestone-comment template SKILL.md tells the reporter to post,
+# each paired with the concrete-value substitution that must round-trip through
+# `parse_landed_marker` — so the documented grammar can never drift from the code.
+MILESTONE_TEMPLATES: list[tuple[str, dict[str, str], str]] = [
+    ("orchestrate: started #<n>, run <runId>", {"<n>": "47"}, "started"),
+    (
+        "orchestrate: implementation green #<n>, run <runId>",
+        {"<n>": "47"},
+        "implementation-green",
+    ),
+    (
+        "orchestrate: verification cleared #<n>, run <runId>",
+        {"<n>": "47"},
+        "verification-cleared",
+    ),
+    ("orchestrate: fix round <k> #<n>, run <runId>", {"<k>": "2", "<n>": "47"}, "fix-round"),
+    (
+        "orchestrate: parked #<n> (<reason>), run <runId>",
+        {"<n>": "47", "<reason>": "cap hit"},
+        "parked",
+    ),
+]
+
+
+def test_skill_documents_the_milestone_templates_that_round_trip() -> None:
+    # The SKILL↔parser consistency test, extended to the #48 milestone verbs: each
+    # canonical template must appear verbatim in SKILL.md and, with concrete values
+    # substituted, round-trip through the single-source-of-truth parser.
+    text = _skill_text()
+    for template, substitutions, expected_verb in MILESTONE_TEMPLATES:
+        assert template in text, (
+            f"SKILL.md must document the canonical milestone template verbatim: "
+            f"{template!r}"
+        )
+        concrete = template.replace("<runId>", "wf_consistency")
+        for token, value in substitutions.items():
+            concrete = concrete.replace(token, value)
+        parsed = orchestrate.parse_landed_marker(concrete)
+        assert parsed is not None and parsed.verb == expected_verb, (
+            f"the milestone template SKILL tells the reporter to post must "
+            f"round-trip through parse_landed_marker: {template!r}"
+        )
+        # The hard #49 non-regression, documented and enforced together: a
+        # milestone verb is never a landed marker and carries no SHA.
+        assert parsed.verb != "landed" and parsed.sha is None
+
+
+def test_skill_documents_the_reporter_role_in_the_lifecycle() -> None:
+    text = _skill_text().lower()
+    assert "reporter" in text, (
+        "SKILL.md must introduce the reporter sub-agent in the lifecycle"
+    )
+    # It is mechanical-tier and comment-only — never a mutator.
+    assert "mechanical" in text and "comment-only" in text, (
+        "SKILL.md must describe the reporter as a mechanical-tier, comment-only writer"
+    )
+
+
+def test_skill_operating_contract_names_two_authorized_writers() -> None:
+    section = _operating_contract_section().lower()
+    # The widened operating-contract bullet: two authorized outward writers now —
+    # integrate (mutating) and the reporter (comment-only).
+    assert "reporter" in section, (
+        "the operating contract must name the reporter as the second authorized writer"
+    )
+    assert "comment-only" in section or "comment only" in section, (
+        "the operating contract must state the reporter's write is comment-only"
+    )
+    assert "integrate" in section, (
+        "the operating contract must still name integrate as the mutating writer"
+    )
+
+
+def test_skill_documents_out_of_band_progress_watching() -> None:
+    text = _skill_text().lower()
+    assert "out-of-band" in text or "out of band" in text, (
+        "SKILL.md must document watching progress out of band"
+    )
+    # Watch the issue comments / GitHub notifications — never the TUI.
+    assert "notification" in text or "issue's comments" in text or "comment timeline" in text, (
+        "SKILL.md must point the maintainer at the issue comments / notifications"
+    )
+
+
+# --- ADR-0006 (issue #48) -----------------------------------------------------
+
+ADR_0006_GLOB = "0006-*.md"
+
+
+def _adr0006_path() -> Path:
+    matches = sorted((REPO_ROOT / "docs" / "adr").glob(ADR_0006_GLOB))
+    assert matches, "ADR-0006 (docs/adr/0006-*.md) must exist"
+    return matches[0]
+
+
+def test_adr0006_exists_and_records_the_reporter_decision() -> None:
+    text = _adr0006_path().read_text(encoding="utf-8")
+    lowered = text.lower()
+
+    # Title: mid-run milestone heartbeat and the reporter writer role.
+    assert "heartbeat" in lowered and "reporter" in lowered, (
+        "ADR-0006's title/body must name the mid-run heartbeat and the reporter role"
+    )
+
+    # It amends ADR-0005 §3 and ADR-0001 §7 — a second, strictly weaker writer.
+    assert "adr-0005" in lowered and "§3" in text, (
+        "ADR-0006 must name that it amends ADR-0005 §3"
+    )
+    assert "§7" in text, "ADR-0006 must name ADR-0001 §7 as amended"
+    assert "second" in lowered and ("weaker" in lowered or "comment-only" in lowered), (
+        "ADR-0006 must record a second, strictly weaker (comment-only) writer"
+    )
+
+    # The three decisions: the milestone vocabulary, the reporter role, and the
+    # boundary of the exception (integrate stays the sole mutating writer).
+    assert "vocabulary" in lowered or "milestone verb" in lowered, (
+        "ADR-0006 must record the milestone-vocabulary decision"
+    )
+    assert "sole" in lowered and "mutat" in lowered, (
+        "ADR-0006 must record that integrate remains the sole mutating writer"
+    )
+    # The §7 floor is preserved — the reporter never closes.
+    assert "never close" in lowered or "reporter never" in lowered or (
+        "floor" in lowered and "reporter" in lowered
+    ), "ADR-0006 must record that the §7 floor holds — the reporter never closes"
+
+
+def test_adr0001_header_notes_the_adr0006_amendment() -> None:
+    text = (REPO_ROOT / "docs" / "adr" / "0001-orchestrate-control-model.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Amended by [ADR-0006]" in text, (
+        "ADR-0001's header must cross-reference the ADR-0006 amendment"
+    )
+
+
+def test_adr0005_header_notes_the_adr0006_amendment() -> None:
+    text = (
+        REPO_ROOT / "docs" / "adr" / "0005-durable-landed-markers-and-close-at-integrate.md"
+    ).read_text(encoding="utf-8")
+    assert "ADR-0006" in text, (
+        "ADR-0005 must cross-reference ADR-0006, which widens its §3 to a second writer"
+    )

@@ -3113,3 +3113,160 @@ def test_integration_review_and_hotfix_never_reopen_a_closed_issue() -> None:
             f"the `{name}` prompt must never reopen an issue — a cross-issue "
             f"finding is handled at run level, not by reopening closed issues"
         )
+
+
+# --- mid-run milestone heartbeat + the reporter writer role (issue #48) -------
+#
+# A multi-hour run must emit a durable, out-of-band per-issue lifecycle heartbeat:
+# a mechanical-tier `reporter` sub-agent posts one milestone comment at each phase
+# boundary the engine reaches (started, implementation green, verification
+# cleared, fix round k, parked). It is a SECOND authorized outward writer — but
+# strictly weaker than integrate: comment-only, never close/push/merge. Reporting
+# is best-effort (a failed reporter never blocks/parks/fails an issue) and
+# per-issue sequenced (each dispatch is awaited so comments post in lifecycle
+# order). These are structural, read off the workflow source.
+
+# The canonical milestone literals the engine must emit — the same grammar
+# `orchestrate.py` formats and SKILL.md documents.
+MILESTONE_LITERALS = (
+    "orchestrate: started #",
+    "orchestrate: implementation green #",
+    "orchestrate: verification cleared #",
+    "orchestrate: fix round ",
+    "orchestrate: parked #",
+)
+
+
+def test_reporter_schema_is_declared_and_minimal() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert re.search(r"^const REPORTER_SCHEMA = ", source, flags=re.MULTILINE), (
+        "the reporter needs its own minimal REPORTER_SCHEMA"
+    )
+    block = _agent_block(source, "REPORTER_SCHEMA")
+    assert "posted" in block, (
+        "REPORTER_SCHEMA must carry a `posted` flag so a swallowed best-effort "
+        "reporter can report whether the comment landed"
+    )
+
+
+def test_reporter_agent_is_mechanical_comment_only_and_not_worktree_isolated() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "reporter")
+
+    # Mechanical tier — the cheapest, like preflight and integrate.
+    assert "roleTuning(roles.mechanical)" in block, (
+        "the reporter must be a mechanical-tier sub-agent"
+    )
+    # It carries REPORTER_SCHEMA.
+    assert "REPORTER_SCHEMA" in block, "the reporter must use REPORTER_SCHEMA"
+    # It posts a comment via gh — its sole authorized outward write.
+    assert "gh issue comment" in block, (
+        "the reporter must post its milestone with `gh issue comment`"
+    )
+    # It is comment-only: no code worktree.
+    assert "isolation: 'worktree'" not in block, (
+        "the reporter is comment-only — it must NOT be worktree-isolated"
+    )
+
+
+def test_reporter_prompt_forbids_close_push_merge() -> None:
+    # The reporter's sole write is a comment; it must be forbidden close/push/merge
+    # exactly as the worker constraint forbids them — via the shared constant.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "reporter")
+    reference = "${" + CONSTRAINTS_NAME + "}"
+    assert reference in block, (
+        "the reporter prompt must interpolate the shared AGENT_CONSTRAINTS so it "
+        "is forbidden to close, push, or merge"
+    )
+
+
+def test_engine_emits_the_canonical_milestone_grammar() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    for literal in MILESTONE_LITERALS:
+        assert literal in source, (
+            f"the engine must emit the canonical milestone literal {literal!r} "
+            f"(the same grammar orchestrate.py formats)"
+        )
+
+
+def test_reporter_dispatch_is_best_effort_and_swallows_failures() -> None:
+    # A failed/absent reporter must never block, park, or fail an issue. The
+    # engine wraps the dispatch in a best-effort helper that try/catches the
+    # reporter so an error is swallowed rather than propagated.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert re.search(r"^const report = ", source, flags=re.MULTILINE), (
+        "the engine needs a best-effort `report` wrapper around the reporter"
+    )
+    block = _agent_block(source, "report")
+    assert "try" in block and "catch" in block, (
+        "the `report` wrapper must try/catch the reporter dispatch so a failure "
+        "is swallowed and never blocks the issue"
+    )
+    assert "reporter(" in block, "the `report` wrapper must call the reporter"
+
+
+def test_reporter_dispatches_are_awaited_for_per_issue_sequencing() -> None:
+    # The engine must await each reporter dispatch so an issue's milestone comments
+    # post in lifecycle order (#50 reads the latest milestone to derive state).
+    source = WORKFLOW.read_text(encoding="utf-8")
+    assert "await report(" in source, (
+        "reporter dispatches must be awaited so per-issue milestones stay in "
+        "lifecycle order"
+    )
+
+
+def test_started_is_reported_only_after_a_dispatched_preflight() -> None:
+    # `started` is posted only for an issue preflight decided to DISPATCH — never
+    # for one it skipped as already-landed / already-open / stale (those `continue`
+    # before the started report is reached).
+    source = WORKFLOW.read_text(encoding="utf-8")
+    per_issue_idx = source.index("for (const number of")
+    finally_idx = source.index("finally {")
+    region = source[per_issue_idx:finally_idx]
+
+    started = "milestoneStarted("
+    assert region.count(started) == 1, (
+        "started must be reported exactly once in the per-issue loop"
+    )
+
+    # The started report sits AFTER the preflight decision and its skip branches,
+    # and BEFORE the build — so a skipped issue never reaches it.
+    started_idx = region.index(started)
+    assert started_idx > region.index("preflightDecision("), (
+        "started must be reported only after the preflight decision"
+    )
+    assert started_idx > region.index("'already-landed'"), (
+        "started must come after the already-landed skip branch (which continues)"
+    )
+    assert started_idx < region.index("buildAndVerify(number)"), (
+        "started must be reported before the build begins"
+    )
+
+
+def test_implementation_green_and_verification_cleared_are_mode_agnostic() -> None:
+    # The mid-run boundaries apply in BOTH merge and PR modes — they live in
+    # buildAndVerify, which carries no merge gating, not behind an `if (merge` guard.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "buildAndVerify")
+    assert "milestoneImplementationGreen(" in block, (
+        "buildAndVerify must report implementation green after the implementer goes green"
+    )
+    assert "milestoneVerificationCleared(" in block, (
+        "buildAndVerify must report verification cleared when the panel clears"
+    )
+    assert "milestoneFixRound(" in block, (
+        "buildAndVerify must report entering each fix round"
+    )
+
+
+def test_parked_milestone_is_reported_when_an_issue_dies() -> None:
+    # An issue that fails to integrate / is blocked / exhausts its fix rounds gets
+    # a durable `parked` milestone comment.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    per_issue_idx = source.index("for (const number of")
+    finally_idx = source.index("finally {")
+    region = source[per_issue_idx:finally_idx]
+    assert "milestoneParked(" in region, (
+        "a dispatched issue that dies must get a durable parked milestone comment"
+    )
