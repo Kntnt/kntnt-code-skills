@@ -107,9 +107,28 @@ const INTEGRATE_SCHEMA = {
   },
 }
 
+// What the mechanical preflight sub-agent returns (issue #49): the durable
+// idempotence state of one issue, gathered read-only, that `preflightDecision`
+// maps to a verdict. It changes nothing — it only reads `gh issue view`, checks
+// ancestry with `git merge-base --is-ancestor`, and reads any orchestrate PR's
+// state.
+const PREFLIGHT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['landedMarker', 'prMarker'],
+  properties: {
+    landedMarker: { type: 'boolean', description: 'A merge-mode `orchestrate: landed <sha> on <branch>, run <runId>` marker comment is present on the issue.' },
+    landedSha: { type: 'string', description: 'The SHA recorded by that landed-marker (informational; ancestry below is the deciding fact).' },
+    shaIsAncestor: { type: 'boolean', description: 'That SHA is an ancestor of the CURRENT default-branch tip (`git merge-base --is-ancestor <sha> <default>` exits 0). Distinguishes durably-landed work from a reverted/rebased-away marker.' },
+    prMarker: { type: 'boolean', description: 'A PR-mode `orchestrate: opened PR #<pr>, run <runId>` marker comment is present on the issue.' },
+    prOpen: { type: 'boolean', description: 'The pull request that PR-marker names is still OPEN (`gh pr view <pr> --json state`).' },
+    closed: { type: 'boolean', description: 'The issue itself is closed.' },
+  },
+}
+
 // `normalizeArgs`, `planIsEmpty`, `blockingFindings`, `unlandedPrerequisites`,
-// `roleTuning`, `shouldEscalateInSitu`, `withInSituHazard`, and
-// `isReconcilableConflict` are kept inline as
+// `roleTuning`, `shouldEscalateInSitu`, `withInSituHazard`,
+// `isReconcilableConflict`, and `preflightDecision` are kept inline as
 // plain internal `const`s because the Workflow harness rejects any top-level
 // `export` beyond the single leading `export const meta` and forbids a top-level
 // `import` — so this script cannot import them. Their tested source of truth is
@@ -338,6 +357,64 @@ const withInSituHazard = (lenses, hazard) => {
  */
 const isReconcilableConflict = (record) => record != null && record.status === 'parked' && record.conflict === true
 
+/**
+ * The preflight idempotence verdict for one issue (issue #49), computed PURELY
+ * from the facts a mechanical preflight sub-agent gathered — no I/O of its own.
+ * This is what makes a blind cross-session restart safe: an issue whose work
+ * already landed is never re-implemented, and a landed-marker whose commit is no
+ * longer on the default branch parks LOUDLY rather than rebuilding from zero.
+ * Workflow resume is same-session-only, so a relaunched run gets zero cache hits
+ * and re-runs the whole plan; this guard — not resume — is the safety net.
+ *
+ * `facts` is the preflight agent's structured result:
+ *   - `landedMarker`  a merge-mode `orchestrate: landed …` marker is present
+ *   - `landedSha`     the SHA that marker recorded (informational — the ancestry
+ *                     boolean already reflects it)
+ *   - `shaIsAncestor` that SHA is an ancestor of the CURRENT default-branch tip
+ *   - `prMarker`      a PR-mode `orchestrate: opened PR …` marker is present
+ *   - `prOpen`        that pull request is still open
+ *   - `closed`        the issue itself is closed (gathered for the record; the
+ *                     durable marker + its ancestry are the authoritative signal,
+ *                     so this field is not branched on here)
+ * `merge` is the run's mode (true = land on the default branch).
+ *
+ * Verdicts:
+ *   - `already-landed`       marker present AND its SHA is on the default branch
+ *                            → skip; the work is durably present.
+ *   - `landed-marker-stale`  marker present but its SHA is NOT on the default
+ *                            (reverted / rebased away / foreign history) → park
+ *                            loudly for a human; never rebuild.
+ *   - `already-open`         PR mode with an existing open orchestrate PR → the
+ *                            expected completed PR-mode state; benign skip.
+ *   - `dispatch`             no actionable marker → build normally.
+ *
+ * @param {{landedMarker?: boolean, landedSha?: string, shaIsAncestor?: boolean,
+ *   prMarker?: boolean, prOpen?: boolean, closed?: boolean}|null|undefined} facts
+ *   The preflight agent's gathered state, or nothing when it died (→ dispatch).
+ * @param {boolean} merge Whether the run lands on the default branch.
+ * @returns {'already-landed'|'landed-marker-stale'|'already-open'|'dispatch'} The
+ *   guard's verdict.
+ */
+const preflightDecision = (facts, merge) => {
+
+  // A landed marker is the strongest signal in either mode: its SHA's ancestry
+  // on the current default tip separates durably-present work from a marker
+  // whose commit was reverted or rebased away.
+  const f = facts || {}
+  if (f.landedMarker === true) {
+    return f.shaIsAncestor === true ? 'already-landed' : 'landed-marker-stale'
+  }
+
+  // PR mode only: an already-open orchestrate PR is the expected completed state
+  // for a previously-run issue, not a loud park.
+  if (merge !== true && f.prMarker === true && f.prOpen === true) {
+    return 'already-open'
+  }
+
+  return 'dispatch'
+
+}
+
 // Run options, with the conservative defaults the skill documents. Every field
 // is read off the normalized config, never off the raw `args` the harness
 // delivers as a JSON string.
@@ -537,6 +614,24 @@ const planOverlay = (mode, plan) => {
 
 }
 
+// The mechanical preflight idempotence check dispatched BEFORE an implementer
+// (issue #49): a read-only agent that gathers the issue's durable landing state
+// so a blind cross-session restart never re-implements already-landed work. It
+// changes nothing — no comment, no close, no push, no code — it only reads. The
+// engine feeds its structured result to `preflightDecision`. A dead preflight
+// (null) decodes to `dispatch` there, so the worst case is the pre-#49 behaviour
+// (a re-implement caught by verify), never a wrongful skip.
+const preflight = (number) =>
+  agent(
+    `Preflight idempotence check for GitHub issue #${number} ("${titleOf(number)}") — GATHER STATE ONLY, CHANGE NOTHING.\n` +
+      `This run may be a restart: a previous run (Workflow resume is same-session-only, so a relaunch re-runs the whole plan) may have already landed this issue. Before it is re-implemented, report the durable markers that exist so the engine can skip already-done work.\n` +
+      `1. Run \`gh issue view ${number} --comments\`. Look for the LATEST orchestrate landed-marker comment in the exact form \`orchestrate: landed <sha> on <branch>, run <runId>\` and/or the LATEST PR-marker \`orchestrate: opened PR #<pr>, run <runId>\`. Also read the issue's own open/closed state (set \`closed\`).\n` +
+      `2. If a landed-marker exists, set \`landedMarker\` true and \`landedSha\` to its <sha>, then run \`git merge-base --is-ancestor <sha> <the default branch>\` (exit 0 = ancestor): set \`shaIsAncestor\` to whether that SHA is an ancestor of the CURRENT default-branch tip. If no landed-marker exists, set \`landedMarker\` false.\n` +
+      `3. If a PR-marker exists, set \`prMarker\` true and run \`gh pr view <pr> --json state\`: set \`prOpen\` to whether that PR is still OPEN. If no PR-marker exists, set \`prMarker\` false.\n` +
+      `Report ONLY these facts. Do NOT implement, comment, close, push, merge, or modify anything.`,
+    { label: `preflight:#${number}`, phase: 'Implement', schema: PREFLIGHT_SCHEMA, ...roleTuning(roles.mechanical) },
+  )
+
 // Dispatch one implementer on its own worktree-isolated branch, test-first. It
 // consumes ADR-0002's additive "how" overlay — the run-level mode framing plus the
 // per-issue plan — layered onto the contract; when neither field is present the
@@ -695,12 +790,39 @@ const buildAndVerify = async (number) => {
 // to the feature branch's tip WITHOUT checking out the worktree-locked feature
 // branch. Integration is the one outward-facing, irreversible step.
 const integrate = async (record) => {
-  const action = merge
+
+  // The integrate step is the SOLE authorized outward mutator: alongside landing
+  // the change it posts the durable landed-marker and (merge mode) closes the
+  // issue — the narrow exception ADR-0005 carves, because the orchestrator is
+  // blocked on the one Workflow call mid-run and the engine has no I/O. This is
+  // gated to a REAL issue: the integration hotfix reuses `integrate` with
+  // `number: 0`, which must post no marker and close nothing.
+  const isRealIssue = record.number > 0
+
+  // How the agent sources each field of the canonical marker. The runId is not
+  // an engine arg (the orchestrator only learns it AFTER launch), so the agent
+  // discovers it from the run's own worktree scaffolding branches, which the
+  // harness names `worktree-<runId>-<n>`; failing that it uses `unknown`, which
+  // the tolerant `parse_landed_marker` still accepts as valid provenance.
+  const runIdHint = `this run's id — discover it from the run's worktree scaffolding branches, named \`worktree-<runId>-<n>\`: run \`git branch --list 'worktree-*'\` and take the \`<runId>\` segment; if none is discoverable use \`unknown\``
+
+  // Compose the mode-specific marker+close instruction, gated to a real issue: in
+  // merge mode post the landed-marker and close; in PR mode post the PR-marker and
+  // leave the issue open; for the number:0 hotfix reuse, nothing.
+  const markerStep = merge
+    ? (isRealIssue
+        ? ` Once the fast-forward has landed the change, record the landing durably and CLOSE the issue — the ONE outward write integrate is authorized to make, and nothing else. Post a comment on issue #${record.number} in EXACTLY this canonical form: \`orchestrate: landed <sha> on <branch>, run <runId>\` — substitute <sha> with the landed commit SHA (\`git rev-parse HEAD\` on the default branch after the fast-forward), <branch> with the default branch name, and <runId> with ${runIdHint}. Post it with \`gh issue comment ${record.number} --body '<the marker>'\`. THEN close the issue with \`gh issue close ${record.number}\`: the verify-then-integrate floor is satisfied at this exact moment — the branch cleared INDEPENDENT verification AND has now integrated — so closing here is correct.`
+        : ``)
+    : (isRealIssue
+        ? ` After opening the pull request, record it durably (do NOT close the issue — PR mode leaves it open): post a comment on issue #${record.number} in EXACTLY this form: \`orchestrate: opened PR #<pr>, run <runId>\` — substitute <pr> with the opened PR number and <runId> with ${runIdHint}. Post it with \`gh issue comment ${record.number} --body '<the marker>'\`.`
+        : ``)
+
+  const action = (merge
     ? `Land branch ${record.branch} on the default branch by fast-forwarding the DEFAULT branch to that branch's tip, WITHOUT ever checking out ${record.branch}. ${record.branch} is still checked out in the implementer's (or a fix round's) persisted worktree, and git refuses to check out one branch in two worktrees at once, so checking it out here would fail mechanically for a non-conflict reason. From the default branch, run \`git merge --ff-only ${record.branch}\` — this advances the default to the feature tip and creates NO merge commit. ` +
       `Keep the integrated history LINEAR: NEVER merge the default branch INTO the feature branch, and NEVER create a merge commit on the feature branch. ` +
       `${record.branch} was created FRESH off the then-current default tip (the implementer forks off the up-to-date default), and in this serial integrate-immediately design issues land one at a time, so nothing has landed on the default since ${record.branch} was cut: it is already a fast-forward ahead of the default and \`--ff-only\` succeeds with no rebase replay. Only in the rare case the default moved under the feature branch anyway will the fast-forward be refused; that is the one case a genuine rebase is needed — perform it WITHOUT checking out ${record.branch} while a worktree still holds it: free that worktree first with \`git worktree remove --force <path>\` (which KEEPS the branch ref), exactly as the fix-round handoff does, then rebase ${record.branch} onto the default and fast-forward the default to its tip. That rebase checks ${record.branch} out in THIS worktree — the main, un-isolated, only default-branch checkout — so when the fast-forward is done, return this worktree to the default branch (\`git checkout <default>\`), leaving integrate on the default branch and never stranded on ${record.branch}. ` +
       `If a genuine conflict makes that rebase unsafe to resolve, do NOT merge — report it as a blocker AND set \`conflict: true\` in your result, so the run can attempt a bounded reconcile of this verified branch; for any other, non-conflict failure set \`conflict: false\` or omit it.`
-    : `Open a pull request for branch ${record.branch} against the default branch. Do NOT merge.`
+    : `Open a pull request for branch ${record.branch} against the default branch. Do NOT merge.`) + markerStep
   const result = await agent(
     `Integrate issue #${record.number} ("${record.title}"). ${action} Report what you did in one line.`,
     { label: `integrate:#${record.number}`, phase: 'Integrate', schema: INTEGRATE_SCHEMA, ...roleTuning(roles.mechanical) },
@@ -951,6 +1073,40 @@ try {
         continue
       }
 
+      // Preflight idempotence guard (#49): BEFORE dispatching an implementer,
+      // a mechanical preflight agent gathers the issue's durable landing state
+      // and `preflightDecision` maps it to a verdict, so a blind cross-session
+      // restart (Workflow resume is same-session-only — a relaunch re-runs the
+      // whole plan) never re-implements work that already landed. A dead
+      // preflight decodes to `dispatch`, so its failure only ever falls back to
+      // the pre-#49 behaviour, never a wrongful skip.
+      const facts = await preflight(number)
+      const verdict = preflightDecision(facts, merge)
+      if (verdict === 'already-landed') {
+        const note = `already landed on the default branch (durable marker${facts?.landedSha ? ` ${facts.landedSha}` : ''}); no implementer dispatched`
+        log(`#${number}: ${note} — skipping`)
+        verdicts.push(toRecord(number, null, 'already-landed', note))
+        // Its work is PROVEN on the default tip (the preflight ancestry check),
+        // so it is on the base a dependent forks from in EITHER mode — unblock
+        // its dependents unconditionally, unlike a this-run integration (which
+        // lands on the base only in merge mode) or an already-open PR (never on
+        // the base).
+        landed.add(number)
+        continue
+      }
+      if (verdict === 'landed-marker-stale') {
+        const reason = `landed-marker present${facts?.landedSha ? ` (${facts.landedSha})` : ''} but its commit is NOT an ancestor of the default tip — reverted, rebased away, or foreign history; parked for a human to reconcile, never rebuilt (#49)`
+        log(`#${number}: ${reason}`)
+        parked.push({ ...toRecord(number, null, 'landed-marker-stale', ''), blockers: [reason] })
+        continue
+      }
+      if (verdict === 'already-open') {
+        const note = `an orchestrate-opened pull request already exists for this issue (PR mode); skipped without opening a duplicate (#49)`
+        log(`#${number}: ${note}`)
+        verdicts.push(toRecord(number, null, 'already-open', note))
+        continue
+      }
+
       // Build + independently verify this one issue (worktree-isolated).
       const record = await buildAndVerify(number)
 
@@ -1003,7 +1159,8 @@ try {
   // MANDATORY final integration review. A per-issue verifier sees one issue in
   // isolation and structurally cannot catch a cross-issue defect across the
   // combined change set. So whenever the run produced at least one integrated
-  // issue (verdicts.length > 0 — the only case a combined change set exists), one
+  // issue THIS run (integratedThisRun — the only case a combined change set
+  // exists; a preflight skip carries no branch and does not count), one
   // adversarial reviewer examines it with a verifier's full rigor (the reviewer
   // is mode-aware: the combined diff on the default branch in merge mode, the
   // union of the run's feature branches in PR mode), and its clear decision runs
@@ -1018,8 +1175,14 @@ try {
   // silently cleared or dropped. This sits after the wave loop but INSIDE the
   // teardown try, and before the finally, so teardown still fires and any hotfix
   // worktree is torn down too.
-  if (verdicts.length > 0) {
-    let review = await integrationReview(verdicts)
+  // The review covers only what THIS run actually integrated — records that
+  // produced a feature branch. A preflight skip (already-landed / already-open,
+  // #49) carries no branch: its work is prior, not part of this run's combined
+  // change set, so it must neither trigger the review nor pollute the PR-mode
+  // branch union with an `undefined` entry.
+  const integratedThisRun = verdicts.filter((verdict) => verdict.branch)
+  if (integratedThisRun.length > 0) {
+    let review = await integrationReview(integratedThisRun)
     let findings = blockingFindings(review ? [review] : [])
 
     // Bounded hotfix loop — MERGE MODE ONLY (the `merge &&` guard). Address ONLY
@@ -1058,7 +1221,7 @@ try {
         parked.push(hotfixIntegration)
         break
       }
-      review = await integrationReview(verdicts)
+      review = await integrationReview(integratedThisRun)
       findings = blockingFindings(review ? [review] : [])
     }
 

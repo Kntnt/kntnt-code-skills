@@ -1110,16 +1110,24 @@ def test_integration_review_is_gated_on_verdicts_and_uses_blocking_findings() ->
     # clear decision goes through the #17 blockingFindings helper so a dead or
     # not-clear review cannot pass silently.
     source = WORKFLOW.read_text(encoding="utf-8")
-    guard = "if (verdicts.length > 0)"
+    # The review is gated on THIS run's real integrations — records that produced a
+    # branch — so a preflight skip (already-landed / already-open, #49) carries no
+    # branch and neither triggers the review nor pollutes the PR-mode branch union.
+    assert "verdicts.filter((verdict) => verdict.branch)" in source, (
+        "the integration review must be driven by this run's branch-producing "
+        "integrations, not by every verdict (a preflight skip has no branch)"
+    )
+    guard = "if (integratedThisRun.length > 0)"
     assert guard in source, (
-        "the integration review must be gated on verdicts.length > 0 (a combined "
-        "diff exists only when the run integrated at least one issue)"
+        "the integration review must be gated on integratedThisRun.length > 0 (a "
+        "combined diff exists only when the run integrated at least one issue)"
     )
     guard_idx = source.index(guard)
     finally_idx = source.index("finally {")
     region = source[guard_idx:finally_idx]
-    assert "integrationReview(" in region, (
-        "the integration review must be dispatched in the post-wave region"
+    assert "integrationReview(integratedThisRun)" in region, (
+        "the integration review must be dispatched over integratedThisRun in the "
+        "post-wave region"
     )
     assert "blockingFindings(" in region, (
         "the integration review's clear decision must go through blockingFindings, "
@@ -1152,7 +1160,7 @@ def test_integration_review_runs_after_wave_loop_and_before_teardown() -> None:
     # down too.
     source = WORKFLOW.read_text(encoding="utf-8")
     wave_loop_idx = source.index("for (let index = 0; index < waves.length")
-    guard_idx = source.index("if (verdicts.length > 0)")
+    guard_idx = source.index("if (integratedThisRun.length > 0)")
     finally_idx = source.index("finally {")
     try_idx = source.rindex("try {", 0, finally_idx)
     assert try_idx < wave_loop_idx < guard_idx < finally_idx, (
@@ -1204,7 +1212,7 @@ def test_integration_hotfix_loop_is_bounded_by_a_cap() -> None:
         r"const maxIntegrationRounds = config\.maxIntegrationRounds \?\?", source
     ), "the hotfix loop must be bounded by a documented maxIntegrationRounds cap"
 
-    guard_idx = source.index("if (verdicts.length > 0)")
+    guard_idx = source.index("if (integratedThisRun.length > 0)")
     finally_idx = source.index("finally {")
     region = source[guard_idx:finally_idx]
     assert "integrationHotfix(" in region, (
@@ -1225,7 +1233,7 @@ def test_integration_hotfix_loop_is_gated_on_merge_mode() -> None:
     # auto-hotfixed — matching the conservative leave-the-merge-to-you posture. So
     # the hotfix loop header must gate on `merge`.
     source = WORKFLOW.read_text(encoding="utf-8")
-    guard_idx = source.index("if (verdicts.length > 0)")
+    guard_idx = source.index("if (integratedThisRun.length > 0)")
     finally_idx = source.index("finally {")
     region = source[guard_idx:finally_idx]
     loop_idx = region.index("for (let round = 1;")
@@ -1240,7 +1248,7 @@ def test_unresolved_integration_finding_is_parked_not_dropped() -> None:
     # When the cap is hit with the review still not clear, the unresolved finding
     # must be recorded into the report (parked), never silently dropped.
     source = WORKFLOW.read_text(encoding="utf-8")
-    guard_idx = source.index("if (verdicts.length > 0)")
+    guard_idx = source.index("if (integratedThisRun.length > 0)")
     finally_idx = source.index("finally {")
     region = source[guard_idx:finally_idx]
     assert "parked.push(" in region, (
@@ -1607,14 +1615,25 @@ def test_only_integrated_issues_enter_the_landed_set() -> None:
     assert "const landed = new Set()" in source, (
         "the engine must declare a `landed` set to track integrated issues"
     )
-    assert source.count("landed.add(") == 1, (
-        "the engine must add to `landed` in exactly one place — the successful "
-        "integration path — so a parked issue never counts as landed"
+    # Since #49 there are exactly TWO legitimate add-sites, both on a non-parked
+    # path that pushes to `verdicts`: the successful-integration path
+    # (`landed.add(integrated.number)`), and the preflight already-landed skip
+    # (`landed.add(number)`, whose work is durably on the base from a prior run).
+    # No parked path may add.
+    assert source.count("landed.add(") == 2, (
+        "the engine must add to `landed` in exactly two places — the successful "
+        "integration path and the preflight already-landed skip — so a parked "
+        "issue never counts as landed"
     )
     push_idx = source.index("verdicts.push(integrated)")
     assert "landed.add(" in source[push_idx : push_idx + 140], (
         "an issue must be marked landed on the same path that pushes it to "
         "verdicts — the successful-integration path"
+    )
+    already_idx = source.index("verdict === 'already-landed'")
+    assert "landed.add(number)" in source[already_idx : already_idx + 800], (
+        "a preflight already-landed skip must mark the issue landed on the same "
+        "path that pushes it to verdicts, so its dependents may proceed"
     )
 
 
@@ -1792,14 +1811,32 @@ def test_only_merge_mode_marks_a_prerequisite_landed() -> None:
     # single-add / on-the-done-branch invariants stay pinned by
     # test_only_integrated_issues_enter_the_landed_set.)
     source = WORKFLOW.read_text(encoding="utf-8")
-    assert source.count("landed.add(") == 1, (
-        "the engine must still add to `landed` in exactly one place"
+    assert source.count("landed.add(") == 2, (
+        "the engine must add to `landed` in exactly two places (#49): the "
+        "integration path and the preflight already-landed skip"
     )
-    condition = _enclosing_if_condition(source, "landed.add(").strip()
-    assert condition == "merge", (
-        "the sole `landed.add(` must be guarded by exactly `merge` (not a widened "
-        "`merge || …` escape hatch) so a PR-opened issue is never treated as landed "
-        f"onto the base — in PR mode nothing merges; found guard `{condition}`"
+    # The THIS-RUN integration site must be guarded by EXACTLY `merge`: only a
+    # merge-mode run puts the issue on the base. In PR mode integrate only opens a
+    # PR (and the preflight already-open skip never lands), so a PR-opened issue
+    # must never enter `landed`, or a dependent would build on a base missing it —
+    # the #23 bug. (Not a widened `merge || …` escape hatch.)
+    integration_guard = _enclosing_if_condition(
+        source, "landed.add(integrated.number)"
+    ).strip()
+    assert integration_guard == "merge", (
+        "the this-run integration `landed.add(integrated.number)` must be guarded "
+        f"by exactly `merge`; found guard `{integration_guard}`"
+    )
+    # The preflight already-landed site, by contrast, is UNCONDITIONAL w.r.t. mode:
+    # the ancestry check already PROVED the work is on the default tip, so it is on
+    # the base a dependent forks from in either mode. Its nearest enclosing guard is
+    # therefore the verdict branch, NOT `merge` — a PR-mode restart over prior
+    # merge-landed work still unblocks that work's dependents (spec finding #49-c).
+    already_landed_guard = _enclosing_if_condition(source, "landed.add(number)").strip()
+    assert already_landed_guard == "verdict === 'already-landed'", (
+        "the preflight already-landed `landed.add(number)` must be unconditional "
+        "w.r.t. merge (ancestry proved it is on the base in either mode); its "
+        f"enclosing guard must be the verdict branch, found `{already_landed_guard}`"
     )
 
 
@@ -2885,3 +2922,194 @@ def test_reverify_findings_stays_keyed_to_the_finding_not_the_suggestion() -> No
         "advisory suggestedFix — the fix is judged by whether the finding is "
         "resolved, not whether the suggestion was followed"
     )
+
+
+# --- preflight idempotence guard + durable landed-markers (issue #49) ---------
+#
+# A blind cross-session restart (Workflow resume is same-session-only, so a
+# relaunch re-runs the whole plan) must never re-implement work that already
+# landed. The guard is: (1) integrate posts a durable landed-marker and closes
+# the issue at integrate time (merge mode); (2) a mechanical preflight sub-agent
+# gathers each issue's durable state before dispatch; (3) the pure
+# `preflightDecision` maps those facts to a verdict the wave loop branches on.
+# `preflightDecision` lives in engine-helpers.mjs (drift-guarded against its
+# inline workflow copy by test_inline_copies_match_engine_helpers) and is
+# exercised behaviourally here through node.
+
+
+def test_engine_helpers_exports_preflight_decision() -> None:
+    helpers = ENGINE_HELPERS.read_text(encoding="utf-8")
+    names = _exported_const_names(helpers)
+    assert "preflightDecision" in names, (
+        "engine-helpers.mjs must export `preflightDecision` as the tested source "
+        "of truth for the #49 idempotence guard verdict"
+    )
+
+
+_PREFLIGHT_HARNESS = """
+import { preflightDecision } from "__MODULE_URL__";
+const out = {
+  // Marker present and its SHA is on the default branch -> already-landed.
+  landed_ancestor_merge: preflightDecision({ landedMarker: true, landedSha: 'abc', shaIsAncestor: true }, true),
+  landed_ancestor_pr: preflightDecision({ landedMarker: true, landedSha: 'abc', shaIsAncestor: true }, false),
+  // Marker present but SHA NOT an ancestor -> landed-marker-stale (never rebuild).
+  landed_not_ancestor: preflightDecision({ landedMarker: true, landedSha: 'abc', shaIsAncestor: false }, true),
+  // PR mode with an existing open orchestrate PR -> already-open (benign skip).
+  pr_open_pr_mode: preflightDecision({ landedMarker: false, prMarker: true, prOpen: true }, false),
+  // A PR marker in MERGE mode is not the completed state -> dispatch.
+  pr_open_merge_mode: preflightDecision({ landedMarker: false, prMarker: true, prOpen: true }, true),
+  // A PR marker whose PR is closed is not an open PR -> dispatch.
+  pr_closed_pr_mode: preflightDecision({ landedMarker: false, prMarker: true, prOpen: false }, false),
+  // No marker at all -> dispatch normally.
+  no_marker: preflightDecision({ landedMarker: false, prMarker: false }, true),
+  // A dead preflight (null facts) decodes safely to dispatch.
+  null_facts: preflightDecision(null, true),
+};
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_preflight_decision_behaviour() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    harness = _PREFLIGHT_HARNESS.replace(
+        "__MODULE_URL__", ENGINE_HELPERS.resolve().as_uri()
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+
+    # The four documented verdicts, each exercised.
+    assert out["landed_ancestor_merge"] == "already-landed"
+    assert out["landed_ancestor_pr"] == "already-landed", (
+        "a landed marker whose SHA is on the default is already-landed in either "
+        "mode — a prior merge-mode landing is durable regardless of this run's mode"
+    )
+    assert out["landed_not_ancestor"] == "landed-marker-stale", (
+        "a marker whose SHA is not an ancestor of the default tip must park stale, "
+        "never rebuild"
+    )
+    assert out["pr_open_pr_mode"] == "already-open"
+    assert out["pr_open_merge_mode"] == "dispatch", (
+        "an open PR is the completed state only in PR mode; a merge-mode run must "
+        "still land the change"
+    )
+    assert out["pr_closed_pr_mode"] == "dispatch", (
+        "a PR marker whose PR is no longer open is not the completed state"
+    )
+    assert out["no_marker"] == "dispatch"
+    assert out["null_facts"] == "dispatch", (
+        "a dead preflight must fall back to normal dispatch, never a wrongful skip"
+    )
+
+
+def test_preflight_agent_is_read_only_and_changes_nothing() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "preflight")
+
+    # It gathers state with the exact commands the ticket names and is explicitly
+    # forbidden from mutating anything — no worktree, no code, no comment, no close.
+    assert "gh issue view" in block, "preflight must read the issue and its comments"
+    assert "git merge-base --is-ancestor" in block, (
+        "preflight must check the landed SHA's ancestry on the default tip"
+    )
+    assert "isolation: 'worktree'" not in block, (
+        "preflight is read-only and needs no worktree"
+    )
+    lowered = block.lower()
+    assert "change nothing" in lowered or "gather state only" in lowered, (
+        "preflight must be told to change nothing"
+    )
+    assert "PREFLIGHT_SCHEMA" in block, (
+        "preflight must return the structured PREFLIGHT_SCHEMA facts"
+    )
+
+
+def test_wave_loop_runs_preflight_before_dispatch_and_branches() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    loop_idx = source.index("for (const number of")
+    build_idx = source.index("const record = await buildAndVerify(number)")
+    region = source[loop_idx:build_idx]
+
+    # The preflight agent runs, its facts drive preflightDecision, and every one of
+    # the three skip verdicts is branched on BEFORE any implementer is dispatched.
+    assert "await preflight(number)" in region, (
+        "the wave loop must dispatch the preflight agent before buildAndVerify"
+    )
+    assert "preflightDecision(facts, merge)" in region
+    for verdict in ("already-landed", "landed-marker-stale", "already-open"):
+        assert f"verdict === '{verdict}'" in region, (
+            f"the wave loop must branch on the `{verdict}` preflight verdict "
+            f"before dispatching an implementer"
+        )
+
+
+def test_stale_marker_is_parked_never_rebuilt() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    loop_idx = source.index("for (const number of")
+    build_idx = source.index("const record = await buildAndVerify(number)")
+    region = source[loop_idx:build_idx]
+
+    # The stale-marker branch must park (push to `parked`) and `continue` — it must
+    # NOT fall through to buildAndVerify, or it would rebuild landed work from zero.
+    stale_idx = region.index("verdict === 'landed-marker-stale'")
+    stale_block = region[stale_idx : stale_idx + 700]
+    assert "parked.push(" in stale_block, "a stale marker must be parked"
+    assert "continue" in stale_block, (
+        "the stale-marker branch must `continue`, never fall through to a rebuild"
+    )
+
+
+def test_integrate_posts_landed_marker_and_closes_in_merge_mode() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrate")
+
+    # Merge mode: the canonical landed-marker template and the close command, both
+    # keyed to the real issue number.
+    assert "orchestrate: landed <sha> on <branch>, run <runId>" in block, (
+        "integrate must post the canonical landed-marker in merge mode"
+    )
+    assert "gh issue close ${record.number}" in block, (
+        "integrate must close the issue at integrate time in merge mode (D1)"
+    )
+    # PR mode: the symmetric PR marker, and NO close.
+    assert "orchestrate: opened PR #<pr>, run <runId>" in block, (
+        "integrate must post the PR marker in PR mode"
+    )
+    assert "gh issue comment ${record.number}" in block, (
+        "integrate posts the marker as an issue comment"
+    )
+
+
+def test_integrate_marker_and_close_are_gated_to_a_real_issue() -> None:
+    # `integrate` is reused for the integration hotfix with `number: 0`, which must
+    # post NO marker and close NOTHING. The marker/close step is gated on a real
+    # issue number, so the hotfix reuse never comments on or closes issue #0.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrate")
+    assert "record.number > 0" in block, (
+        "the marker+close step must be gated to a real issue (record.number > 0) "
+        "so the integration-hotfix reuse (number: 0) posts no marker and closes "
+        "nothing"
+    )
+
+
+def test_integration_review_and_hotfix_never_reopen_a_closed_issue() -> None:
+    # AC-11: a cross-issue defect found by the finalize integration review is
+    # handled at RUN level — a hotfix branch off the default — and must never
+    # reopen an already-closed issue. Neither the review nor the hotfix prompt may
+    # reopen an issue; issues stay closed.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    for name in ("integrationReview", "integrationHotfix"):
+        block = _agent_block(source, name)
+        assert "reopen" not in block.lower(), (
+            f"the `{name}` prompt must never reopen an issue — a cross-issue "
+            f"finding is handled at run level, not by reopening closed issues"
+        )

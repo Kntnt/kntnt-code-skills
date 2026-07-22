@@ -175,6 +175,21 @@ DONE = "done"
 PARKED = "parked"
 BLOCKED = "blocked"
 
+# The statuses the preflight idempotence guard (issue #49) emits so a blind
+# cross-session restart never re-implements already-landed work. ALREADY_LANDED
+# (merge mode: the work is durably on the default branch) and ALREADY_OPEN (PR
+# mode: an orchestrate PR already exists) are completed/expected states, reported
+# as complete rather than as blockers. LANDED_MARKER_STALE (a landed-marker whose
+# commit is no longer an ancestor of the default tip) is parked loudly for a
+# human to reconcile — never silently rebuilt.
+ALREADY_LANDED = "already-landed"
+ALREADY_OPEN = "already-open"
+LANDED_MARKER_STALE = "landed-marker-stale"
+
+# The completed/expected statuses the report presents as "already complete"
+# rather than as shipped-this-run or as blockers.
+SKIPPED_COMPLETE = (ALREADY_LANDED, ALREADY_OPEN)
+
 # How a changed path is recognised as test code, across the languages the
 # standard covers: a directory segment that conventionally holds tests, or a
 # filename that conventionally names one. A project with an unusual layout can
@@ -881,6 +896,92 @@ def risk_label(labels: Iterable[str]) -> str | None:
     return max(found, key=lambda level: RISK_RANK[level])
 
 
+# The canonical durable landed-marker (issue #49) — the machine-readable comment
+# the integrate step posts on an issue to record its landing, and the tolerant
+# parser that reads it back. Two verbs share one fixed-prefix, positional shape
+# so #48's richer milestone vocabulary can extend the same pair: `landed` (merge
+# mode — the change is on the default branch, and the issue is closed at integrate
+# time, D1) and `opened PR` (PR mode — a pull request was opened, the issue stays
+# open). No timestamp is embedded: the GitHub comment's own metadata carries it.
+# The `orchestrate:` prefix scopes the marker so unrelated prose never parses as
+# one. A branch name carries no whitespace or comma, so `[^\s,]+` fences the
+# branch field off from the `, run` tail without a greedy over-reach.
+LANDED_MARKER_PREFIX = "orchestrate:"
+LANDED_MARKER_RE = re.compile(
+    r"orchestrate:\s+landed\s+(?P<sha>[0-9a-fA-F]+)\s+on\s+(?P<branch>[^\s,]+)"
+    r",\s+run\s+(?P<run_id>\S+)"
+)
+PR_MARKER_RE = re.compile(
+    r"orchestrate:\s+opened\s+PR\s+#(?P<pr>\d+),\s+run\s+(?P<run_id>\S+)"
+)
+
+
+@dataclass
+class Marker:
+    """A parsed orchestrate landed-marker (issue #49).
+
+    `verb` is `"landed"` (merge mode) or `"opened-pr"` (PR mode). The `sha` and
+    `branch` fields carry the landing point of a `landed` marker; `pr` carries
+    the pull-request number of an `opened-pr` marker; `run_id` is the originating
+    run for both. The unused fields stay None so the shape extends cleanly to
+    #48's richer milestone vocabulary.
+    """
+
+    verb: str
+    run_id: str
+    sha: str | None = None
+    branch: str | None = None
+    pr: int | None = None
+
+
+def format_landed_marker(sha: str, branch: str, run_id: str) -> str:
+    """Render the canonical merge-mode landed-marker the integrate step posts.
+
+    The exact positional form `orchestrate: landed <sha> on <branch>, run
+    <runId>`, the single source of truth `parse_landed_marker` reads back and the
+    SKILL template the consistency test binds to (issue #49)."""
+
+    return f"{LANDED_MARKER_PREFIX} landed {sha} on {branch}, run {run_id}"
+
+
+def format_pr_marker(pr: int, run_id: str) -> str:
+    """Render the canonical PR-mode marker the integrate step posts when it opens
+    a pull request rather than landing on the default branch — `orchestrate:
+    opened PR #<pr>, run <runId>` (issue #49)."""
+
+    return f"{LANDED_MARKER_PREFIX} opened PR #{pr}, run {run_id}"
+
+
+def parse_landed_marker(comment_body: str) -> Marker | None:
+    """Read an orchestrate marker back out of a comment body, tolerantly.
+
+    Returns the parsed `Marker` for the first `landed` or `opened PR` marker the
+    body carries — even when it sits amid other prose — or None when the body
+    holds no well-formed marker. A truncated or malformed marker (a bare prefix,
+    a missing positional field) resolves to None rather than a partial Marker, so
+    the preflight guard never acts on a half-read landing (issue #49)."""
+
+    text = comment_body or ""
+
+    # A merge-mode landing takes precedence: its SHA drives the preflight
+    # ancestry check that separates durably-present work from a reverted marker.
+    landed = LANDED_MARKER_RE.search(text)
+    if landed is not None:
+        return Marker(
+            verb="landed",
+            run_id=landed["run_id"],
+            sha=landed["sha"],
+            branch=landed["branch"],
+        )
+
+    # A PR-mode marker records only the opened pull request; the issue stays open.
+    pr = PR_MARKER_RE.search(text)
+    if pr is not None:
+        return Marker(verb="opened-pr", run_id=pr["run_id"], pr=int(pr["pr"]))
+
+    return None
+
+
 @dataclass
 class RigorResult:
     """The verification rigor derived for one issue: the `lenses` its verifier
@@ -1260,16 +1361,24 @@ def render_report(verdicts: list[Verdict]) -> str:
     parked or blocked issues — the order the operating contract prescribes."""
 
     done = [v for v in verdicts if v.status == DONE]
+    skipped = [v for v in verdicts if v.status in SKIPPED_COMPLETE]
     parked = [v for v in verdicts if v.status == PARKED]
     blocked = [v for v in verdicts if v.status == BLOCKED]
-    other = [v for v in verdicts if v.status not in (DONE, PARKED, BLOCKED)]
+    other = [
+        v
+        for v in verdicts
+        if v.status not in (DONE, *SKIPPED_COMPLETE, PARKED, BLOCKED)
+    ]
 
     lines: list[str] = ["# Orchestration report", ""]
 
-    # Lead with the headline counts so the outcome is legible at a glance.
+    # Lead with the headline counts so the outcome is legible at a glance. The
+    # already-complete count (preflight-skipped, #49) sits between shipped and
+    # parked, so a restart's skipped work is visible without being miscounted as
+    # shipped this run or as a blocker.
     lines.append(
-        f"{len(done)} done and green · {len(parked)} parked · "
-        f"{len(blocked)} blocked · {len(verdicts)} total"
+        f"{len(done)} done and green · {len(skipped)} already complete · "
+        f"{len(parked)} parked · {len(blocked)} blocked · {len(verdicts)} total"
     )
     lines.append("")
 
@@ -1284,6 +1393,20 @@ def render_report(verdicts: list[Verdict]) -> str:
     else:
         lines.append("- Nothing shipped.")
     lines.append("")
+
+    # Work the preflight guard skipped as already complete (#49): merge-mode
+    # issues already landed on the default branch, and PR-mode issues whose
+    # orchestrate PR already exists. Present only when a restart actually skipped
+    # something, so a normal run's report is unchanged.
+    if skipped:
+        lines.append("## Already complete (skipped)")
+        lines.append("")
+        for verdict in skipped:
+            detail = f" — {verdict.verify}" if verdict.verify else ""
+            lines.append(
+                f"- #{verdict.number} {verdict.title} ({verdict.status}){detail}"
+            )
+        lines.append("")
 
     # The irreducibly human follow-ups, collapsed across every issue.
     remaining = dedupe(

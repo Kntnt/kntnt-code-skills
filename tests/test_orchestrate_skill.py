@@ -42,11 +42,22 @@ Run with: `uv run --with pytest pytest -q`
 
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILL_MD = REPO_ROOT / "skills" / "orchestrate" / "SKILL.md"
+
+# Load scripts/orchestrate.py by path so the marker-consistency test can bind the
+# SKILL-documented template to the real `parse_landed_marker` (issue #49).
+_SCRIPT = REPO_ROOT / "scripts" / "orchestrate.py"
+_spec = importlib.util.spec_from_file_location("orchestrate", _SCRIPT)
+assert _spec is not None and _spec.loader is not None
+orchestrate = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = orchestrate
+_spec.loader.exec_module(orchestrate)
 
 
 def _skill_text() -> str:
@@ -1034,4 +1045,157 @@ def test_verify_step_documents_the_conditional_consistency_lens() -> None:
     assert "only when" in build or "scoped to fire" in build or "no such" in build, (
         "the consistency lens must be explicitly conditional — it fires only "
         "when a shared symbol is touched, so an ordinary diff pays nothing extra"
+    )
+
+
+# --- durable landed-markers + interrupt-safe restart (issue #49) --------------
+
+
+def _restart_section() -> str:
+    """The '## Restarting a stopped run' section, up to '## Model and effort'."""
+
+    return _section(
+        _skill_text(),
+        r"^##\s+Restarting a stopped run",
+        r"^##\s+Model and effort",
+    )
+
+
+def test_skill_documents_the_landed_marker_templates_that_round_trip() -> None:
+    # AC: a consistency test binds the marker template SKILL.md tells the integrate
+    # step to post to the real `parse_landed_marker`. The exact canonical templates
+    # must appear in the skill, and substituting concrete values must round-trip
+    # through the parser — so the documented format can never drift from the code.
+    text = _skill_text()
+
+    landed_template = "orchestrate: landed <sha> on <branch>, run <runId>"
+    pr_template = "orchestrate: opened PR #<pr>, run <runId>"
+    assert landed_template in text, (
+        "SKILL.md must document the canonical landed-marker template verbatim"
+    )
+    assert pr_template in text, (
+        "SKILL.md must document the canonical PR-marker template verbatim"
+    )
+
+    # The documented template, with concrete values substituted, must parse.
+    landed = (
+        landed_template.replace("<sha>", "deadbeef")
+        .replace("<branch>", "main")
+        .replace("<runId>", "wf_consistency")
+    )
+    parsed = orchestrate.parse_landed_marker(landed)
+    assert parsed is not None and parsed.verb == "landed", (
+        "the landed-marker template SKILL tells integrate to post must round-trip "
+        "through parse_landed_marker"
+    )
+    assert parsed.sha == "deadbeef" and parsed.branch == "main"
+
+    pr = pr_template.replace("<pr>", "42").replace("<runId>", "wf_consistency")
+    parsed_pr = orchestrate.parse_landed_marker(pr)
+    assert parsed_pr is not None and parsed_pr.verb == "opened-pr", (
+        "the PR-marker template SKILL tells integrate to post must round-trip "
+        "through parse_landed_marker"
+    )
+    assert parsed_pr.pr == 42
+
+
+def test_skill_states_workflow_resume_is_same_session_only() -> None:
+    section = _restart_section()
+    lowered = section.lower()
+    assert "same-session" in lowered or "same session" in lowered, (
+        "the restart section must state Workflow resume is same-session-only"
+    )
+    assert "resumefromrunid" in lowered, (
+        "the restart section must name resumeFromRunId as the same-session-only "
+        "mechanism"
+    )
+
+
+def test_skill_prescribes_the_cross_session_restart_protocol() -> None:
+    section = _restart_section()
+    lowered = section.lower()
+    # Re-plan against reality, launch a fresh run over the remainder — never blind
+    # resume — and lean on the preflight guard for idempotence.
+    assert "orchestrate.py plan" in section, (
+        "the restart protocol must prescribe re-running orchestrate.py plan"
+    )
+    assert "never blind-resume" in lowered or "never blind resume" in lowered, (
+        "the restart protocol must forbid a blind cross-session resume"
+    )
+    assert "preflight" in lowered, (
+        "the restart protocol must point at the preflight idempotence guard as the "
+        "safety net"
+    )
+
+
+def test_skill_corrects_the_completion_notification_resume_advice() -> None:
+    # The completion-notification advice must no longer steer a cross-session
+    # operator into a silent full re-run: wherever the skill mentions resuming via
+    # runId, it must qualify it as same-session-only.
+    text = _skill_text()
+    assert "resumable via its `runId`" not in text, (
+        "the old unqualified 'resumable via its runId' claim must be corrected — it "
+        "led a cross-session operator into a silent full re-run"
+    )
+    # The build step must carry the same-session-only qualification.
+    build = _build_section()
+    assert "same-session-only" in build.lower(), (
+        "the build step must qualify Workflow resume as same-session-only"
+    )
+
+
+def test_skill_documents_close_at_integrate_and_the_narrow_exception() -> None:
+    text = _skill_text()
+    build = _build_section()
+    # Merge mode closes the issue at integrate time (D1), posting the durable marker.
+    assert "close" in build.lower() and "integrate" in build.lower(), (
+        "the build step must state the issue is closed at integrate time in merge mode"
+    )
+    # The narrow single-mutator exception is named (only integrate may close/mark).
+    lowered = text.lower()
+    assert "narrow exception" in lowered, (
+        "the skill must name the narrow integrate-only exception for the marker+close"
+    )
+
+
+# --- ADR-0005 (issue #49) -----------------------------------------------------
+
+ADR_0005 = (
+    REPO_ROOT / "docs" / "adr" / "0005-durable-landed-markers-and-close-at-integrate.md"
+)
+
+
+def test_adr0005_exists_and_amends_adr0001_by_reference() -> None:
+    assert ADR_0005.exists(), "ADR-0005 must exist"
+    text = ADR_0005.read_text(encoding="utf-8")
+    lowered = text.lower()
+
+    # It amends ADR-0001 §5/§7 by reference (not by rewriting them).
+    assert "adr-0001" in lowered or "0001" in text
+    assert "§5" in text and "§7" in text, (
+        "ADR-0005 must name the ADR-0001 sections it amends (§5 and §7)"
+    )
+
+    # It records the orchestrator-blocked-mid-run constraint and the narrow
+    # integrate-only exception.
+    assert "blocked on the single workflow call" in lowered, (
+        "ADR-0005 must capture the orchestrator-blocked-mid-run constraint that "
+        "forces the narrow integrate exception"
+    )
+    assert "narrow exception" in lowered or "single narrow exception" in lowered
+
+    # It records that the verify-then-integrate floor is preserved.
+    assert (
+        "floor is preserved" in lowered
+        or "floor holds" in lowered
+        or ("verify-then-integrate floor is preserved" in lowered)
+    ), "ADR-0005 must state the inviolable floor is preserved"
+
+
+def test_adr0001_header_notes_the_adr0005_amendment() -> None:
+    text = (REPO_ROOT / "docs" / "adr" / "0001-orchestrate-control-model.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Amended by [ADR-0005]" in text, (
+        "ADR-0001's header must cross-reference the ADR-0005 amendment"
     )

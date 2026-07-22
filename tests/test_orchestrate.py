@@ -1002,6 +1002,67 @@ def test_dedupe_preserves_first_seen_order_and_drops_blanks() -> None:
     assert orchestrate.dedupe(["B", "a", "A", "", "  ", "b"]) == ["B", "a"]
 
 
+# --- durable landed-markers (issue #49) --------------------------------------
+
+
+def test_format_landed_marker_is_the_canonical_positional_form() -> None:
+    # The merge-mode marker the integrate step posts: fixed prefix, positional,
+    # no embedded timestamp (the comment's own metadata carries it).
+    marker = orchestrate.format_landed_marker("deadbeef", "main", "wf_abc123")
+    assert marker == "orchestrate: landed deadbeef on main, run wf_abc123"
+
+
+def test_format_pr_marker_is_the_canonical_pr_form() -> None:
+    # The PR-mode marker: a symmetric lighter form recording the opened PR.
+    marker = orchestrate.format_pr_marker(42, "wf_abc123")
+    assert marker == "orchestrate: opened PR #42, run wf_abc123"
+
+
+def test_landed_marker_round_trips_through_the_parser() -> None:
+    marker = orchestrate.format_landed_marker("a1b2c3d4", "trunk", "wf_x9")
+    parsed = orchestrate.parse_landed_marker(marker)
+    assert parsed is not None
+    assert parsed.verb == "landed"
+    assert parsed.sha == "a1b2c3d4"
+    assert parsed.branch == "trunk"
+    assert parsed.run_id == "wf_x9"
+    assert parsed.pr is None
+
+
+def test_pr_marker_round_trips_through_the_parser() -> None:
+    marker = orchestrate.format_pr_marker(7, "wf_y2")
+    parsed = orchestrate.parse_landed_marker(marker)
+    assert parsed is not None
+    assert parsed.verb == "opened-pr"
+    assert parsed.pr == 7
+    assert parsed.run_id == "wf_y2"
+    assert parsed.sha is None
+    assert parsed.branch is None
+
+
+def test_parse_landed_marker_finds_the_marker_embedded_in_a_comment() -> None:
+    # The parser is tolerant: a marker line inside a larger comment body still
+    # resolves, so a marker posted alongside other prose is read back.
+    body = (
+        "Landed the work.\n\norchestrate: landed feedface on main, run wf_7\n\nCheers."
+    )
+    parsed = orchestrate.parse_landed_marker(body)
+    assert parsed is not None and parsed.verb == "landed" and parsed.sha == "feedface"
+
+
+def test_parse_landed_marker_rejects_non_marker_text() -> None:
+    assert orchestrate.parse_landed_marker("just a normal comment") is None
+    assert orchestrate.parse_landed_marker("") is None
+
+
+def test_parse_landed_marker_rejects_a_truncated_marker() -> None:
+    # A prefix without the full positional shape is not a marker.
+    assert orchestrate.parse_landed_marker("orchestrate: landed") is None
+    assert (
+        orchestrate.parse_landed_marker("orchestrate: landed deadbeef on main") is None
+    )
+
+
 # --- render_report ------------------------------------------------------------
 
 
@@ -1062,6 +1123,65 @@ def test_render_report_shows_none_for_empty_sections() -> None:
     )
     assert "## Remaining for a human\n\n- None." in report
     assert "## Blockers and parked issues\n\n- None." in report
+
+
+def test_render_report_lists_already_landed_as_complete_not_a_blocker() -> None:
+    # An issue the preflight guard skipped because its work already landed (#49)
+    # is reported with the distinct `already-landed` status and must render as
+    # complete work, NOT under the blockers/parked section.
+    verdicts = [
+        Verdict(
+            5,
+            "Prior work",
+            "already-landed",
+            "",
+            "already landed on the default branch",
+            [],
+            [],
+            [],
+        ),
+    ]
+    report = orchestrate.render_report(verdicts)
+
+    assert "#5 Prior work" in report
+    stuck = report.split("## Blockers and parked issues", 1)[1]
+    assert "#5" not in stuck, (
+        "an already-landed issue must not be listed as a blocker/parked issue"
+    )
+
+
+def test_render_report_lists_already_open_pr_as_complete_not_a_blocker() -> None:
+    # In PR mode, an issue whose orchestrate PR already exists is skipped as
+    # `already-open` — the expected completed PR-mode state, not a blocker.
+    verdicts = [
+        Verdict(6, "PR exists", "already-open", "", "PR already open", [], [], []),
+    ]
+    report = orchestrate.render_report(verdicts)
+
+    assert "#6 PR exists" in report
+    stuck = report.split("## Blockers and parked issues", 1)[1]
+    assert "#6" not in stuck
+
+
+def test_render_report_surfaces_a_stale_landed_marker_as_a_blocker() -> None:
+    # A landed-marker whose commit is no longer on the default branch is parked
+    # loudly for a human — it must appear under blockers/parked with its reason.
+    verdicts = [
+        Verdict(
+            8,
+            "Stale marker",
+            "landed-marker-stale",
+            "",
+            "",
+            [],
+            [],
+            ["landed-marker present but its commit is not on the default branch"],
+        ),
+    ]
+    report = orchestrate.render_report(verdicts)
+
+    assert "#8 Stale marker (landed-marker-stale)" in report
+    assert "not on the default branch" in report
 
 
 # --- verify rigor from --level + per-issue Risk (issue #26, ADR-0004) ----------
