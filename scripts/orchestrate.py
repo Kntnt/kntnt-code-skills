@@ -1628,6 +1628,13 @@ STATUS_WORKING = "working"
 STATUS_DONE = "done"
 STATUS_PARKED = "parked"
 
+# The two terminal "done" verbs — a merge-mode landing on the default branch, or a
+# PR-mode opened pull request. An issue that reached either in ANY run is done for
+# good (the issue is closed in merge mode, the PR stands in PR mode), so a later
+# run's scope must never regress it to `queued` merely because that run carries no
+# marker for it — the board's headline question is "was it done?".
+STATUS_TERMINAL_VERBS = frozenset({"landed", "opened-pr"})
+
 # The human phase phrase shown beside a `working` / `done` / `parked` row, keyed by
 # the milestone verb `parse_landed_marker` returns. `fix-round`, `landed`, `parked`,
 # and `opened-pr` carry a per-marker value (round / SHA / reason / PR) folded in by
@@ -1804,24 +1811,41 @@ def build_status(
     The run is the caller's `--run`, else the latest run (the run of the newest
     marker across the universe). For each issue, the state is its latest milestone
     *within that run*: the newest marker whose `run_id` matches the scope. An issue
-    with no marker in the scoped run — including every issue when the universe holds
-    no markers at all — renders `queued`. The issue universe is exactly what was piped
-    in; the run only scopes which markers count. Rows preserve the stdin issue order."""
+    with no marker in the scoped run falls back to its latest terminal `done` marker
+    from ANY run — a restarted run (#49) re-runs the whole plan, so an issue that
+    landed-and-closed in an earlier run carries only that run's markers, and scoping
+    to the newest run would otherwise regress it to `queued` and wrongly answer the
+    board's "was it done?"; a non-terminal earlier-run marker does not carry over, so
+    an issue merely started in an old run and untouched in this one stays `queued`. An
+    issue with no marker anywhere renders `queued`. The issue universe is exactly what
+    was piped in; the run only scopes which markers count. Rows preserve stdin order."""
 
     scoped_run = _resolve_run(universe, run)
 
     rows: list[StatusRow] = []
     for issue in universe:
-        # The latest marker belonging to the scoped run governs this issue's state;
-        # no such marker means the issue has not been touched in this run.
+        # The latest marker belonging to the scoped run governs this issue's state.
         in_run = [entry for entry in issue.markers if entry.marker.run_id == scoped_run]
-        if not in_run:
-            rows.append(StatusRow(number=issue.number, state=STATUS_QUEUED, detail=""))
+        if in_run:
+            latest = max(in_run, key=_marker_order)
+            state, detail = _status_from_marker(latest.marker)
+            rows.append(StatusRow(number=issue.number, state=state, detail=detail))
             continue
 
-        latest = max(in_run, key=_marker_order)
-        state, detail = _status_from_marker(latest.marker)
-        rows.append(StatusRow(number=issue.number, state=state, detail=detail))
+        # No marker in the scoped run — an issue that reached a terminal `done` in an
+        # earlier run stays done (a restart must not regress a landed-and-closed
+        # issue), while every other untouched issue is queued.
+        terminal = [
+            entry
+            for entry in issue.markers
+            if entry.marker.verb in STATUS_TERMINAL_VERBS
+        ]
+        if terminal:
+            latest = max(terminal, key=_marker_order)
+            state, detail = _status_from_marker(latest.marker)
+            rows.append(StatusRow(number=issue.number, state=state, detail=detail))
+        else:
+            rows.append(StatusRow(number=issue.number, state=STATUS_QUEUED, detail=""))
 
     return rows
 

@@ -253,6 +253,31 @@ def test_issue_with_marker_only_in_another_run_is_queued() -> None:
     assert rows[48].state == "queued"
 
 
+def test_landed_in_an_earlier_run_stays_done_on_a_restarted_run() -> None:
+    # Cross-session restart (#49): run r1 landed-and-closed #10 and #11, then run r2
+    # restarts the plan and only #12 is in flight. The board defaults to the newest
+    # run (r2), but an issue that reached a terminal `done` in r1 must NOT regress to
+    # `queued` just because r2 carries no marker for it — the board answers "was it
+    # done?", and a landed-and-closed issue is done regardless of which run scopes it.
+    landed_10 = orchestrate.format_landed_marker("aaa1111", "main", "run-1")
+    landed_11 = orchestrate.format_landed_marker("bbb2222", "main", "run-1")
+    started_12 = orchestrate.format_started_marker(12, "run-2")
+    universe = json.dumps(
+        [
+            issue(10, [comment(landed_10, "2026-07-20T10:00:00Z")]),
+            issue(11, [comment(landed_11, "2026-07-20T10:05:00Z")]),
+            issue(12, [comment(started_12, "2026-07-22T09:00:00Z")]),
+        ]
+    )
+    rows = rows_by_number(universe)
+    assert rows[10].state == "done"
+    assert "aaa1111" in rows[10].detail
+    assert rows[11].state == "done"
+    assert "bbb2222" in rows[11].detail
+    assert rows[12].state == "working"
+    assert "started" in rows[12].detail
+
+
 # --- full board, four states together ----------------------------------------
 
 

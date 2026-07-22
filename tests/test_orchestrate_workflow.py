@@ -227,6 +227,34 @@ def test_integrate_agent_is_not_worktree_isolated() -> None:
     )
 
 
+def test_integrate_agent_forbids_core_bare_and_forcing_a_checked_out_default() -> None:
+    # The default branch is checked out in exactly one worktree, and git refuses to
+    # update a checked-out branch from anywhere else. The integrate agent must NOT
+    # bypass that refusal by flipping `core.bare` or force-advancing the ref
+    # (`git update-ref` / `git branch -f` / `git push .`) — each corrupts the repo
+    # and strands the default branch's working tree at its pre-run commit, so the
+    # landed code never reaches disk (the #48 x #50 integration defect). It must
+    # fast-forward from the worktree that actually holds the default branch, so that
+    # working tree advances with the ref.
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrate")
+    lowered = block.lower()
+    assert "core.bare" in lowered, (
+        "integrate must explicitly forbid setting core.bare to bypass git's "
+        "checked-out-branch refusal"
+    )
+    assert "update-ref" in lowered, (
+        "integrate must forbid force-advancing the default ref with git update-ref"
+    )
+    assert "branch -f" in lowered, (
+        "integrate must forbid force-advancing the default ref with git branch -f"
+    )
+    assert "working tree" in lowered, (
+        "integrate must require the fast-forward run where the default is checked "
+        "out so its working tree advances with the ref, not left stale"
+    )
+
+
 def test_teardown_wave_dispatch_is_wrapped_in_try_finally() -> None:
     source = WORKFLOW.read_text(encoding="utf-8")
 
