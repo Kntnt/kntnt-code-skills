@@ -1774,14 +1774,22 @@ def _status_from_marker(marker: Marker) -> tuple[str, str]:
     `landed`/`opened-pr` are terminal → `done` (the SHA, or the opened PR number);
     `parked` → `parked` with its reason; every mid-run milestone → `working` with its
     phase, `fix-round` folding in the round number. An unrecognised verb degrades to
-    `working` with the verb itself, so a future marker still renders something."""
+    `working` with the verb itself, so a future marker still renders something.
+
+    The `parked` reason is re-sanitised on this read path through the same
+    `sanitize_parked_reason` the write side applies: `status` consumes arbitrary
+    public issue comments (any commenter can post a raw `parked` marker), and its
+    documented sink is a maintainer's terminal under `watch`, so an unsanitised
+    reason could inject terminal escapes / control characters. The write-side guard
+    only constrains the trusted reporter's own posts, so it cannot be relied on here
+    (ADR threat model: issue-comment text is untrusted)."""
 
     if marker.verb == "landed":
         return STATUS_DONE, f"landed {marker.sha}"
     if marker.verb == "opened-pr":
         return STATUS_DONE, f"opened PR #{marker.pr}"
     if marker.verb == "parked":
-        return STATUS_PARKED, marker.reason or "unspecified"
+        return STATUS_PARKED, sanitize_parked_reason(marker.reason or "")
     if marker.verb == "fix-round":
         return STATUS_WORKING, f"fix round {marker.fix_round}"
 

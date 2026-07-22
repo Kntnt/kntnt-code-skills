@@ -109,6 +109,51 @@ def test_parked_marker_renders_parked_with_reason() -> None:
     assert "fix rounds exhausted" in rows[47].detail
 
 
+def test_opened_pr_marker_renders_done_with_pr_number() -> None:
+    # PR mode (#48/#49): the integrate step opens a PR rather than landing, and the
+    # board must read that `opened-pr` marker as a terminal `done` row.
+    marker = orchestrate.format_pr_marker(47, "run-1")
+    rows = rows_by_number(
+        json.dumps([issue(47, [comment(marker, "2026-07-22T10:00:00Z")])])
+    )
+    assert rows[47].state == "done"
+    assert "PR #47" in rows[47].detail
+
+
+def test_unknown_verb_degrades_to_working_with_the_verb() -> None:
+    # A future/unrecognised milestone verb must still render something rather than
+    # crash — it degrades to `working` carrying the verb as its own detail.
+    state, detail = orchestrate._status_from_marker(
+        orchestrate.Marker(verb="future-milestone", run_id="run-1")
+    )
+    assert state == "working"
+    assert detail == "future-milestone"
+
+
+def test_parked_reason_is_sanitized_on_the_read_path() -> None:
+    # An attacker who can comment on a ready-for-agent issue can post a raw `parked`
+    # marker whose reason carries terminal escapes / control characters — it never
+    # passes through the write-side sanitiser. The board renders under `watch` in a
+    # maintainer's terminal, so the reason must be sanitised on the read path too.
+    hostile = "orchestrate: parked #47 (\x1b[2Jpwned\rspoofed), run run-1"
+    rows = rows_by_number(
+        json.dumps([issue(47, [comment(hostile, "2026-07-22T10:00:00Z")])])
+    )
+    assert rows[47].state == "parked"
+    detail = rows[47].detail
+    assert "\x1b" not in detail and "\r" not in detail and "[" not in detail
+
+
+def test_parked_reason_is_length_bounded_on_the_read_path() -> None:
+    # A read-path reason is capped to the same bound the write side enforces, so an
+    # attacker cannot flood the board with a multi-kilobyte reason.
+    hostile = "orchestrate: parked #47 (" + "A" * 5000 + "), run run-1"
+    rows = rows_by_number(
+        json.dumps([issue(47, [comment(hostile, "2026-07-22T10:00:00Z")])])
+    )
+    assert len(rows[47].detail) <= orchestrate.MAX_PARKED_REASON_LEN
+
+
 def test_issue_with_no_marker_renders_queued() -> None:
     rows = rows_by_number(
         json.dumps(

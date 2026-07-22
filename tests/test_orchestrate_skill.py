@@ -1396,8 +1396,13 @@ def test_skill_documents_status_one_liner_with_state_all() -> None:
             "the status one-liner must request --json number,comments"
         )
 
-    # The live `watch` variant is documented.
-    assert "watch " in lowered and status_invocation.search(text), (
+    # The live `watch` variant is documented — anchored to an actual `watch`
+    # wrapper around a `status` invocation on one line, not merely the word
+    # "watch" appearing somewhere in prose (the heartbeat section already says
+    # "watch the run from your phone"), so deleting the `watch -n 60 '… status'`
+    # one-liner fails here rather than passing on unrelated prose.
+    watch_invocation = re.compile(r"watch\b[^\n]*orchestrate\.py\"?\s+status")
+    assert watch_invocation.search(text), (
         "SKILL.md must document the `watch` live-view variant of `status`"
     )
 
