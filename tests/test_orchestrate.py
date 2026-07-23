@@ -828,6 +828,134 @@ def test_load_issues_agent_brief_heading_comment_is_not_flagged() -> None:
     assert issues[0].no_brief is False
 
 
+# --- dependency edges written in an Agent Brief comment (issue #51) ------------
+#
+# Triage posts the Agent Brief as a *comment*, and writes an issue's hard
+# dependencies into it as inline labels (`**Depends on #48.**`). The planner must
+# run those brief comments through the same `parse_dependencies` discipline the
+# body gets and union the edges — otherwise a coupled set whose only dependency
+# signal lives in the brief collapses into one unsafe wave. Crucially, ONLY brief
+# comments count: an ordinary discussion, triage, or milestone comment is full of
+# other issues' numbers and must never feed edge extraction.
+
+
+def test_load_issues_reads_a_depends_on_edge_from_an_agent_brief_comment() -> None:
+    # The #50/#48 reproduction: #50's only dependency signal is a `Depends on`
+    # label inside its Agent Brief comment, its body carrying none.
+    raw = (
+        '[{"number":48,"title":"Git scrub","labels":[],"body":"Foundational."},'
+        '{"number":50,"title":"Status read-path","labels":[],"body":"Harden it.",'
+        '"comments":[{"body":"## Agent Brief\\n\\n**Depends on #48.** Land it first."}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    by_number = {i.number: i for i in issues}
+    assert by_number[50].blocked_by == {48}
+    assert by_number[50].blocked_by_origin == {48: "Depends on"}
+
+
+def test_build_plan_brief_comment_dependency_splits_into_two_waves() -> None:
+    # The end-to-end reproduction: the coupled set plans as [[48], [50]], not one
+    # unsafe wave holding both.
+    raw = (
+        '[{"number":48,"title":"Git scrub","labels":[],"body":"Foundational."},'
+        '{"number":50,"title":"Status read-path","labels":[],"body":"Harden it.",'
+        '"comments":[{"body":"## Agent Brief\\n\\n**Depends on #48.** Land it first."}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    assert plan["waves"] == [[48], [50]]
+
+
+def test_load_issues_ignores_a_dependency_label_in_a_non_brief_comment() -> None:
+    # The identical `Depends on #48` text in a plain comment — a triage note, a
+    # milestone marker — must NOT become an edge.
+    raw = (
+        '[{"number":48,"title":"Git scrub","labels":[],"body":"Foundational."},'
+        '{"number":50,"title":"Status read-path","labels":[],"body":"Harden it.",'
+        '"comments":[{"body":"Just chatting: this depends on #48, I think."}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    by_number = {i.number: i for i in issues}
+    assert by_number[50].blocked_by == set()
+
+
+def test_load_issues_brief_comment_soft_phrase_is_not_an_edge() -> None:
+    # A soft coupling phrase inside a brief follows the existing discipline: no
+    # hard edge, surfaced as a soft note.
+    raw = (
+        '[{"number":48,"title":"Git scrub","labels":[],"body":"Foundational."},'
+        '{"number":50,"title":"Status read-path","labels":[],"body":"Harden it.",'
+        '"comments":[{"body":"## Agent Brief\\n\\nTouches the same files as #48."}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    by_number = {i.number: i for i in issues}
+    assert by_number[50].blocked_by == set()
+    assert any("#48" in note for note in by_number[50].soft_notes)
+
+
+def test_load_issues_brief_comment_self_reference_is_not_an_edge() -> None:
+    # A self-reference inside a brief cannot block its own issue.
+    raw = (
+        '[{"number":50,"title":"Status read-path","labels":[],"body":"Harden it.",'
+        '"comments":[{"body":"## Agent Brief\\n\\nDepends on #50 landing cleanly."}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    assert issues[0].blocked_by == set()
+
+
+def test_load_issues_brief_comment_related_aside_is_not_an_edge() -> None:
+    # A `(Related: #N)` aside inside a brief is context, never a blocker — the
+    # same false-positive class #47 closed, now reaching brief text.
+    raw = (
+        '[{"number":48,"title":"Git scrub","labels":[],"body":"Foundational."},'
+        '{"number":50,"title":"Status read-path","labels":[],"body":"Harden it.",'
+        '"comments":[{"body":"## Agent Brief\\n\\nStandalone work. (Related: #48.)"}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    by_number = {i.number: i for i in issues}
+    assert by_number[50].blocked_by == set()
+
+
+def test_load_issues_unions_body_and_brief_comment_edges() -> None:
+    # An edge in the body and a different edge in the brief both survive; the
+    # body's provenance wins for any number both name.
+    raw = (
+        '[{"number":10,"title":"A","labels":[],"body":"Foundational."},'
+        '{"number":48,"title":"Git scrub","labels":[],"body":"Foundational."},'
+        '{"number":50,"title":"C","labels":[],"body":"Depends on #10.",'
+        '"comments":[{"body":"## Agent Brief\\n\\n**Blocked by #48.**"}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    by_number = {i.number: i for i in issues}
+    assert by_number[50].blocked_by == {10, 48}
+    assert by_number[50].blocked_by_origin == {10: "Depends on", 48: "Blocked by"}
+
+
+def test_load_issues_tolerates_a_bare_string_brief_comment_dependency() -> None:
+    # gh may hand back a bare-string comment; a dependency label in one still edges.
+    raw = (
+        '[{"number":48,"title":"Git scrub","labels":[],"body":"Foundational."},'
+        '{"number":50,"title":"C","labels":[],"body":"Harden it.",'
+        '"comments":["## Agent Brief\\n\\nDepends on #48."]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    by_number = {i.number: i for i in issues}
+    assert by_number[50].blocked_by == {48}
+
+
+def test_build_plan_warns_on_an_unresolved_label_in_a_brief_comment() -> None:
+    # An unresolved genuine label inside a brief warns, exactly as it does in the
+    # body — a silently-empty graph must stay loud wherever the label lives.
+    raw = (
+        '[{"number":50,"title":"C","labels":[],"body":"Harden it.",'
+        '"comments":[{"body":"## Agent Brief\\n\\n**Depends on:** some untracked '
+        'prerequisite."}]}]'
+    )
+    issues = orchestrate.load_issues(raw)
+    plan = orchestrate.build_plan(issues, [], "ready-for-agent")
+    assert any("50" in warning for warning in plan["warnings"])
+
+
 def test_build_plan_surfaces_no_brief_per_issue_and_top_level() -> None:
     raw = (
         '[{"number":1,"title":"Has brief","labels":[],"body":"x",'

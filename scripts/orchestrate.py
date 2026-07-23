@@ -84,11 +84,15 @@ BLOCKED_BY_SECTION_RE = re.compile(
 ISSUE_REF_RE = re.compile(r"#(\d+)")
 
 # Directional blocking keywords that name a real hard edge wherever they
-# appear in the body — not only under a `## Blocked by` heading. Triage writes
-# dependencies into the agent brief as inline labels (`**Depends on:** #44`),
-# so the planner must read those forms too or a coupled set collapses into one
-# unsafe wave (issue #10). Longest forms come first so `Depends upon` wins over
-# the `Depends on` prefix when both could match.
+# appear in a dependency source — not only under a `## Blocked by` heading.
+# Triage writes dependencies into the Agent Brief as inline labels
+# (`**Depends on:** #44`) and posts the brief as a *comment*, so `load_issues`
+# runs this same discipline over both the issue body and every Agent Brief
+# comment and unions the edges — else a coupled set whose only dependency signal
+# lives in the brief collapses into one unsafe wave (issues #10, #51). Non-brief
+# comments are never scanned: their stray issue numbers would fabricate edges.
+# Longest forms come first so `Depends upon` wins over the `Depends on` prefix
+# when both could match.
 HARD_EDGE_KEYWORDS = ("Blocked by", "Depends upon", "Depends on", "Requires", "Needs")
 
 # Match a hard-edge keyword anywhere in the text, tolerating an optional bold
@@ -654,6 +658,33 @@ def parse_dependencies(
     return DependencySignals(edges=edges, soft_notes=soft_notes, warnings=warnings)
 
 
+def _union_signals(sources: list[DependencySignals]) -> DependencySignals:
+    """Union the dependency signals an issue's distinct sources produce — its
+    body and each Agent Brief comment — into one set (issue #51). Edges merge so
+    the earliest source naming a number keeps the provenance (body before
+    briefs); soft notes and warnings concatenate in first-seen order, duplicates
+    dropped. Each source is parsed independently through the same
+    `parse_dependencies` discipline, so no source can weaken another's edges."""
+
+    # Accumulate across sources in order: `setdefault` keeps the first source's
+    # provenance for a shared number, and notes/warnings are gathered for a final
+    # first-seen dedup.
+    edges: dict[int, str] = {}
+    soft_notes: list[str] = []
+    warnings: list[str] = []
+    for source in sources:
+        for number, origin in source.edges.items():
+            edges.setdefault(number, origin)
+        soft_notes.extend(source.soft_notes)
+        warnings.extend(source.warnings)
+
+    return DependencySignals(
+        edges=edges,
+        soft_notes=list(dict.fromkeys(soft_notes)),
+        warnings=list(dict.fromkeys(warnings)),
+    )
+
+
 def parse_blocked_by(body: str, self_number: int | None = None) -> set[int]:
     """Extract the issue numbers that block an issue — from the `## Blocked by`
     heading section and from inline/labelled blocking forms anywhere in the
@@ -689,23 +720,6 @@ def _build_title_index(entries: list[Any]) -> dict[str, int]:
     return index
 
 
-def _has_agent_brief(comments: Any) -> bool:
-    """Whether any comment carries a Markdown "Agent Brief" heading. `gh` returns
-    `comments` as a list of {"body": ...} objects; bare strings are tolerated,
-    and a missing or non-list value is treated as no brief — the safe default,
-    since the engine's fallback builds the issue from its body either way. The
-    heading anchor (not a bare substring) keeps a prose mention of the phrase from
-    falsely marking the issue as briefed."""
-
-    if not isinstance(comments, list):
-        return False
-    for comment in comments:
-        body = comment.get("body", "") if isinstance(comment, dict) else comment
-        if AGENT_BRIEF_HEADING_RE.search(str(body)):
-            return True
-    return False
-
-
 def _comment_texts(comments: Any) -> list[str]:
     """The text of every comment body, tolerating bare-string comments; a missing
     or non-list `comments` yields nothing. Lets the risk-marker scan reach the
@@ -720,15 +734,41 @@ def _comment_texts(comments: Any) -> list[str]:
     ]
 
 
+def _agent_brief_texts(comments: Any) -> list[str]:
+    """The text of every comment whose body carries a Markdown "Agent Brief"
+    heading — the authoritative definition of which comments count as briefs, and
+    the dependency source triage writes inline `Depends on #N` labels into. The
+    heading anchor (not a bare substring) keeps a prose mention of the phrase from
+    qualifying, so ONLY genuine briefs feed edge extraction: an ordinary
+    discussion, triage, or milestone comment is full of other issues' numbers and
+    must never produce edges (issue #51). A missing or non-list `comments` yields
+    nothing; bare-string comments are tolerated."""
+
+    return [
+        text for text in _comment_texts(comments) if AGENT_BRIEF_HEADING_RE.search(text)
+    ]
+
+
+def _has_agent_brief(comments: Any) -> bool:
+    """Whether any comment carries an Agent Brief heading. A missing or non-list
+    value is treated as no brief — the safe default, since the engine's fallback
+    builds the issue from its body either way."""
+
+    return bool(_agent_brief_texts(comments))
+
+
 def load_issues(raw: str) -> list[Issue]:
     """Parse a `gh issue list --json number,title,labels,body,comments` payload
     into Issue records. Raises ValueError on malformed JSON or a missing number.
 
     Runs in two passes: first the in-scope titles are indexed, then each body is
     parsed against that index so a prerequisite named by its prose title (not
-    `#N`) still produces an edge. The optional `comments` field, when present, is
-    scanned for an Agent Brief so `no_brief` flags an issue lacking one; an entry
-    with no `comments` field is flagged as having no detectable brief."""
+    `#N`) still produces an edge. Dependency signals are read from two sources
+    treated identically — the body and each Agent Brief comment, the latter being
+    where triage posts inline `Depends on #N` labels (issue #51) — and unioned.
+    The optional `comments` field, when present, is also scanned for an Agent
+    Brief so `no_brief` flags an issue lacking one; an entry with no `comments`
+    field is flagged as having no detectable brief."""
 
     try:
         data = json.loads(raw)
@@ -752,12 +792,23 @@ def load_issues(raw: str) -> list[Issue]:
             for label in entry.get("labels", [])
         ]
 
-        # Derive the hard edges (with provenance), soft notes, and warnings once,
-        # passing the issue's own number so a self-reference is dropped as a
-        # blocker, and the shared title index so prose-named prerequisites edge.
+        # Derive the hard edges (with provenance), soft notes, and warnings from
+        # every dependency source — the issue body and each Agent Brief comment,
+        # where triage posts inline `Depends on #N` labels (issue #51). Each runs
+        # through the same parse_dependencies discipline (same self-reference drop,
+        # same shared title index for prose-named prerequisites); the results are
+        # unioned, the body's edge provenance winning on collision. Non-brief
+        # comments are deliberately excluded — their stray issue numbers would
+        # fabricate edges.
         number = int(entry["number"])
-        signals = parse_dependencies(
-            entry.get("body", ""), self_number=number, title_index=title_index
+        signals = _union_signals(
+            [
+                parse_dependencies(text, self_number=number, title_index=title_index)
+                for text in [
+                    entry.get("body", ""),
+                    *_agent_brief_texts(entry.get("comments")),
+                ]
+            ]
         )
 
         # Read the explicit `Risk:` marker from the body and the Agent Brief
