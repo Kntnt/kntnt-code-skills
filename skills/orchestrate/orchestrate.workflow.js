@@ -104,6 +104,11 @@ const INTEGRATE_SCHEMA = {
     summary: { type: 'string' },
     blocker: { type: 'string' },
     conflict: { type: 'boolean', description: 'True ONLY when the merge-mode landing was refused because rebasing the verified branch onto the advanced default hit a genuine content conflict the integrator will not resolve — the signal the bounded reconcile stage repairs (#46). False or absent for any other, non-conflict failure.' },
+    bareRepo: { type: 'boolean', description: 'Merge mode only: `git rev-parse --is-bare-repository` returned true. A bare repo has no working tree, so a landing would advance the ref alone — the engine refuses and parks (#53).' },
+    defaultCheckedOut: { type: 'boolean', description: 'Merge mode only: the default branch is checked out in THIS integrating worktree. When false a landing here would strand the working tree off the moved ref — the engine refuses and parks (#53).' },
+    headSha: { type: 'string', description: 'Merge mode only: `git rev-parse HEAD` on the default branch AFTER the fast-forward. The engine confirms it equals featureSha — a ref-only advance leaves it unmoved (#53).' },
+    featureSha: { type: 'string', description: 'Merge mode only: the feature branch tip `git rev-parse <branch>`. The landed HEAD must equal this for the land to have reached disk (#53).' },
+    worktreeClean: { type: 'boolean', description: 'Merge mode only: `git status --porcelain` was empty at the landed tip. A dirty tree means the land did not cleanly reach disk (#53).' },
   },
 }
 
@@ -370,6 +375,56 @@ const withInSituHazard = (lenses, hazard) => {
  * @returns {boolean} Whether to attempt a bounded reconcile before parking.
  */
 const isReconcilableConflict = (record) => record != null && record.status === 'parked' && record.conflict === true
+
+/**
+ * The specific reason a merge-mode landing did NOT verifiably reach disk, or
+ * `null` when the integrator's reported facts prove it did (issue #53). The
+ * integrate step lands by fast-forwarding the default branch's WORK TREE to the
+ * feature tip; a bare repository, a default branch not checked out in the
+ * integrating worktree, or a ref that moved without the tree following (a
+ * `git update-ref` / `git branch -f` / `git push .` "landing") advances the
+ * pointer while leaving the code off disk — so the gates and the mandatory final
+ * re-run then test the STALE checkout while the run reports "landed". The engine
+ * cannot run git itself, so the integrator reports the raw post-land facts and
+ * THIS helper — not the agent's own `integrated` boolean — decides whether the
+ * land is sound, mirroring how `preflightDecision` turns gathered facts into a
+ * verdict. A non-null return is a loud, specific park reason; the caller never
+ * records `integrated: true` over a stranded working tree.
+ *
+ * `result` is the integrator's INTEGRATE_SCHEMA result (merge mode, already known
+ * to claim `integrated: true`):
+ *   - `bareRepo`          `git rev-parse --is-bare-repository` returned true
+ *   - `defaultCheckedOut` the default branch is checked out in THIS worktree
+ *   - `headSha`           `git rev-parse HEAD` on the default after the ff
+ *   - `featureSha`        the feature branch tip `git rev-parse <branch>`
+ *   - `worktreeClean`     `git status --porcelain` was empty at the landed tip
+ *
+ * @param {{bareRepo?: boolean, defaultCheckedOut?: boolean, headSha?: string,
+ *   featureSha?: string, worktreeClean?: boolean}|null|undefined} result The
+ *   integrator's reported post-land facts.
+ * @returns {string|null} A specific blocker when the land is not proven on disk;
+ *   `null` when the reported facts confirm the tree advanced to the feature tip.
+ */
+const landStrandedBlocker = (result) => {
+
+  // Refuse a bare repo or a worktree not on the default branch: neither can
+  // receive the land in its work tree, so any "advance" moves the ref alone —
+  // exactly the corruption the guard forbids. Refuse before trusting any sha.
+  const r = result || {}
+  if (r.bareRepo === true) return 'integration refused: the repository is bare (core.bare=true), so a landing advances the ref without updating any working tree — repair the repository before re-running'
+  if (r.defaultCheckedOut !== true) return 'integration refused: the default branch is not checked out in the integrating worktree, so a landing here would strand the working tree at its pre-run commit'
+
+  // Prove the land reached disk: the default HEAD must equal the feature tip
+  // with a clean tree. A missing sha, an unmoved HEAD, or a dirty tree is a
+  // ref-only advance — reported as a failed land, never `integrated: true`.
+  if (typeof r.headSha !== 'string' || r.headSha.length === 0) return 'integration unverified: the integrator reported no post-landing HEAD sha, so the land cannot be confirmed to have reached disk'
+  if (typeof r.featureSha !== 'string' || r.featureSha.length === 0) return 'integration unverified: the integrator reported no feature-branch tip sha, so the land cannot be confirmed to have reached disk'
+  if (r.headSha !== r.featureSha) return `integration stranded: the default branch HEAD (${r.headSha}) did not advance to the feature tip (${r.featureSha}) — the ref moved without updating the working tree (a ref-only advance)`
+  if (r.worktreeClean !== true) return 'integration stranded: the working tree is not clean at the landed commit, so the land did not cleanly reach disk'
+
+  return null
+
+}
 
 /**
  * The preflight idempotence verdict for one issue (issue #49), computed PURELY
@@ -923,7 +978,8 @@ const integrate = async (record) => {
       `Git refuses to update a branch that is checked out in another worktree; NEVER bypass that refusal — do NOT set \`core.bare\`, do NOT reconfigure the repository, and do NOT force-advance the default ref with \`git update-ref\`, \`git branch -f\`, or \`git push .\`. Each of those corrupts the repository and strands the default branch's working tree at its pre-run commit, so the landed code never appears on disk even though the ref moved (the integration defect that must never recur). If the default branch is NOT checked out in this worktree, do NOT reconfigure anything to force the landing — report a blocker instead. ` +
       `Keep the integrated history LINEAR: NEVER merge the default branch INTO the feature branch, and NEVER create a merge commit on the feature branch. ` +
       `${record.branch} was created FRESH off the then-current default tip (the implementer forks off the up-to-date default), and in this serial integrate-immediately design issues land one at a time, so nothing has landed on the default since ${record.branch} was cut: it is already a fast-forward ahead of the default and \`--ff-only\` succeeds with no rebase replay. Only in the rare case the default moved under the feature branch anyway will the fast-forward be refused; that is the one case a genuine rebase is needed — perform it WITHOUT checking out ${record.branch} while a worktree still holds it: free that worktree first with \`git worktree remove --force <path>\` (which KEEPS the branch ref), exactly as the fix-round handoff does, then rebase ${record.branch} onto the default and fast-forward the default to its tip. That rebase checks ${record.branch} out in THIS worktree — the main, un-isolated, only default-branch checkout — so when the fast-forward is done, return this worktree to the default branch (\`git checkout <default>\`), leaving integrate on the default branch and never stranded on ${record.branch}. ` +
-      `If a genuine conflict makes that rebase unsafe to resolve, do NOT merge — report it as a blocker AND set \`conflict: true\` in your result, so the run can attempt a bounded reconcile of this verified branch; for any other, non-conflict failure set \`conflict: false\` or omit it.`
+      `If a genuine conflict makes that rebase unsafe to resolve, do NOT merge — report it as a blocker AND set \`conflict: true\` in your result, so the run can attempt a bounded reconcile of this verified branch; for any other, non-conflict failure set \`conflict: false\` or omit it. ` +
+      `After the fast-forward, REPORT the structural landing facts so the ENGINE can independently confirm the code reached disk — it rejects a ref-only advance as a FAILED land regardless of what you claim, so a false \`integrated: true\` only parks the issue: set \`bareRepo\` from \`git rev-parse --is-bare-repository\`, \`defaultCheckedOut\` to whether the default branch is checked out in THIS worktree, \`headSha\` to \`git rev-parse HEAD\` on the default branch, \`featureSha\` to \`git rev-parse ${record.branch}\`, and \`worktreeClean\` to whether \`git status --porcelain\` is empty. The land counts only when headSha equals featureSha on a non-bare repo with the default checked out here and a clean tree; if you cannot achieve that, report \`integrated: false\` with the blocker rather than a landing that never reached disk.`
     : `Open a pull request for branch ${record.branch} against the default branch. Do NOT merge.`) + markerStep
   const result = await agent(
     `Integrate issue #${record.number} ("${record.title}"). ${action} Report what you did in one line.`,
@@ -936,6 +992,19 @@ const integrate = async (record) => {
   // (#46) apart from any other landing failure.
   if (result == null) return { ...record, status: 'parked', blockers: [...record.blockers, 'integrator returned nothing'] }
   if (!result.integrated) return { ...record, status: 'parked', blockers: [...record.blockers, result.blocker || result.summary], conflict: result.conflict === true }
+
+  // A merge-mode landing is trusted only when the integrator's reported facts
+  // PROVE the working tree advanced to the feature tip — the engine, not the
+  // agent's own `integrated` flag, decides. A ref-only advance (bare repo,
+  // default not checked out here, unmoved HEAD, or dirty tree) is a failed land
+  // that parks loudly, so the run never records "landed" over stranded code and
+  // never runs its gates against the stale checkout (#53). PR mode lands nothing
+  // on the default branch, so it has no working tree to verify.
+  if (merge) {
+    const stranded = landStrandedBlocker(result)
+    if (stranded != null) return { ...record, status: 'parked', blockers: [...record.blockers, stranded] }
+  }
+
   return { ...record, verify: `${record.verify} | ${result.summary}` }
 }
 

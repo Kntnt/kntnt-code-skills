@@ -3424,3 +3424,139 @@ def test_parked_milestone_sanitizes_its_reason() -> None:
     assert "sanitizeReason(reason)" in block, (
         "milestoneParked must sanitise the reason, never interpolate it raw"
     )
+
+
+# --- #53: integrate structurally verifies the land reached disk --------------
+
+# The integrate step lands by fast-forwarding the default branch's WORK TREE to
+# the feature tip. A bare repo, a default branch not checked out in the
+# integrating worktree, or a ref that moved without the tree following (an
+# `update-ref` / `branch -f` / `push .` "landing") advances the pointer while
+# leaving the landed code off disk — so gates and the final re-run then test the
+# STALE checkout while the run reports "landed". The prompt-level guard alone is
+# advisory; these tests lock in the STRUCTURAL enforcement: the integrator
+# reports raw post-land facts, and the engine — via the pure `landStrandedBlocker`
+# helper, not the agent's own `integrated` flag — parks any land not proven on
+# disk.
+
+
+def test_integrate_schema_carries_post_land_verification_facts() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    schema = _extract_braced_const(source, "INTEGRATE_SCHEMA")
+    for field in (
+        "bareRepo",
+        "defaultCheckedOut",
+        "headSha",
+        "featureSha",
+        "worktreeClean",
+    ):
+        assert field in schema, (
+            f"INTEGRATE_SCHEMA must carry `{field}` so the integrator reports the "
+            "raw post-land facts the engine verifies the on-disk landing against (#53)"
+        )
+
+
+def test_integrate_verifies_the_land_reached_disk_before_reporting_done() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrate")
+    assert "landStrandedBlocker(result)" in block, (
+        "integrate must call landStrandedBlocker so the ENGINE — not the agent's "
+        "own `integrated` flag — decides whether a merge-mode land reached disk (#53)"
+    )
+    # The check is merge-mode gated (PR mode lands nothing on the default) and
+    # parks the issue on a stranded land rather than recording it green.
+    stranded_idx = block.index("landStrandedBlocker(result)")
+    window = block[max(0, stranded_idx - 200) : stranded_idx]
+    assert "if (merge)" in window, (
+        "the land-reached-disk check must be merge-mode gated — PR mode lands "
+        "nothing on the default branch, so there is no working tree to verify (#53)"
+    )
+    tail = block[stranded_idx : stranded_idx + 200]
+    assert "status: 'parked'" in tail, (
+        "a stranded (ref-only) advance must PARK the issue, never record it done (#53)"
+    )
+
+
+def test_integrate_prompt_requires_the_post_land_verification_facts() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    block = _agent_block(source, "integrate")
+    assert "--is-bare-repository" in block, (
+        "the integrate prompt must have the integrator report the bare-repo fact "
+        "(`git rev-parse --is-bare-repository`) so the engine can refuse it (#53)"
+    )
+    for token in (
+        "bareRepo",
+        "defaultCheckedOut",
+        "headSha",
+        "featureSha",
+        "worktreeClean",
+    ):
+        assert token in block, (
+            f"the integrate prompt must ask the integrator to report `{token}` so "
+            "the engine can confirm the land reached disk (#53)"
+        )
+
+
+# `landStrandedBlocker` decides whether a merge-mode landing verifiably reached
+# disk from the integrator's reported facts: a bare repo or a default not checked
+# out here is refused before any sha comparison; a missing sha, an unmoved HEAD
+# (ref-only advance), or a dirty tree is a failed land; only a clean tree at
+# HEAD == feature tip is sound.
+_LAND_STRANDED_HARNESS = """
+import { landStrandedBlocker } from "__MODULE_URL__";
+const sound = { bareRepo: false, defaultCheckedOut: true, headSha: 'abc123', featureSha: 'abc123', worktreeClean: true };
+const out = {
+  sound: landStrandedBlocker(sound),
+  bare: landStrandedBlocker({ ...sound, bareRepo: true }),
+  not_checked_out: landStrandedBlocker({ ...sound, defaultCheckedOut: false }),
+  missing_head: landStrandedBlocker({ ...sound, headSha: '' }),
+  missing_feature: landStrandedBlocker({ ...sound, featureSha: '' }),
+  ref_only: landStrandedBlocker({ ...sound, headSha: 'old000', featureSha: 'new111' }),
+  dirty: landStrandedBlocker({ ...sound, worktreeClean: false }),
+  nullish: landStrandedBlocker(undefined),
+};
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+def test_land_stranded_blocker_behaviour() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not available on this machine")
+
+    harness = _LAND_STRANDED_HARNESS.replace(
+        "__MODULE_URL__", ENGINE_HELPERS.resolve().as_uri()
+    )
+    result = subprocess.run(
+        [node, "--input-type=module"],
+        input=harness,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    out = json.loads(result.stdout)
+
+    # A land whose facts prove the tree advanced to the feature tip is sound.
+    assert out["sound"] is None
+
+    # A bare repo or a default branch not checked out here is refused BEFORE any
+    # sha comparison — the two conditions that strand the tree off a moved ref.
+    assert out["bare"] is not None and "bare" in out["bare"].lower()
+    assert out["not_checked_out"] is not None
+    assert "not checked out" in out["not_checked_out"].lower()
+
+    # A missing HEAD or feature-tip sha cannot confirm the land reached disk.
+    assert out["missing_head"] is not None
+    assert out["missing_feature"] is not None
+
+    # A HEAD that did not advance to the feature tip is a ref-only advance — the
+    # exact corruption: the ref moved, the working tree did not.
+    assert out["ref_only"] is not None
+    assert out["ref_only"] != out["sound"]
+
+    # A dirty tree at the landed commit means the land did not cleanly reach disk.
+    assert out["dirty"] is not None
+
+    # A nullish result is never sound — it cannot prove anything reached disk.
+    assert out["nullish"] is not None
