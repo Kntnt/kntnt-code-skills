@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -54,6 +55,80 @@ def git_project(tmp_path: Path) -> Path:
     subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "init"], check=True)
     return root
+
+
+# --- git environment isolation (regression guard) -----------------------------
+
+
+def test_git_env_leak_never_touches_the_target_repo(tmp_path: Path) -> None:
+    """A pytest run under a leaked git environment must leave the pointed-at
+    repository byte-for-byte unchanged.
+
+    This reproduces the pre-commit hook leak that corrupted this repo twice: git
+    hooks export GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE into the environment
+    of everything they run, and those outrank a fixture's `-C <tmpdir>`
+    targeting, so an unscrubbed fixture runs its git init/add/commit against
+    whatever they point at. A decoy repository stands in for the developer's
+    real checkout; a child pytest runs both a fixture-backed test and a
+    doctor.main invocation (which spawns its own git) with the leak exported,
+    and only tests/conftest.py's autouse scrub stands between the leak and the
+    decoy. Red before that scrub existed, green after.
+    """
+
+    # Seed a decoy repository standing in for the developer's real checkout.
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    subprocess.run(["git", "-C", str(decoy), "init", "-q"], check=True)
+    subprocess.run(
+        ["git", "-C", str(decoy), "config", "user.email", "d@example.com"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(decoy), "config", "user.name", "Decoy"], check=True
+    )
+    (decoy / "keep.txt").write_text("keep\n")
+    subprocess.run(["git", "-C", str(decoy), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(decoy), "commit", "-q", "-m", "seed"], check=True)
+
+    # Snapshot the bytes the leak would corrupt: the index a stray `git add`
+    # rewrites and the config a stray `git init` flips to core.bare=true.
+    git_dir = decoy / ".git"
+    config_before = (git_dir / "config").read_bytes()
+    index_before = (git_dir / "index").read_bytes()
+
+    # Export the location vars exactly as the pre-commit hook does, so a child
+    # pytest inherits the leak and its conftest scrub is the only thing that can
+    # spare the decoy.
+    leaked = os.environ.copy()
+    leaked["GIT_DIR"] = str(git_dir)
+    leaked["GIT_INDEX_FILE"] = str(git_dir / "index")
+    leaked["GIT_WORK_TREE"] = str(tmp_path)
+
+    # Two nodes cover both leak surfaces — the fixture's own write-git, and
+    # doctor.main's git subprocesses driven against a separate tmp project.
+    test_file = REPO_ROOT / "tests" / "test_doctor.py"
+    nodes = [
+        f"{test_file}::test_check_gitignore_clean_when_covered",
+        f"{test_file}::test_main_emits_valid_json",
+    ]
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *nodes],
+        cwd=str(tmp_path),
+        env=leaked,
+        capture_output=True,
+        text=True,
+    )
+
+    # The decoy's index and config must be byte-for-byte intact — the property
+    # under test — and the child run must itself have stayed green.
+    assert (git_dir / "index").read_bytes() == index_before, (
+        "leak wrote the decoy index"
+    )
+    assert (git_dir / "config").read_bytes() == config_before, (
+        "leak rewrote the decoy config"
+    )
+    assert result.returncode == 0, (
+        f"child pytest failed:\n{result.stdout}\n{result.stderr}"
+    )
 
 
 def scaffold_standard(project_dir: Path, modules: list[str]) -> None:

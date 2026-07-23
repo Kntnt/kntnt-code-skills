@@ -31,7 +31,10 @@ repos:
         stages: [pre-commit]
       - id: tests
         name: kntnt-code-skills tests
-        entry: uv run --with pytest pytest -q
+        # Scrub the git location vars before pytest as defence-in-depth: this
+        # hook exports them, and they would redirect the doctor/init test
+        # fixtures' git at the real repo. tests/conftest.py scrubs them too.
+        entry: env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE -u GIT_OBJECT_DIRECTORY -u GIT_COMMON_DIR uv run --with pytest pytest -q
         language: system
         pass_filenames: false
         always_run: true
