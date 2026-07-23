@@ -1705,13 +1705,49 @@ def _parse_status_timestamp(value: Any) -> datetime:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
+# A run id still wearing its angle-bracket placeholder (`<runId>`, and by the
+# same token `<n>` / `<sha>` / `<reason>` in the documented grammar) — the shape
+# a brief or ADR quotes before a reporter substitutes it. A real workflow run id
+# never carries `<` or `>`, so a marker whose `run_id` still holds one is an
+# unsubstituted template example, not a run anyone posted.
+_PLACEHOLDER_RUN_ID_RE = re.compile(r"[<>]")
+
+
+def _marker_attributable(marker: Marker, issue_number: int) -> bool:
+    """Whether a parsed marker genuinely belongs to `issue_number` on the `status`
+    read path — the second factor `status` lacks (issue #54).
+
+    `parse_landed_marker` is deliberately prose-tolerant, which was safe when only
+    preflight consumed it: preflight demands a `landed` SHA that is an ancestor of
+    the default tip, so a merely quoted marker fails that check. `status` has no such
+    corroboration, so any comment that quotes the grammar — most sharply #48's own
+    Agent Brief, which fences `orchestrate: started #47, run <runId>` — would
+    otherwise be trusted as a live marker and poison the board. Two cheap checks
+    reject the quotes without any ad-hoc re-parsing:
+
+    - A milestone marker carries the issue number it is *about*, so one whose
+      `number` differs from the hosting issue is another issue's marker quoted here.
+      Terminal `landed`/`opened-pr` markers carry no number and pass this check.
+    - A `run_id` still bracketed as a `<placeholder>` is an unsubstituted template
+      example, never a run a reporter posted. This is the only guard the number-less
+      terminal verbs get, so a quoted `opened PR #12, run <runId>` cannot slip
+      through the any-run terminal->`done` fallback."""
+
+    if marker.number is not None and marker.number != issue_number:
+        return False
+    return _PLACEHOLDER_RUN_ID_RE.search(marker.run_id) is None
+
+
 def load_status_universe(raw: str) -> list[StatusIssue]:
     """Parse a `gh issue list --json number,comments` payload into StatusIssues.
 
     Each issue's comments are read through `parse_landed_marker` — the single source
     of truth for the marker grammar — and only the ones carrying a well-formed marker
-    are kept, each paired with its `createdAt` timestamp and a universe-wide read
-    sequence. The stdin order of issues is preserved so the board renders in the order
+    *attributable to this issue* (`_marker_attributable`: right issue number, no
+    placeholder run id) are kept, so a comment that merely quotes the grammar cannot
+    poison another issue's row (issue #54). Each kept marker is paired with its
+    `createdAt` timestamp and a universe-wide read sequence. The stdin order of issues
+    is preserved so the board renders in the order
     the caller listed them. A comment may be a bare string or a `{"body": ...}` object;
     a missing or non-list `comments` field yields an issue with no markers (it renders
     `queued`). Raises ValueError on malformed JSON or a shape that is not an array of
@@ -1733,12 +1769,13 @@ def load_status_universe(raw: str) -> list[StatusIssue]:
         if not isinstance(entry, dict) or "number" not in entry:
             raise ValueError("an issue entry is missing its 'number'")
 
+        issue_number = int(entry["number"])
         issue_markers: list[StatusMarker] = []
         comments = entry.get("comments")
         for comment in comments if isinstance(comments, list) else []:
             body = comment if isinstance(comment, str) else comment.get("body", "")
             marker = parse_landed_marker(str(body or ""))
-            if marker is None:
+            if marker is None or not _marker_attributable(marker, issue_number):
                 continue
             created_at = _parse_status_timestamp(
                 comment.get("createdAt") if isinstance(comment, dict) else None
@@ -1746,7 +1783,7 @@ def load_status_universe(raw: str) -> list[StatusIssue]:
             issue_markers.append(StatusMarker(marker, created_at, sequence))
             sequence += 1
 
-        universe.append(StatusIssue(number=int(entry["number"]), markers=issue_markers))
+        universe.append(StatusIssue(number=issue_number, markers=issue_markers))
 
     return universe
 

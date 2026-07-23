@@ -278,6 +278,64 @@ def test_landed_in_an_earlier_run_stays_done_on_a_restarted_run() -> None:
     assert "started" in rows[12].detail
 
 
+# --- quoted-marker attribution (issue #54) ------------------------------------
+
+
+def test_quoted_foreign_markers_do_not_poison_the_board() -> None:
+    # #48's Agent Brief quotes another issue's marker grammar in code fences
+    # (issue #54): a milestone about #47 and a prose `opened PR` example, both with
+    # the unsubstituted `<runId>` template a reporter would substitute. Neither is a
+    # real marker about #48, so #48 must render `queued`. That #47's own `run-9`
+    # marker still resolves to `working` also proves the phantom `<runId>` run never
+    # becomes the default scope (finding 4).
+    quoted_milestone = orchestrate.format_started_marker(47, "<runId>")
+    quoted_pr = orchestrate.format_pr_marker(12, "<runId>")
+    real = orchestrate.format_started_marker(47, "run-9")
+    universe = json.dumps(
+        [
+            issue(47, [comment(real, "2026-07-22T11:00:00Z")]),
+            issue(
+                48,
+                [
+                    comment(quoted_milestone, "2026-07-22T10:00:00Z"),
+                    comment(quoted_pr, "2026-07-22T10:01:00Z"),
+                ],
+            ),
+        ]
+    )
+    rows = rows_by_number(universe)
+    assert rows[47].state == "working"
+    assert rows[48].state == "queued"
+
+
+def test_a_marker_about_another_issue_is_attributed_by_number() -> None:
+    # A milestone about #47 quoted on #48 with a fully-substituted run id: only the
+    # issue number embedded in the marker distinguishes it from a real one (issue
+    # #54, finding 1). Number attribution alone — no placeholder — must reject it,
+    # so #48 stays `queued`.
+    quoted = orchestrate.format_started_marker(47, "run-9")
+    real47 = orchestrate.format_implementation_green_marker(47, "run-9")
+    universe = json.dumps(
+        [
+            issue(47, [comment(real47, "2026-07-22T11:00:00Z")]),
+            issue(48, [comment(quoted, "2026-07-22T10:00:00Z")]),
+        ]
+    )
+    rows = rows_by_number(universe)
+    assert rows[47].state == "working"
+    assert rows[48].state == "queued"
+
+
+def test_quoted_opened_pr_template_cannot_mark_an_issue_done() -> None:
+    # A prose-quoted `opened PR #12, run <runId>` carries no issue number, so number
+    # attribution alone cannot reject it; the `<runId>` placeholder must. The any-run
+    # terminal `opened-pr` -> `done` fallback (issue #54, finding 3) must not fire.
+    quoted_pr = orchestrate.format_pr_marker(12, "<runId>")
+    universe = json.dumps([issue(48, [comment(quoted_pr, "2026-07-22T10:00:00Z")])])
+    rows = rows_by_number(universe)
+    assert rows[48].state == "queued"
+
+
 # --- full board, four states together ----------------------------------------
 
 
