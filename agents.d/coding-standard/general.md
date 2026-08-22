@@ -93,6 +93,10 @@ The example is PHP; the rule is identical in TypeScript and plain JavaScript.
 2. A comment trailing at the end of a code line is never wrapped, however long it runs.
 3. Code lines have no upper limit. This removes the *pressure* to break a line for its own sake — it is not an invitation to let one sprawl; *Motivated line breaks*, below, is what actually triggers a break.
 
+Rule 1 is measured across the whole physical line: the count starts at column 1, runs through the indentation and the `//`, `#`, `/*` or `*` marker, and ends at the last character written. Nothing appears in column 81 or beyond. Indentation is spent from the same budget as the prose, so a comment nested three blocks deep has materially less room than a top-level one. Where a module declares tab indentation, a tab advances to the next multiple of its declared display width — the 80 is what a reader sees, not a count of characters.
+
+A docblock tag line (`@param`, `@return`, `@throws`) is exempt from rule 1 where its type cannot be broken without changing what a static analyser reads — a wide array shape or union has no continuation syntax to wrap into. The exemption is a last resort, not a licence: shorten the description, drop any vertical padding between the tag's columns, or extract the type into a named alias, and take the overflow only when none of those bring the line inside 80.
+
 No sniff can express a comment-specific width, so rule 1 is enforced by review, not tooling.
 
 ### Whitespace

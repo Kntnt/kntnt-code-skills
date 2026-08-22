@@ -155,3 +155,79 @@ def test_other_language_modules_carry_no_duplicated_width_rule() -> None:
             f"{name} must not carry a duplicate of the comment-width rule"
         )
         assert "120" not in text, f"{name} must not carry a conflicting 120-cap"
+
+
+# --- #59: rule 1 never said what "column 80" is measured on -----------------
+#
+# "A comment standing alone on its own line never passes column 80" left the
+# measure open: whether the count starts at column 1 (indentation included) or
+# at the comment's own first character, and what a tab counts as. In a
+# tab-indented WordPress project that is the difference between 1,650 and
+# 2,482 offending lines in one plugin — so the rule was unenforceable as
+# written, and a downstream ticket duly derived an unsatisfiable criterion
+# from it. The measure is now stated, and bound to wordpress.md's own
+# "Tabs (display as 4 cols)" row so the two cannot drift apart.
+
+WORDPRESS_MD = MODULES_DIR / "wordpress.md"
+
+
+def test_general_md_states_the_column_80_measure_spans_the_whole_line() -> None:
+    paragraph = _line_wrapping_paragraph(_text(GENERAL_MD)).lower()
+    assert "column 1" in paragraph, (
+        "general.md must state that the count starts at column 1, so "
+        "indentation is part of the budget"
+    )
+    assert "indentation" in paragraph, (
+        "general.md must state explicitly that indentation counts toward the 80"
+    )
+    assert "column 81" in paragraph, (
+        "general.md must state the rule in its operative form — nothing is "
+        "written in column 81 or beyond"
+    )
+
+
+def test_general_md_states_what_a_tab_counts_as() -> None:
+    paragraph = _line_wrapping_paragraph(_text(GENERAL_MD)).lower()
+    assert "tab" in paragraph, (
+        "general.md must say what a tab counts as when measuring to column 80 "
+        "— without it the rule is not measurable in a tab-indented project"
+    )
+
+
+def test_general_md_binds_the_tab_stop_to_the_wordpress_indentation_row() -> None:
+    """The tab width is declared once, in wordpress.md's Indentation row.
+
+    general.md's measure must defer to a module's declared indentation rather
+    than hard-coding a second, independently-driftable number.
+    """
+
+    assert "Tabs (display as 4 cols)" in _text(WORDPRESS_MD), (
+        "wordpress.md's Indentation row is the single declaration of the tab "
+        "display width that general.md's measure defers to"
+    )
+    paragraph = _line_wrapping_paragraph(_text(GENERAL_MD)).lower()
+    assert "declared" in paragraph or "module" in paragraph, (
+        "general.md's tab clause must defer to the module-declared "
+        "indentation width, not restate a bare number"
+    )
+
+
+def test_general_md_exempts_unbreakable_docblock_tag_lines() -> None:
+    paragraph = _line_wrapping_paragraph(_text(GENERAL_MD))
+    assert "@param" in paragraph and "@return" in paragraph, (
+        "general.md must name the docblock tag lines the exemption covers"
+    )
+    lowered = paragraph.lower()
+    assert "exempt" in lowered, (
+        "general.md must state that an unbreakable docblock tag line is "
+        "exempt from rule 1"
+    )
+
+
+def test_the_docblock_exemption_is_a_last_resort_not_a_licence() -> None:
+    paragraph = _line_wrapping_paragraph(_text(GENERAL_MD)).lower()
+    assert "last resort" in paragraph, (
+        "the exemption must be framed as a last resort — the standard's "
+        "position is that a tag line should still be brought inside 80 where "
+        "it can be"
+    )
